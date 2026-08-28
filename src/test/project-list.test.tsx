@@ -1,0 +1,294 @@
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { dictionaries, type MessageKey } from "../i18n";
+import type { ProjectSummary } from "../types";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const openMock = vi.hoisted(() => vi.fn());
+const setProjectIconMock = vi.hoisted(() => vi.fn());
+const clearProjectIconMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: openMock }));
+
+vi.mock("../lib/api", () => ({
+  api: {
+    readProjectIcons: vi.fn(async (ids: string[]) => ids.map((id) => ({
+      projectId: id,
+      kind: "language",
+      source: "typescript",
+      mimeType: null,
+      dataUrl: null,
+    }))),
+    setProjectIcon: setProjectIconMock,
+    clearProjectIcon: clearProjectIconMock,
+  },
+}));
+import { ProjectList } from "../components/ProjectList";
+
+const t = (key: MessageKey) => dictionaries.en[key];
+
+function project(id: string, canonicalPath: string): ProjectSummary {
+  return {
+    id,
+    canonicalPath,
+    displayName: id,
+    detectedName: id,
+    description: null,
+    notes: null,
+    vcsKind: "git",
+    availability: "ready",
+    archived: false,
+    favorite: id === "atlas",
+    origin: "scan",
+    scanRootId: null,
+    languages: ["TypeScript"],
+    frameworks: ["React"],
+    packageManagers: ["pnpm"],
+    tags: [],
+    sourceMtime: null,
+    lastCommitAt: null,
+    lastOpenedAt: null,
+    updatedAt: "2026-08-21T00:00:00Z",
+  };
+}
+
+function renderList(overrides: Partial<React.ComponentProps<typeof ProjectList>> = {}) {
+  const projects = [project("atlas", "C:\\code\\atlas"), project("portal", "C:\\code\\portal")];
+  return render(
+    <ProjectList
+      projects={projects}
+      allProjects={projects}
+      selectedId="atlas"
+      onSelect={vi.fn()}
+      query=""
+      onQuery={vi.fn()}
+      filters={{ vcs: "", language: "", tag: "" }}
+      onFilters={vi.fn()}
+      scanning={false}
+      progress={null}
+      t={t}
+      empty="Empty"
+      onAddRoot={vi.fn()}
+      onRegister={vi.fn()}
+      onScan={vi.fn()}
+      onCancelScan={vi.fn()}
+      {...overrides}
+    />,
+  );
+}
+
+function rect(height: number): DOMRect {
+  return { bottom: height, height, left: 0, right: 360, top: 0, width: 360, x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
+}
+
+beforeEach(() => {
+  openMock.mockReset();
+  setProjectIconMock.mockReset();
+  clearProjectIconMock.mockReset();
+  vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function getOffsetHeight(this: HTMLElement) {
+    const element = this as HTMLElement;
+    return element.classList.contains("project-scroll") ? 640 : element.classList.contains("virtual-row") ? 84 : 0;
+  });
+  vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function getOffsetWidth(this: HTMLElement) {
+    return (this as HTMLElement).classList.contains("project-scroll") ? 360 : 0;
+  });
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function getBoundingClientRect(this: HTMLElement) {
+    const element = this as HTMLElement;
+    if (element.classList.contains("project-scroll")) return rect(640);
+    if (element.classList.contains("virtual-row")) return rect(84);
+    return rect(0);
+  });
+});
+
+describe("ProjectList tree", () => {
+  it("renders an expanded path tree and moves active selection with arrows", async () => {
+    renderList();
+    const tree = screen.getByRole("tree");
+    await waitFor(() => expect(screen.getByRole("treeitem", { name: "atlas" })).toBeInTheDocument());
+    expect(screen.getByRole("treeitem", { name: /code/ })).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.keyDown(tree, { key: "ArrowDown" });
+    fireEvent.keyDown(tree, { key: "ArrowDown" });
+    expect(tree).toHaveAttribute("aria-activedescendant", "project:atlas");
+  });
+
+  it("keeps project icons decorative and out of the accessible name", async () => {
+    renderList();
+    const option = await screen.findByRole("treeitem", { name: "atlas" });
+    expect(option).toHaveAccessibleName("atlas");
+    expect(option.querySelector(".project-identity-mark")).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("keeps row triggers out of the tab sequence and returns focus to the tree", async () => {
+    renderList();
+    const tree = screen.getByRole("tree");
+    const option = await screen.findByRole("treeitem", { name: "atlas" });
+    const rowButton = within(option).getByRole("button", { name: "atlas" });
+
+    expect(rowButton).toHaveAttribute("tabindex", "-1");
+    fireEvent.click(rowButton);
+    expect(tree).toHaveFocus();
+  });
+
+  it("opens the active project context menu from Shift+F10 without hover actions", async () => {
+    renderList({ onRename: vi.fn() });
+    const tree = screen.getByRole("tree");
+    const option = await screen.findByRole("treeitem", { name: "atlas" });
+    fireEvent.click(within(option).getByRole("button", { name: "atlas" }));
+
+    expect(document.querySelector(".project-actions")).not.toBeInTheDocument();
+    fireEvent.keyDown(tree, { key: "F10", shiftKey: true });
+
+    expect(await screen.findByRole("menuitem", { name: t("editName") })).toBeInTheDocument();
+  });
+
+  it("changes a project icon and restores automatic detection from the context menu", async () => {
+    openMock.mockResolvedValue("C:\\icons\\atlas.png");
+    setProjectIconMock.mockResolvedValue({ projectId: "atlas", kind: "override", source: "atlas.png", mimeType: "image/png", dataUrl: "data:image/png;base64,AA==" });
+    clearProjectIconMock.mockResolvedValue({ projectId: "atlas", kind: "language", source: "typescript", mimeType: null, dataUrl: null });
+    renderList();
+    const option = await screen.findByRole("treeitem", { name: "atlas" });
+    fireEvent.contextMenu(within(option).getByRole("button", { name: "atlas" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("changeProjectIcon") }));
+    await waitFor(() => expect(setProjectIconMock).toHaveBeenCalledWith("atlas", "C:\\icons\\atlas.png"));
+    expect(option.querySelector(".project-identity-mark img")).toHaveAttribute("src", "data:image/png;base64,AA==");
+
+    fireEvent.contextMenu(within(option).getByRole("button", { name: "atlas" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("resetProjectIcon") }));
+    await waitFor(() => expect(clearProjectIconMock).toHaveBeenCalledWith("atlas"));
+    expect(option.querySelector(".project-identity-mark img")).not.toBeInTheDocument();
+  });
+
+  it("keeps project identity aligned and edits the name inside its row", async () => {
+    const onSelect = vi.fn();
+    renderList({ onSelect });
+    const option = await screen.findByRole("treeitem", { name: "atlas" });
+    expect(option.querySelector(".project-card-layout")).toBeInTheDocument();
+    expect(option.querySelector(".project-card-copy .project-name")).toHaveTextContent("atlas");
+
+    const virtualRow = option.closest(".virtual-row") as HTMLElement;
+    fireEvent.contextMenu(within(option).getByRole("button", { name: "atlas" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("editName") }));
+    const input = screen.getByRole("textbox", { name: t("editName") });
+    expect(virtualRow).toContainElement(input);
+    expect(document.querySelector(".inline-editor")).not.toBeInTheDocument();
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("keeps the card editor open when renaming fails", async () => {
+    const onRename = vi.fn(async () => { throw new Error("save failed"); });
+    renderList({ onRename });
+    const option = await screen.findByRole("treeitem", { name: "atlas" });
+    fireEvent.contextMenu(within(option).getByRole("button", { name: "atlas" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("editName") }));
+    const input = screen.getByRole("textbox", { name: t("editName") });
+    fireEvent.change(input, { target: { value: "Atlas renamed" } });
+    fireEvent.submit(input.closest("form") as HTMLFormElement);
+
+    await waitFor(() => expect(onRename).toHaveBeenCalledWith("atlas", "Atlas renamed"));
+    expect(screen.getByRole("textbox", { name: t("editName") })).toHaveValue("Atlas renamed");
+  });
+
+  it("collapses a group with Enter and selects a project with Enter", async () => {
+    const onSelect = vi.fn();
+    renderList({ onSelect });
+    const tree = screen.getByRole("tree");
+    await waitFor(() => expect(screen.getByRole("treeitem", { name: "portal" })).toBeInTheDocument());
+
+    fireEvent.keyDown(tree, { key: "Home" });
+    fireEvent.keyDown(tree, { key: "Enter" });
+    expect(screen.queryByRole("treeitem", { name: "atlas" })).not.toBeInTheDocument();
+
+    fireEvent.keyDown(tree, { key: "Enter" });
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("offers scope filtering when controlled by the parent", () => {
+    const onScope = vi.fn();
+    renderList({ scope: "favorites", onScope });
+    expect(screen.getByRole("tab", { name: t("favorites") })).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(screen.getByRole("tab", { name: t("archived") }));
+    expect(onScope).toHaveBeenCalledWith("archived");
+  });
+  it("uses listbox options in flat mode without treeitem semantics", async () => {
+    renderList();
+    await waitFor(() => expect(screen.getByRole("treeitem", { name: "atlas" })).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: t("flatView") }));
+
+    const listbox = await screen.findByRole("listbox", { name: t("projects") });
+    expect(listbox).toBeInTheDocument();
+    expect(screen.queryByRole("treeitem")).not.toBeInTheDocument();
+    expect(within(listbox).getAllByRole("option")).toHaveLength(2);
+    expect(within(listbox).getByRole("option", { name: "atlas" })).not.toHaveAttribute("aria-level");
+    expect(within(listbox).getByRole("option", { name: "atlas" })).toHaveAttribute("aria-selected", "true");
+  });
+  it("keeps a scope-specific empty state separate from filter misses", () => {
+    renderList({ projects: [], scope: "favorites", empty: t("noFavorites") });
+
+    expect(screen.queryByText(t("noMatches"))).not.toBeInTheDocument();
+    expect(screen.getByText(t("emptyTitle"))).toBeInTheDocument();
+    expect(screen.getByText(t("noFavorites"))).toBeInTheDocument();
+  });
+  it("renders only the virtualizer range for a large project set", async () => {
+    const projects = Array.from({ length: 40 }, (_, index) => project(`project-${index}`, `C:\\code\\project-${index}`));
+    const { container } = renderList({ projects, allProjects: projects, selectedId: projects[0].id });
+
+    await waitFor(() => expect(container.querySelectorAll(".virtual-row").length).toBeGreaterThan(0));
+    expect(container.querySelectorAll(".virtual-row").length).toBeLessThan(projects.length);
+  });
+  it("keeps a scan status slot and does not wrap the add-root action into the footer", async () => {
+    const { container, rerender } = renderList();
+    await waitFor(() => expect(screen.getByRole("treeitem", { name: "atlas" })).toBeInTheDocument());
+    expect(container.querySelector(".scan-status")).toBeTruthy();
+    expect(container.querySelector(".list-header-actions")?.textContent).toContain(t("addRootShort"));
+    expect(container.querySelector(".list-header-actions")?.textContent).toContain(t("discoverProjects"));
+    expect(container.querySelector(".list-footer")?.textContent).not.toContain(t("addRootShort"));
+    expect(container.querySelector(".list-footer")?.textContent).not.toContain(t("discoverProjects"));
+
+    rerender(
+      <ProjectList
+        projects={[project("atlas", "C:\\code\\atlas"), project("portal", "C:\\code\\portal")]}
+        allProjects={[project("atlas", "C:\\code\\atlas"), project("portal", "C:\\code\\portal")]}
+        selectedId="atlas"
+        onSelect={vi.fn()}
+        query=""
+        onQuery={vi.fn()}
+        filters={{ vcs: "", language: "", tag: "" }}
+        onFilters={vi.fn()}
+        scanning
+        progress={{ scanId: "scan-1", rootPath: "C:\\code", phase: "walk", visited: 4, discovered: 2, currentPath: "C:\\code\\atlas", message: null }}
+        t={t}
+        empty="Empty"
+        onAddRoot={vi.fn()}
+        onRegister={vi.fn()}
+        onScan={vi.fn()}
+        onCancelScan={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(/Scanning|扫描/);
+  });
+  it("opens a context menu to remove a project record", async () => {
+    const onRemoveProject = vi.fn();
+    renderList({ onRemoveProject });
+    await waitFor(() => expect(screen.getByRole("treeitem", { name: "atlas" })).toBeInTheDocument());
+    fireEvent.contextMenu(screen.getByRole("button", { name: "atlas" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("removeRecord") }));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent(t("removeRecordHint"));
+    fireEvent.click(screen.getByRole("button", { name: t("removeRecord") }));
+    await waitFor(() => expect(onRemoveProject).toHaveBeenCalledWith("atlas"));
+  });
+  it("opens a context menu to remove folder records", async () => {
+    const onRemoveFolder = vi.fn();
+    renderList({
+      onRemoveFolder,
+      scanRoots: [{ id: "root-code", path: "C:\\code", createdAt: "2026-08-21T00:00:00Z", lastScannedAt: null }],
+    });
+    await waitFor(() => expect(screen.getByRole("treeitem", { name: "atlas" })).toBeInTheDocument());
+    fireEvent.contextMenu(screen.getByRole("button", { name: /code/ }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("removeFolder") }));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent(t("confirmRemoveFolderHint"));
+    fireEvent.click(screen.getByRole("button", { name: t("removeFolder") }));
+    await waitFor(() => expect(onRemoveFolder).toHaveBeenCalledWith("C:\\code", ["atlas", "portal"]));
+  });
+});

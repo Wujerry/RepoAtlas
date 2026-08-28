@@ -1,0 +1,15 @@
+[package]
+name = "repoatlas-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "RepoAtlas external management adapter (stdio MCP)"
+
+[[bin]]
+name = "repoatlas-mcp"
+path = "src/main.rs"
+
+[dependencies]
+repoatlas-core = { path = "../repoatlas-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
