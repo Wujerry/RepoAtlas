@@ -598,7 +598,21 @@ fn export_atlas_report_to(
         .map_err(|err| err.to_string())?
         .atlas_report(&project_id)
         .map_err(err_to_string)?;
-    std::fs::write(path, report.markdown).map_err(|err| err.to_string())
+    std::fs::write(path, report.markdown).map_err(|err| err.to_string())?;
+    state
+        .core
+        .lock()
+        .map_err(|err| err.to_string())?
+        .record_audit_event(
+            "desktop",
+            "export_atlas_report",
+            "project",
+            Some(&project_id),
+            Some("report exported"),
+            "success",
+        )
+        .map(|_| ())
+        .map_err(err_to_string)
 }
 
 #[tauri::command]
@@ -830,8 +844,34 @@ fn start_task_spec(app: &AppHandle, state: &AppState, spec: TaskSpec) -> Result<
                             } else {
                                 "failed"
                             };
-                            if let Ok(run) = core.finish_task_run(&run_id, status, code) {
-                                let _ = app_handle.emit("task://exited", run);
+                            match core.finish_task_run(&run_id, status, code) {
+                                Ok(run) => {
+                                    let _ = core.record_project_event(
+                                        &run.project_id,
+                                        "task",
+                                        "Finished task",
+                                        Some(status),
+                                    );
+                                    let _ = core.record_audit_event(
+                                        "desktop",
+                                        "finish_task_run",
+                                        "task_run",
+                                        Some(&run.id),
+                                        Some(status),
+                                        status,
+                                    );
+                                    let _ = app_handle.emit("task://exited", run);
+                                }
+                                Err(error) => {
+                                    let _ = core.record_audit_event(
+                                        "desktop",
+                                        "finish_task_run",
+                                        "task_run",
+                                        Some(&run_id),
+                                        Some(&error.to_string()),
+                                        "failed",
+                                    );
+                                }
                             }
                         }
                     });
@@ -877,8 +917,25 @@ fn stop_task(state: State<Arc<AppState>>, run_id: String) -> Result<TaskRun, Str
         .broker
         .stop(core.connection(), &run_id)
         .map_err(err_to_string)?;
-    core.finish_task_run(&run_id, "cancelled", run.exit_code)
-        .map_err(err_to_string)
+    let finished = core
+        .finish_task_run(&run_id, "cancelled", run.exit_code)
+        .map_err(err_to_string)?;
+    let _ = core.record_project_event(
+        &finished.project_id,
+        "task",
+        "Stopped task",
+        Some("cancelled"),
+    );
+    core.record_audit_event(
+        "desktop",
+        "stop_task",
+        "task_run",
+        Some(&finished.id),
+        Some("cancelled"),
+        "success",
+    )
+    .map_err(err_to_string)?;
+    Ok(finished)
 }
 
 #[tauri::command]

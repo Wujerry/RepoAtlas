@@ -153,4 +153,17 @@ mod tests {
         assert!(is_within(path, equivalent));
         assert!(is_within(equivalent, path));
     }
+
+    #[cfg(windows)]
+    #[test]
+    fn extended_length_windows_paths_match_dos_paths() {
+        assert!(is_within(
+            Path::new(r"C:\RepoAtlas\project\scripts"),
+            Path::new(r"\\?\C:\RepoAtlas\project"),
+        ));
+        assert!(is_within(
+            Path::new(r"\\?\C:\RepoAtlas\project\scripts"),
+            Path::new(r"C:\RepoAtlas\project"),
+        ));
+    }
 }
