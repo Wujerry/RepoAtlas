@@ -2,10 +2,11 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { lazy, useState } from "react";
 import type { MessageKey } from "../i18n";
 import { api } from "../lib/api";
-import type { AppSettings, ScanRoot, ToastTone } from "../types";
+import type { AppSettings, ScanRoot, ToastTone, UpdateState } from "../types";
 import { Button } from "./ui/button";
 import { ConfirmDialog } from "./ui/confirm";
 import { EmptyState } from "./ui/feedback";
+import { UpdateSettings } from "./UpdateSettings";
 
 const AiSettings = lazy(() => import("./AiSettings").then(({ AiSettings }) => ({ default: AiSettings })));
 
@@ -20,6 +21,12 @@ export interface SettingsPaneProps {
   onRemoveRoot: (id: string) => Promise<void>;
   onScanRoot: (id: string) => Promise<void>;
   onReload: () => Promise<void>;
+  updateState: UpdateState;
+  onCheckForUpdates: () => Promise<UpdateState>;
+  onDownloadUpdate: () => Promise<UpdateState>;
+  onInstallUpdate: () => Promise<boolean>;
+  onRestartApp: () => Promise<void>;
+  onDeferUpdate: () => Promise<void>;
 }
 
 export function SettingsPane({
@@ -33,10 +40,17 @@ export function SettingsPane({
   onRemoveRoot,
   onScanRoot,
   onReload,
+  updateState,
+  onCheckForUpdates,
+  onDownloadUpdate,
+  onInstallUpdate,
+  onRestartApp,
+  onDeferUpdate,
 }: SettingsPaneProps) {
   const [removingRoot, setRemovingRoot] = useState<string>();
   const [pendingRoot, setPendingRoot] = useState<ScanRoot>();
   const [dataBusy, setDataBusy] = useState<"export" | "import" | "backup">();
+  const [pendingImportPath, setPendingImportPath] = useState<string>();
 
   async function exportData() {
     setDataBusy("export");
@@ -57,14 +71,24 @@ export function SettingsPane({
   }
 
   async function importData() {
-    setDataBusy("import");
     try {
       const path = await open({ multiple: false, filters: [{ name: "JSON", extensions: ["json"] }] });
       if (typeof path === "string") {
-        const count = await api.importJsonFrom(path);
-        notify("success", t("importComplete"), `${count} ${t("projects")}`);
-        await onReload();
+        setPendingImportPath(path);
       }
+    } catch (error) {
+      notify("error", t("importFailed"), String(error));
+    }
+  }
+
+  async function confirmImportData() {
+    if (!pendingImportPath) return;
+    setDataBusy("import");
+    try {
+      const count = await api.importJsonFrom(pendingImportPath);
+      notify("success", t("importComplete"), `${count} ${t("projects")}`);
+      setPendingImportPath(undefined);
+      await onReload();
     } catch (error) {
       notify("error", t("importFailed"), String(error));
     } finally {
@@ -154,12 +178,15 @@ export function SettingsPane({
 
         <AiSettings t={t} notify={notify} />
 
+        <UpdateSettings state={updateState} locale={settings.locale === "zh" || settings.locale === "en" ? settings.locale : undefined} t={t} notify={notify} onCheck={onCheckForUpdates} onDownload={onDownloadUpdate} onInstall={onInstallUpdate} onRestart={onRestartApp} onDefer={onDeferUpdate} />
+
         <section className="settings-card">
-          <div className="settings-card-heading"><div><p className="eyebrow">04</p><h2>{t("dataAndBackup")}</h2></div><p>{t("dataHint")}</p></div>
+          <div className="settings-card-heading"><div><p className="eyebrow">05</p><h2>{t("dataAndBackup")}</h2></div><p>{t("dataHint")}</p></div>
           <div className="data-actions"><Button variant="primary" loading={dataBusy === "export"} disabled={Boolean(dataBusy)} onClick={() => void exportData()}>{t("exportData")}</Button><Button loading={dataBusy === "import"} disabled={Boolean(dataBusy)} onClick={() => void importData()}>{t("importData")}</Button><Button loading={dataBusy === "backup"} disabled={Boolean(dataBusy)} onClick={() => void backupData()}>{t("backupDatabase")}</Button></div>
         </section>
       </div>
       <ConfirmDialog open={Boolean(pendingRoot)} title={t("confirmRemoveRoot")} body={pendingRoot ? `${pendingRoot.path}\n${t("confirmRemoveRootHint")}` : ""} confirmLabel={t("remove")} cancelLabel={t("cancel")} busy={Boolean(removingRoot)} onOpenChange={(open) => !open && !removingRoot && setPendingRoot(undefined)} onConfirm={async () => { if (!pendingRoot) return; setRemovingRoot(pendingRoot.id); try { await onRemoveRoot(pendingRoot.id); setPendingRoot(undefined); } catch (error) { notify("error", t("removeRootFailed"), String(error)); } finally { setRemovingRoot(undefined); } }} />
+      <ConfirmDialog open={Boolean(pendingImportPath)} title={t("confirmImportData")} body={pendingImportPath ? `${pendingImportPath}\n${t("confirmImportDataHint")}` : ""} confirmLabel={t("importData")} cancelLabel={t("cancel")} busy={dataBusy === "import"} onOpenChange={(open) => !open && dataBusy !== "import" && setPendingImportPath(undefined)} onConfirm={() => void confirmImportData()} />
     </main>
   );
 }

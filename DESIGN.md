@@ -2,8 +2,8 @@
 
 ## Source of truth
 - Status: Active
-- Last refreshed: 2026-08-26
-- Primary product surfaces: Desktop project library, project workspace, command palette, scanning, settings, AI knowledge.
+- Last refreshed: 2026-09-01
+- Primary product surfaces: Desktop project library, project workspace, global task workbench, command palette, scanning, settings, AI knowledge.
 - Evidence reviewed: `README.md`, `CONTEXT.md`, `docs/adr/*`, `src/App.tsx`, `src/components/*`, `src/styles.css`, and the Tauri window configuration.
 
 ## Brand
@@ -14,7 +14,7 @@
 ## Product goals
 - Goals: Make large local code collections immediately legible; make scanning, launching, Git, tasks, and project knowledge fast and safe; make every action visibly acknowledged.
 - Non-goals: A code editor, a filesystem graph, cloud synchronization, or a replacement for the system Git/IDE/terminal.
-- Success signals: A new user can add a root and understand the result without help; a returning user can open a project or command in seconds; every async operation has a visible state and recovery path.
+- Success signals: A new user can add the current Project through MCP, or add a Scan Root, and understand the result without help; a returning user can open a project or command in seconds; every async operation has a visible state and recovery path.
 
 ## Personas and jobs
 - Primary personas: Developers and technical leads with many local checkouts across multiple languages and years of work.
@@ -23,8 +23,9 @@
 
 ## Information architecture
 - Primary navigation: The persistent left navigation is removed. Projects, favorites, recent, and archived are scopes in the project tree; settings and help live in the title bar and command palette.
-- Core routes/screens: Path-grouped project collection, project workspace, full-width settings, help and MCP setup, global command palette, confirmation surfaces, and scanning status.
-- Content hierarchy: Project identity and launch actions first; task-oriented workspace tabs second; details, evidence, and destructive actions last.
+- Core routes/screens: Path-grouped project collection, project workspace, full-width settings, help and MCP setup, global command palette, first-launch onboarding, confirmation surfaces, and scanning status.
+- First-launch onboarding is a skippable three-step dialog: welcome, MCP one-step add, then waiting for a shared-database result. Manual Scan Root discovery remains the fallback when MCP is unavailable or the user wants bulk import.
+- Content hierarchy: Project identity and launch actions first; task-oriented workspace tabs second; details, evidence, and destructive actions last. The header action row leads with the primary Open Agent launcher, followed by terminal, IDE, and file browser.
 - Overview sections live in a compact tab-bar switcher, not a persistent 184px side index. Continue, Environment, README, AGENTS.md, Profile, and Notes are the six overview chapters.
 - Project rows behave like compact asset-index entries: the identity mark belongs to the title line, while path, description, stack, and time use the full card width below it. Selection uses only a neutral raised surface and subtle border, with no amber edge marker or full beige card. Project edits stay inside the active row.
 - Project row actions live in one context menu. Pointer users open it with right click; keyboard users use `Shift+F10` or the context-menu key, with `F2` reserved for rename. No action buttons appear only on hover.
@@ -44,7 +45,9 @@
 - Spacing/layout rhythm: 4px base rhythm; 12/16px dense controls; 20/24/32px workspace grouping.
 - Shape/radius/elevation: 8px controls, 12px rows, 16-20px elevated surfaces; tinted shadows with a consistent top-left light source.
 - Motion: 120-160ms press/hover, 180-220ms selection/tab changes, 220-280ms overlays; transform and opacity only.
-- Imagery/iconography: The PNG application mark is a strong black tile containing one amber route and three nodes, legible at favicon size. Phosphor icons use one optical weight. No contour lines, map pins, gradients, stock imagery, or Unicode icons.
+- Startup: the main window stays hidden until the first brand frame is ready. The splash draws the RepoAtlas mark and wordmark in 1200ms, then yields to the library once bootstrap has finished. Reduced motion shows the final static mark immediately.
+- Task workbench: the global task surface is a full-window split, with the run list on the left and up to four live terminals on the right. xterm owns typed input; there is no second command field. Terminal output itself is not animated.
+- Imagery/iconography: The application mark is a strong graphite tile containing three amber index bars and a continuous negative-space path, legible at favicon size. Phosphor icons use one optical weight. Outside the approved raster mark, do not use contour lines, map pins, gradients, stock imagery, or Unicode icons.
 - Project and IDE marks may use restrained brand color only at 14-22px. Detected project icons are sanitized local thumbnails. No CDN icon fonts or broad filesystem image access.
 - Project marks sit directly beside the project name without a universal tile, border, or button-like background. Real thumbnails may keep a small intrinsic corner radius; language fallbacks remain monochrome and visually secondary.
 
@@ -68,7 +71,8 @@
 
 ## Interaction states
 - Loading: App-shell and project skeletons preserve layout; pending controls are disabled and keep their label context.
-- Empty: Every collection and workspace tab explains why it is empty and offers the next valid action.
+- Empty: Every collection and workspace tab explains why it is empty and offers the next valid action. A new empty library opens first-launch onboarding once; completing or skipping it writes a local UI preference, and Help can reopen the same guide without resetting that completed state.
+ - First launch: A new empty library opens the onboarding dialog once. Completing or skipping it writes a local UI preference; Help can reopen the same guide without resetting that completed state.
 - Error: Inline or toast feedback states what failed and offers retry/copy/dismiss when applicable.
 - Success: Quiet status toasts confirm completion without exclamation marks.
 - Disabled: Disabled controls explain prerequisites through adjacent copy or tooltips.

@@ -29,7 +29,7 @@ const profile: ProviderProfile = {
   protocol: "openai-compatible",
   baseUrl: "https://api.deepseek.com/v1",
   model: "deepseek-chat",
-  credentialRef: "DEEPSEEK_API_KEY",
+  hasCredential: true,
   createdAt: "2026-08-21T00:00:00Z",
   updatedAt: "2026-08-21T00:00:00Z",
 };
@@ -57,23 +57,38 @@ describe("AiSettings", () => {
     expect(upsertProviderProfile).not.toHaveBeenCalled();
   });
 
-  it("uses a password field for the credential reference", async () => {
+  it("uses a password field for the API key", async () => {
     renderSettings();
-    const field = await screen.findByLabelText(/^Credential environment variable/);
+    const field = await screen.findByLabelText(/^API key/);
     expect(field).toHaveAttribute("type", "password");
   });
 
-  it("requires a valid environment variable reference", async () => {
+  it("requires an API key for a remote provider", async () => {
     renderSettings();
     await screen.findByRole("button", { name: "Save" });
 
-    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: "Local model" } });
-    fireEvent.change(screen.getByLabelText(/^Model/), { target: { value: "llama3" } });
-    fireEvent.change(screen.getByLabelText(/^Credential environment variable/), { target: { value: "not valid" } });
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: "DeepSeek" } });
+    fireEvent.change(screen.getByLabelText(/^Model/), { target: { value: "deepseek-chat" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(/valid environment variable name/);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/API key are required/);
     expect(upsertProviderProfile).not.toHaveBeenCalled();
+  });
+
+  it("keeps the stored key when editing without re-entering it", async () => {
+    renderSettings([profile]);
+
+    const row = await screen.findByText(profile.name);
+    fireEvent.click(within(row.closest("li") as HTMLElement).getByRole("button", { name: t("edit") }));
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: "DeepSeek Renamed" } });
+    fireEvent.click(screen.getByRole("button", { name: t("save") }));
+
+    await waitFor(() => expect(upsertProviderProfile).toHaveBeenCalledWith(expect.objectContaining({
+      id: profile.id,
+      name: "DeepSeek Renamed",
+      apiKey: "",
+    })));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it.each([
@@ -94,7 +109,7 @@ describe("AiSettings", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: preset.name }));
 
-    expect(screen.getByLabelText(/^Credential environment variable/)).toHaveValue("");
+    expect(screen.getByLabelText(/^API key/)).toHaveValue("");
     expect(screen.getByText(/does not require an API key/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
@@ -103,7 +118,7 @@ describe("AiSettings", () => {
       protocol: preset.protocol,
       baseUrl: preset.baseUrl,
       model: preset.defaultModel,
-      credentialRef: "",
+      apiKey: "",
     })));
   });
 
@@ -120,6 +135,7 @@ describe("AiSettings", () => {
     const profileRow = await screen.findByText(profile.name);
     fireEvent.click(within(profileRow.closest("li") as HTMLElement).getByRole("button", { name: t("edit") }));
     fireEvent.click(await screen.findByRole("button", { name: preset.name }));
+    fireEvent.change(screen.getByLabelText(/^API key/), { target: { value: "sk-test" } });
     fireEvent.click(screen.getByRole("button", { name: t("save") }));
 
     await waitFor(() => expect(upsertProviderProfile).toHaveBeenCalledWith(expect.objectContaining({
@@ -137,11 +153,11 @@ describe("AiSettings", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("AI providers unavailable");
     expect(alert).toHaveTextContent("database unavailable");
-    expect(screen.queryByText("No providers configured")).not.toBeInTheDocument();
+    expect(screen.queryByText(t("noProviders"))).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /Retry/ }));
     await waitFor(() => expect(listProviderProfiles).toHaveBeenCalledTimes(2));
-    expect(await screen.findByText("No providers configured")).toBeInTheDocument();
+    expect(await screen.findByText(t("noProviders"))).toBeInTheDocument();
   });
 
   it("requires confirmation before deleting a provider", async () => {

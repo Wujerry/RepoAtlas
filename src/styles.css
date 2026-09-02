@@ -8,4 +8,7 @@
 @import "./styles/60-command-dialog.css";
 @import "./styles/70-extensions.css";
 @import "./styles/80-help-settings.css";
+@import "./styles/81-updater.css";
+@import "./styles/82-onboarding.css";
+@import "./styles/83-splash.css";
 @import "./styles/90-motion.css";

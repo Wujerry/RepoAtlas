@@ -1,0 +1,198 @@
+@import "@fontsource-variable/geist";
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Geist Variable", "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", "SFMono-Regular", "Consolas", ui-monospace, monospace;
+  --color-ink: #0d0d0d;
+  --color-panel: #151515;
+  --color-raised: #1c1c1c;
+  --color-line: #303030;
+  --color-paper: #f3f3f3;
+  --color-mute: #9b9b9b;
+  --color-amber: #ffa31a;
+  --color-amber-ink: #17100a;
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  @media (prefers-color-scheme: light) {
+    :root {
+      color-scheme: light;
+      --color-ink: #f6f6f6;
+      --color-panel: #ffffff;
+      --color-raised: #eeeeee;
+      --color-line: #d8d8d8;
+      --color-paper: #171717;
+      --color-mute: #686868;
+    }
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    margin: 0;
+    min-width: 320px;
+    background: var(--color-ink);
+    color: var(--color-paper);
+    font-family: var(--font-sans);
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  a:focus-visible {
+    outline: 2px solid var(--color-amber);
+    outline-offset: 3px;
+    border-radius: 4px;
+  }
+
+  ::selection {
+    background: var(--color-amber);
+    color: var(--color-amber-ink);
+  }
+
+  section[id] {
+    scroll-margin-top: 4.5rem;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer components {
+  .skip-link {
+    position: fixed;
+    top: 8px;
+    left: 8px;
+    z-index: 40;
+    padding: 8px 12px;
+    border-radius: 8px;
+    background: var(--color-amber);
+    color: var(--color-amber-ink);
+    transform: translateY(-150%);
+  }
+
+  .skip-link:focus {
+    transform: none;
+    outline: 2px solid var(--color-paper);
+    outline-offset: 3px;
+  }
+
+  .hero-shot {
+    box-shadow: 0 24px 64px rgba(13, 13, 13, 0.18);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .hero-shot {
+      box-shadow: 0 28px 80px rgba(0, 0, 0, 0.42);
+    }
+  }
+
+  .glow {
+    position: absolute;
+    z-index: -1;
+    width: 42rem;
+    height: 42rem;
+    border-radius: 9999px;
+    pointer-events: none;
+    background: radial-gradient(closest-side, rgba(255, 163, 26, 0.55), transparent 72%);
+    filter: blur(96px);
+    opacity: 0.14;
+    animation: glow-drift 18s ease-in-out infinite alternate;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .glow {
+      opacity: 0.1;
+    }
+  }
+
+  .scanline {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 26%;
+    pointer-events: none;
+    background: linear-gradient(
+      to bottom,
+      transparent,
+      rgba(255, 163, 26, 0.14) 55%,
+      rgba(255, 163, 26, 0.3) 80%,
+      transparent
+    );
+  }
+
+  .underline-bar {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -0.1em;
+    height: 0.09em;
+    border-radius: 9999px;
+    background: var(--color-amber);
+    transform-origin: left center;
+  }
+
+  .marquee {
+    overflow: hidden;
+    -webkit-mask-image: linear-gradient(to right, transparent, black 12%, black 88%, transparent);
+    mask-image: linear-gradient(to right, transparent, black 12%, black 88%, transparent);
+  }
+
+  .marquee-track {
+    display: flex;
+    width: max-content;
+    animation: marquee-slide 32s linear infinite;
+  }
+
+  .marquee:hover .marquee-track,
+  .marquee:focus-within .marquee-track {
+    animation-play-state: paused;
+  }
+
+  .marquee-group {
+    display: flex;
+    align-items: center;
+    gap: 2.75rem;
+    padding-right: 2.75rem;
+    margin: 0;
+    padding-left: 0;
+    list-style: none;
+  }
+}
+
+@keyframes marquee-slide {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@keyframes glow-drift {
+  from {
+    transform: translate3d(-4%, -2%, 0) scale(1);
+  }
+
+  to {
+    transform: translate3d(4%, 3%, 0) scale(1.12);
+  }
+}

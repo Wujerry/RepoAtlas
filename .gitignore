@@ -39,3 +39,10 @@ _ping.md
 # Rust
 /target
 src-tauri/target
+src-tauri/resources/
+
+# Local tooling artifacts
+.playwright-mcp/
+.tmp-brand/
+buildlog.txt
+build.log

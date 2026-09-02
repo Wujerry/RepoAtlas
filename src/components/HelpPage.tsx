@@ -7,7 +7,7 @@ import type { McpSetupInfo, ToastTone } from "../types";
 import { Button } from "./ui/button";
 import { Skeleton } from "./ui/feedback";
 
-export function HelpPage({ locale, t, notify }: { locale: "zh" | "en"; t: (key: MessageKey) => string; notify: (tone: ToastTone, title: string, detail?: string) => void }) {
+export function HelpPage({ locale, t, notify, scanning = false, onReplayOnboarding }: { locale: "zh" | "en"; t: (key: MessageKey) => string; notify: (tone: ToastTone, title: string, detail?: string) => void; scanning?: boolean; onReplayOnboarding?: () => void }) {
   const [info, setInfo] = useState<McpSetupInfo>();
   const [error, setError] = useState<string>();
 
@@ -32,7 +32,7 @@ export function HelpPage({ locale, t, notify }: { locale: "zh" | "en"; t: (key: 
   return <main id="main-content" className="help-page">
     <header className="help-header"><p className="eyebrow">RepoAtlas Guide</p><h1>{t("help")}</h1><p>{t("helpIntro")}</p></header>
     <div className="help-content">
-      <section className="help-card"><Info className="help-card-icon" /><div><h2>{t("howItWorks")}</h2><p>{t("howItWorksBody")}</p></div></section>
+      <section className="help-card"><Info className="help-card-icon" /><div><h2>{t("howItWorks")}</h2><p>{t("howItWorksBody")}</p>{onReplayOnboarding ? <div className="help-card-action"><Button disabled={scanning} onClick={onReplayOnboarding}>{t("onboardingReplay")}</Button><p>{scanning ? t("onboardingReplayBusy") : t("onboardingReplayHint")}</p></div> : null}</div></section>
       <section className="help-card"><ShieldCheck className="help-card-icon" /><div><h2>{t("safetyBoundary")}</h2><p>{t("safetyBoundaryBody")}</p></div></section>
       <section className="help-card help-mcp">
         <div className="help-section-heading"><div><TerminalWindow className="help-card-icon" /><div><p className="eyebrow">MCP · stdio</p><h2>{t("mcpConfiguration")}</h2></div></div><p>{t("mcpConfigurationBody")}</p></div>

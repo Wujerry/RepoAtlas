@@ -7,13 +7,17 @@ pub mod environment;
 pub mod error;
 pub mod git;
 pub mod import_export;
+pub mod launch;
 pub mod models;
 pub mod paths;
+mod process;
 pub mod scan;
+pub mod secrets;
 
 pub use crate::core::Core;
 pub use broker::Broker;
 pub use detect::detect;
 pub use error::{Error, Result};
+pub use launch::{ExternalTool, ExternalTools};
 pub use models::*;
 pub use scan::{DiscoveredProject, ScanEngine};

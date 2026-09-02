@@ -1,0 +1,5 @@
+# Default ownership for the public repository. Keep this file small so policy
+# and release changes always receive the maintainer's review.
+* @wujer
+.github/ @wujer
+docs/ @wujer

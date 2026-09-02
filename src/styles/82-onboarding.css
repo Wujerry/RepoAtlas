@@ -1,0 +1,24 @@
+.onboarding-dialog { width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; }
+.onboarding-dialog .eyebrow { margin: 0 0 8px; color: var(--muted); font-size: 10px; font-weight: 650; letter-spacing: .12em; text-transform: uppercase; }
+.onboarding-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 16px 0 18px; padding: 0; list-style: none; }
+.onboarding-steps li { display: flex; align-items: center; gap: 8px; min-height: 32px; color: var(--muted); font-size: 11px; }
+.onboarding-steps span { display: grid; width: 20px; height: 20px; border: 1px solid var(--line); border-radius: 999px; place-items: center; font-size: 10px; }
+.onboarding-steps .is-active { color: var(--text); }
+.onboarding-steps .is-active span { border-color: color-mix(in srgb, var(--accent) 50%, var(--line)); background: var(--accent-wash); color: var(--accent); }
+.onboarding-steps .is-done span { border-color: var(--ok); color: var(--ok); }
+.onboarding-copy { display: grid; gap: 10px; }
+.onboarding-copy h3 { margin: 0; font-size: 15px; letter-spacing: -.02em; }
+.onboarding-copy p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.onboarding-instruction, .onboarding-path { max-height: 180px; overflow: auto; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-subtle); color: var(--text-soft); font-family: var(--font-mono); font-size: 10px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.onboarding-status { color: var(--text-soft) !important; }
+.onboarding-warning { padding: 8px 10px; border-radius: 8px; background: var(--warn-wash); color: var(--warn) !important; }
+.onboarding-error { padding: 8px 10px; border-radius: 8px; background: var(--danger-wash); color: var(--danger) !important; }
+.onboarding-roots { display: grid; gap: 6px; }
+.onboarding-roots button { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: center; min-height: 36px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-subtle); text-align: left; }
+.onboarding-roots .is-selected { border-color: color-mix(in srgb, var(--accent) 38%, var(--line)); background: var(--accent-wash); }
+.onboarding-roots code { overflow: hidden; color: var(--text-soft); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.onboarding-scan { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: start; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-subtle); }
+.onboarding-scan > div { display: grid; gap: 3px; min-width: 0; }
+.onboarding-scan span, .onboarding-scan code { overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.onboarding-actions { flex-wrap: wrap; }
+.onboarding-actions .button { gap: 6px; }

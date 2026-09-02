@@ -27,9 +27,11 @@ vi.mock("../lib/api", () => ({
     writeTaskStdin: vi.fn(),
     gitDiff: vi.fn(),
     gitExecute: vi.fn(),
+    listExternalTools: vi.fn().mockResolvedValue({ agents: [], ides: [], terminals: [] }),
   },
   onTaskLog: vi.fn(async () => () => undefined),
   onTaskExited: vi.fn(async () => () => undefined),
+  onTaskPersistenceFailed: vi.fn(async () => () => undefined),
 }));
 
 import { Dashboard } from "../components/Dashboard";
@@ -72,7 +74,7 @@ function detail(): ProjectDetail {
     runtimeRequirements: [{ ecosystem: "node", label: "Node.js", constraint: "^18", source: "package.json#engines.node" }],
     projectFiles: [{ kind: "manifest", path: "package.json", source: "package.json" }],
     startHere: [{ taskId: "dev", kind: "dev", name: "Start development", source: "package.json#scripts.dev", inferred: true }],
-    recentEvents: [{ id: "event-1", projectId: "atlas", kind: "ide", title: "Opened IDE", detail: "vscode", createdAt: "2026-08-26T00:00:00Z" }],
+    recentEvents: [{ id: "event-1", projectId: "atlas", kind: "ide", title: "Opened IDE", detail: "vscode", createdAt: "2026-08-26T00:00:00Z" }, { id: "event-2", projectId: "atlas", kind: "open", title: "Opened project", detail: null, createdAt: "2026-08-26T00:01:00Z" }],
     lineage: null,
   };
 }
@@ -107,6 +109,7 @@ describe("overview workspace", () => {
         onOpenExplorer={vi.fn()}
         onOpenTerminal={vi.fn()}
         onOpenIde={vi.fn()}
+        onOpenAgent={vi.fn()}
         onOpenSettings={vi.fn()}
         onDescription={vi.fn()}
         onNotes={vi.fn()}
@@ -125,6 +128,7 @@ describe("overview workspace", () => {
     expect(continueRegion).toHaveTextContent("Start development");
     expect(continueRegion).toHaveTextContent("package.json#scripts.dev");
     expect(continueRegion).toHaveTextContent("Opened IDE");
+    expect(continueRegion).not.toHaveTextContent("Opened project");
     expect(within(continueRegion).getByLabelText("Ahead 0")).toBeInTheDocument();
     expect(within(continueRegion).getByLabelText("Behind 0")).toBeInTheDocument();
     const environmentRegion = screen.getByRole("region", { name: t("environment") });

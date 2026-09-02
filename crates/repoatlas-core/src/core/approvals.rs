@@ -147,84 +147,85 @@ impl Core {
         id: &str,
         approved: bool,
     ) -> Result<(PendingApproval, Option<TaskSpec>)> {
-        let mut approval = self.get_pending_approval(id)?;
-        if approval.status != "pending" {
-            return Err(Error::msg("approval is no longer pending"));
-        }
-        if approved && self.approval_task_changed(&approval)? {
-            let resolved_at = now();
-            let error = "task definition changed; approval denied";
-            let changed = self.with_immediate_transaction(|core| {
-                let changed = core.conn.execute(
-                    "UPDATE pending_approvals SET status = 'denied', error = ?1, resolved_at = ?2 WHERE id = ?3 AND status = 'pending'",
-                    params![error, resolved_at, id],
-                )?;
-                if changed == 1 {
-                    core.record_audit_event(
-                        &approval.origin,
-                        "deny_task_approval",
-                        "task",
-                        approval.task_id.as_deref().or(Some(&approval.project_id)),
-                        Some(error),
-                        "denied",
-                    )?;
-                }
-                Ok(changed)
-            })?;
-            if changed != 1 {
+        const CHANGED_ERROR: &str = "task definition changed; approval denied";
+        let (approval, spec, definition_changed) = self.with_immediate_transaction(|core| {
+            let mut approval = core.get_pending_approval(id)?;
+            if approval.status != "pending" {
                 return Err(Error::msg("approval is no longer pending"));
             }
-            return Err(Error::msg(error));
-        }
-        let next_status = if approved { "starting" } else { "denied" };
-        let resolved_at = if approved { None } else { Some(now()) };
-        let origin = approval.origin.clone();
-        let task_target = approval
-            .task_id
-            .clone()
-            .unwrap_or_else(|| approval.project_id.clone());
-        let audit_action = if approved {
-            "start_task_approval"
-        } else {
-            "deny_task_approval"
-        };
-        let title = approval.title.clone();
-        let changed = self.with_immediate_transaction(|core| {
+
+            // BEGIN IMMEDIATE covers this comparison, so a concurrent
+            // update_task cannot sneak in after the definition check.
+            if approved && core.approval_task_changed(&approval)? {
+                let resolved_at = now();
+                let changed = core.conn.execute(
+                    "UPDATE pending_approvals SET status = 'denied', error = ?1, resolved_at = ?2 WHERE id = ?3 AND status = 'pending'",
+                    params![CHANGED_ERROR, resolved_at, id],
+                )?;
+                if changed != 1 {
+                    return Err(Error::msg("approval is no longer pending"));
+                }
+                core.record_audit_event(
+                    &approval.origin,
+                    "deny_task_approval",
+                    "task",
+                    approval.task_id.as_deref().or(Some(&approval.project_id)),
+                    Some(CHANGED_ERROR),
+                    "denied",
+                )?;
+                approval.status = "denied".into();
+                approval.resolved_at = Some(resolved_at);
+                approval.error = Some(CHANGED_ERROR.into());
+                return Ok((approval, None, true));
+            }
+
+            let next_status = if approved { "starting" } else { "denied" };
+            let resolved_at = if approved { None } else { Some(now()) };
+            let task_target = approval
+                .task_id
+                .clone()
+                .unwrap_or_else(|| approval.project_id.clone());
+            let audit_action = if approved {
+                "start_task_approval"
+            } else {
+                "deny_task_approval"
+            };
             let changed = core.conn.execute(
                 "UPDATE pending_approvals SET status = ?1, resolved_at = ?2, error = NULL WHERE id = ?3 AND status = 'pending'",
                 params![next_status, resolved_at, id],
             )?;
-            if changed == 1 {
-                core.record_audit_event(
-                    &origin,
-                    audit_action,
-                    "task",
-                    Some(&task_target),
-                    Some(&title),
-                    next_status,
-                )?;
+            if changed != 1 {
+                return Err(Error::msg("approval is no longer pending"));
             }
-            Ok(changed)
+            core.record_audit_event(
+                &approval.origin,
+                audit_action,
+                "task",
+                Some(&task_target),
+                Some(&approval.title),
+                next_status,
+            )?;
+            approval.status = next_status.into();
+            approval.resolved_at = resolved_at;
+            approval.error = None;
+            let spec = if approved {
+                Some(TaskSpec {
+                    project_id: approval.project_id.clone(),
+                    task_id: approval.task_id.clone(),
+                    kind: approval.kind.clone(),
+                    executable: approval.executable.clone().unwrap_or_default(),
+                    argv: approval.argv.clone(),
+                    cwd: approval.cwd.clone(),
+                    shell_mode: approval.shell_mode,
+                })
+            } else {
+                None
+            };
+            Ok((approval, spec, false))
         })?;
-        if changed != 1 {
-            return Err(Error::msg("approval is no longer pending"));
+        if definition_changed {
+            return Err(Error::msg(CHANGED_ERROR));
         }
-        approval.status = next_status.into();
-        approval.resolved_at = resolved_at;
-        approval.error = None;
-        let spec = if approved {
-            Some(TaskSpec {
-                project_id: approval.project_id.clone(),
-                task_id: approval.task_id.clone(),
-                kind: approval.kind.clone(),
-                executable: approval.executable.clone().unwrap_or_default(),
-                argv: approval.argv.clone(),
-                cwd: approval.cwd.clone(),
-                shell_mode: approval.shell_mode,
-            })
-        } else {
-            None
-        };
         Ok((approval, spec))
     }
 

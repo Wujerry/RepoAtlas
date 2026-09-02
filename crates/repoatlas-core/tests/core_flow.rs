@@ -471,6 +471,81 @@ fn command_broker_runs_structured_argv_and_rejects_shell() {
     }
 }
 
+#[cfg(windows)]
+#[test]
+fn command_broker_stop_stops_descendant_output() {
+    let probe = std::process::Command::new("node").arg("--version").output();
+    if probe
+        .as_ref()
+        .map(|output| !output.status.success())
+        .unwrap_or(true)
+    {
+        // The stop guarantee itself is Windows Job Object based; skip only
+        // when node is unavailable to drive a multi-process fixture.
+        return;
+    }
+    let dir = tempdir().unwrap();
+    write(
+        &dir.path().join("runner-app/package.json"),
+        r#"{"name":"runner-app"}"#,
+    );
+    write(
+        &dir.path().join("runner-app/runner.cjs"),
+        r#"
+const { spawn } = require('child_process');
+const grand = spawn(process.execPath, ['-e', 'setInterval(function () { process.stdout.write("grand-tick\n"); }, 80);'], { stdio: ['ignore', 'inherit', 'inherit'] });
+grand.on('error', function () {});
+process.stdout.write('ready\n');
+setInterval(function () { process.stdout.write('parent-tick\n'); }, 80);
+"#,
+    );
+    let db = dir.path().join("core.sqlite");
+    let core = Core::open(&db).unwrap();
+    let project = core
+        .register_project(dir.path().join("runner-app"))
+        .unwrap();
+    let broker = Broker::new(dir.path().join("logs")).unwrap();
+    let run = broker
+        .start(
+            core.connection(),
+            TaskSpec {
+                project_id: project.id.clone(),
+                task_id: None,
+                kind: "run".into(),
+                executable: "node".into(),
+                argv: vec!["runner.cjs".into()],
+                cwd: Some(project.canonical_path.clone()),
+                shell_mode: false,
+            },
+            |_| {},
+            |_, _| {},
+        )
+        .unwrap();
+
+    let log_path = dir.path().join("logs").join(format!("{}.log", run.id));
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_secs(5) {
+        match fs::read_to_string(&log_path) {
+            Ok(content) if content.contains("grand-tick") => break,
+            _ => std::thread::sleep(Duration::from_millis(50)),
+        }
+    }
+    assert!(fs::read_to_string(&log_path)
+        .unwrap()
+        .contains("grand-tick"));
+
+    broker.stop(core.connection(), &run.id).unwrap();
+    assert!(broker.active().unwrap().iter().all(|id| id != &run.id));
+
+    let size_after_stop = fs::metadata(&log_path).unwrap().len();
+    std::thread::sleep(Duration::from_millis(1200));
+    let size_later = fs::metadata(&log_path).unwrap().len();
+    assert_eq!(
+        size_after_stop, size_later,
+        "descendant processes kept writing after stop"
+    );
+}
+
 #[test]
 fn runtime_lock_allows_mcp_without_duplicate_desktop_recovery() {
     let dir = tempdir().unwrap();
@@ -495,7 +570,11 @@ fn windows_script_launcher_does_not_evaluate_task_arguments() {
         &project_path.join("package.json"),
         r#"{"name":"script-safety"}"#,
     );
-    let script = project_path.join("build&release.cmd");
+    // The directory deliberately mixes spaces and metacharacters: the
+    // launcher addresses the script by its bare file name, which cmd.exe
+    // resolves against the task working directory, while the quoted
+    // argument must reach the script as data.
+    let script = project_path.join("build.cmd");
     write(
         &script,
         "@echo off\r\n> \"%~dp0ran.txt\" echo ran\r\nexit /b 0\r\n",
@@ -529,6 +608,45 @@ fn windows_script_launcher_does_not_evaluate_task_arguments() {
     }
     assert!(project_path.join("ran.txt").is_file());
     assert!(!project_path.join("injected.txt").exists());
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_script_launcher_rejects_unrepresentable_script_paths_without_leaving_a_running_record() {
+    let dir = tempdir().unwrap();
+    let project_path = dir.path().join("project & tools");
+    write(
+        &project_path.join("package.json"),
+        r#"{"name":"script-safety"}"#,
+    );
+    // cmd.exe /S strips the payload quotes, so a script whose own name
+    // carries metacharacters has no safe command-line form. The start
+    // attempt must fail loudly and close the database record instead of
+    // launching something unintended.
+    let script = project_path.join("build&release.cmd");
+    write(&script, "@echo off\r\nexit /b 0\r\n");
+    let db = dir.path().join("core.sqlite");
+    let core = Core::open(&db).unwrap();
+    let project = core.register_project(&project_path).unwrap();
+    let broker = Broker::new(dir.path().join("logs")).unwrap();
+    let error = broker
+        .start(
+            core.connection(),
+            TaskSpec {
+                project_id: project.id,
+                task_id: None,
+                kind: "build".into(),
+                executable: script.to_string_lossy().into_owned(),
+                argv: vec![],
+                cwd: Some(project.canonical_path),
+                shell_mode: false,
+            },
+            |_| {},
+            |_, _| {},
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("cannot be expressed safely"));
+    assert!(core.list_active_task_runs().unwrap().is_empty());
 }
 
 #[cfg(windows)]
@@ -711,6 +829,171 @@ fn export_import_and_backup_roundtrip() {
             .len(),
         1
     );
+}
+
+#[test]
+fn import_rejects_filesystem_root_and_non_directory_without_writes() {
+    let dir = tempdir().unwrap();
+    let non_directory = dir.path().join("not-a-directory");
+    write(&non_directory, "not a directory");
+    let filesystem_root = if cfg!(windows) {
+        std::path::PathBuf::from(r"C:\")
+    } else {
+        std::path::PathBuf::from("/")
+    };
+
+    for invalid_path in [filesystem_root, non_directory] {
+        let text = serde_json::json!({
+            "format": "repoatlas-export",
+            "version": 3,
+            "exportedAt": "2026-08-31T00:00:00Z",
+            "settings": {
+                "theme": "dark",
+                "locale": "en",
+                "uiFont": "",
+                "consoleFont": ""
+            },
+            "scanRoots": [{
+                "id": "imported-root",
+                "path": invalid_path.to_string_lossy(),
+                "createdAt": "2026-08-31T00:00:00Z",
+                "lastScannedAt": null
+            }],
+            "projects": []
+        })
+        .to_string();
+        let core = Core::open_in_memory().unwrap();
+
+        assert!(core.import_json(&text).is_err());
+        assert!(core.list_scan_roots().unwrap().is_empty());
+        assert!(core
+            .list_projects(ProjectQuery::default())
+            .unwrap()
+            .is_empty());
+        let settings: i64 = core
+            .connection()
+            .query_row("SELECT COUNT(*) FROM settings", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(settings, 0);
+    }
+}
+
+#[test]
+fn invalid_import_icon_rolls_back_settings_roots_and_projects() {
+    let dir = tempdir().unwrap();
+    let project = dir.path().join("icon-import-app");
+    write(
+        &project.join("package.json"),
+        r#"{"name":"icon-import-app"}"#,
+    );
+    let text = serde_json::json!({
+        "format": "repoatlas-export",
+        "version": 3,
+        "exportedAt": "2026-08-31T00:00:00Z",
+        "settings": {
+            "theme": "dark",
+            "locale": "en",
+            "uiFont": "",
+            "consoleFont": ""
+        },
+        "scanRoots": [{
+            "id": "imported-root",
+            "path": dir.path().to_string_lossy(),
+            "createdAt": "2026-08-31T00:00:00Z",
+            "lastScannedAt": null
+        }],
+        "projects": [{
+            "canonicalPath": project.to_string_lossy(),
+            "displayName": "icon-import-app",
+            "notes": null,
+            "description": null,
+            "favorite": false,
+            "archived": false,
+            "tags": [],
+            "lastOpenedAt": null,
+            "icon": {
+                "mimeType": "image/png",
+                "data": "not-base64",
+                "sourceName": "invalid.png"
+            }
+        }]
+    })
+    .to_string();
+    let core = Core::open_in_memory().unwrap();
+
+    assert!(core.import_json(&text).is_err());
+    assert!(core.list_scan_roots().unwrap().is_empty());
+    assert!(core
+        .list_projects(ProjectQuery::default())
+        .unwrap()
+        .is_empty());
+    let settings: i64 = core
+        .connection()
+        .query_row("SELECT COUNT(*) FROM settings", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(settings, 0);
+}
+
+#[test]
+fn authorized_scan_root_survives_export_import_and_links_projects() {
+    let dir = tempdir().unwrap();
+    let project = dir.path().join("rooted-app");
+    write(&project.join("package.json"), r#"{"name":"rooted-app"}"#);
+
+    let source = Core::open_in_memory().unwrap();
+    let root = source.add_scan_root(dir.path()).unwrap();
+    let registered = source.register_project(&project).unwrap();
+    assert_eq!(registered.scan_root_id.as_deref(), Some(root.id.as_str()));
+    let exported = source.export_json().unwrap();
+
+    let destination = Core::open_in_memory().unwrap();
+    assert_eq!(destination.import_json(&exported).unwrap(), 1);
+    let roots = destination.list_scan_roots().unwrap();
+    assert_eq!(roots.len(), 1);
+    assert_eq!(
+        roots[0].path,
+        repoatlas_core::paths::canonicalize(dir.path())
+            .unwrap()
+            .to_string_lossy()
+    );
+    let imported = destination.list_projects(ProjectQuery::default()).unwrap();
+    assert_eq!(imported.len(), 1);
+    assert_eq!(
+        imported[0].scan_root_id.as_deref(),
+        Some(roots[0].id.as_str())
+    );
+}
+
+#[test]
+fn project_readme_reader_rejects_an_external_symlink() {
+    let project = tempdir().unwrap();
+    let outside = tempdir().unwrap();
+    fs::write(outside.path().join("secret.md"), "outside secret").unwrap();
+
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(
+        outside.path().join("secret.md"),
+        project.path().join("README.md"),
+    )
+    .unwrap();
+    #[cfg(windows)]
+    if std::os::windows::fs::symlink_file(
+        outside.path().join("secret.md"),
+        project.path().join("README.md"),
+    )
+    .is_err()
+    {
+        return;
+    }
+    #[cfg(not(any(unix, windows)))]
+    return;
+
+    let core = Core::open_in_memory().unwrap();
+    let summary = core.register_project(project.path()).unwrap();
+    assert!(core.read_project_readme(&summary.id).is_err());
+    assert!(core
+        .read_project_document(&summary.id, "README.md")
+        .is_err());
 }
 
 #[test]
@@ -1123,6 +1406,26 @@ fn relocation_preserves_the_record_and_rejects_registered_targets() {
         core.get_project(&occupied.id).unwrap().project.id,
         occupied.id
     );
+}
+
+#[test]
+fn repeated_project_opens_do_not_fill_recent_activity() {
+    let dir = tempdir().unwrap();
+    let project_path = dir.path().join("open-app");
+    write(&project_path.join("README.md"), "# open-app");
+    let core = Core::open_in_memory().unwrap();
+    let project = core.register_project(&project_path).unwrap();
+
+    core.mark_opened(&project.id).unwrap();
+    core.mark_opened(&project.id).unwrap();
+    core.mark_opened(&project.id).unwrap();
+
+    let events = core.list_project_events(&project.id, 20).unwrap();
+    let opens = events
+        .iter()
+        .filter(|event| event.kind == "open" && event.title == "Opened project")
+        .count();
+    assert_eq!(opens, 1);
 }
 
 #[test]

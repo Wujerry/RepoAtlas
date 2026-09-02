@@ -3,13 +3,30 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "description": "A local-first control center for the code you already have.",
+  "author": "wujer",
+  "license": "MIT",
+  "homepage": "https://github.com/wujer/RepoAtlas#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wujer/RepoAtlas.git",
+    "directory": "."
+  },
+  "bugs": {
+    "url": "https://github.com/wujer/RepoAtlas/issues"
+  },
+  "engines": {
+    "node": ">=24.11.0 <25"
+  },
+  "packageManager": "pnpm@10.20.0",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
     "typecheck": "tsc --noEmit",
-    "test": "vitest"
+    "test": "vitest",
+    "check:version": "node scripts/check-version.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
@@ -19,6 +36,10 @@
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.7.2",
     "@tauri-apps/plugin-opener": "^2",
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.10.1",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "framer-motion": "^13.1.0",
@@ -26,6 +47,7 @@
     "react-dom": "^19.1.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
+    "simple-icons": "16.29.0",
     "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {

@@ -8,6 +8,8 @@
 .help-card-icon { flex: 0 0 auto; width: 24px; height: 24px; color: var(--accent); }
 .help-card h2 { margin: 0 0 7px; font-size: 16px; }
 .help-card p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.65; }
+.help-card-action { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 14px; }
+.help-card-action p { max-width: 42ch; }
 .help-mcp { grid-column: 1 / -1; display: block; }
 .help-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 30px; margin-bottom: 18px; }
 .help-section-heading > div { display: flex; gap: 12px; }
@@ -37,4 +39,3 @@
 .settings-row strong { font-size: 13px; }
 .settings-row span { font-size: 11px; }
 .settings-card-number { flex: 0 0 auto; padding-top: 4px; color: var(--accent); font-family: var(--font-mono); font-size: 10px; font-weight: 680; letter-spacing: .12em; }
-

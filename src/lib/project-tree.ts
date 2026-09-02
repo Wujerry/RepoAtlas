@@ -35,6 +35,8 @@ export interface ProjectTreeProjectRow {
 
 export type ProjectTreeRow = ProjectTreeGroupRow | ProjectTreeProjectRow;
 
+export type ProjectSort = "default" | "recent-opened" | "recent-updated" | "recent-committed" | "name" | "path";
+
 interface ParsedPath {
   segments: string[];
   windows: boolean;
@@ -114,7 +116,34 @@ function compareProjects(a: ProjectSummary, b: ProjectSummary): number {
   return compareLabels(aKey, bKey) || compareLabels(a.displayName, b.displayName) || compareLabels(a.canonicalPath, b.canonicalPath);
 }
 
-export function buildProjectTree(projects: readonly ProjectSummary[]): ProjectPathGroup[] {
+const timeValue = (value: string | null | undefined): number => (value ? Date.parse(value) : 0);
+
+export function sortProjects(projects: readonly ProjectSummary[], sort: ProjectSort): ProjectSummary[] {
+  if (sort === "default") return [...projects];
+  const sorted = [...projects];
+  const byTimeDesc = (pick: (project: ProjectSummary) => string | null, fallback: (project: ProjectSummary) => string | null) => (a: ProjectSummary, b: ProjectSummary): number =>
+    timeValue(pick(b)) - timeValue(pick(a)) || timeValue(fallback(b)) - timeValue(fallback(a)) || compareLabels(a.displayName, b.displayName);
+  switch (sort) {
+    case "recent-opened":
+      sorted.sort(byTimeDesc((project) => project.lastOpenedAt, (project) => project.updatedAt));
+      break;
+    case "recent-updated":
+      sorted.sort(byTimeDesc((project) => project.updatedAt, (project) => project.updatedAt));
+      break;
+    case "recent-committed":
+      sorted.sort(byTimeDesc((project) => project.lastCommitAt, (project) => project.updatedAt));
+      break;
+    case "name":
+      sorted.sort((a, b) => compareLabels(a.displayName, b.displayName) || compareLabels(a.canonicalPath, b.canonicalPath));
+      break;
+    case "path":
+      sorted.sort((a, b) => compareLabels(a.canonicalPath, b.canonicalPath) || compareLabels(a.displayName, b.displayName));
+      break;
+  }
+  return sorted;
+}
+
+export function buildProjectTree(projects: readonly ProjectSummary[], sort: ProjectSort = "default"): ProjectPathGroup[] {
   const roots = new Map<string, ProjectPathGroup>();
 
   for (const project of projects) {
@@ -150,7 +179,7 @@ export function buildProjectTree(projects: readonly ProjectSummary[]): ProjectPa
     groups.sort(compareGroups);
     for (const group of groups) {
       group.children.sort(compareGroups);
-      group.projects.sort(compareProjects);
+      group.projects = sort === "default" ? [...group.projects].sort(compareProjects) : sortProjects(group.projects, sort);
       sortGroups(group.children);
       group.projectCount = group.projects.length + group.children.reduce((count, child) => count + child.projectCount, 0);
     }
@@ -183,7 +212,7 @@ export function flattenProjectTree(groups: readonly ProjectPathGroup[], expanded
     if (!expanded.has(group.id)) return;
 
     const childGroups = [...group.children].sort(compareGroups);
-    const childProjects = [...group.projects].sort(compareProjects);
+    const childProjects = group.projects;
     const childCount = childGroups.length + childProjects.length;
     childGroups.forEach((child, index) => {
       appendGroup(child, group.id, index + 1, childCount);

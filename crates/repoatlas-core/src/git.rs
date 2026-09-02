@@ -47,7 +47,7 @@ pub fn repository_root(path: &Path) -> Option<std::path::PathBuf> {
 pub fn status(path: &Path) -> Result<GitStatus> {
     ensure_git(path)?;
     let branch = git_optional(path, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default();
-    let porcelain = git_text(path, &["status", "--porcelain=v1", "-uall"])?;
+    let porcelain = git_status_porcelain(path)?;
     let files = parse_porcelain(&porcelain);
     let last = git_optional(path, &["log", "-1", "--format=%H%x1f%s%x1f%cI"]);
     let (last_commit_sha, last_commit_subject, last_commit_at) = match last {
@@ -220,23 +220,34 @@ fn strings(args: &[&str]) -> Vec<String> {
     args.iter().map(|value| (*value).to_string()).collect()
 }
 
-fn parse_porcelain(raw: &str) -> Vec<GitFileStatus> {
-    raw.lines()
-        .filter(|line| line.len() >= 4)
-        .filter(|line| !line.starts_with("##"))
-        .map(|line| {
-            let staged_code = line.as_bytes()[0] as char;
-            let unstaged_code = line.as_bytes()[1] as char;
-            let path = line[3..].trim().replace(" -> ", " ");
-            let staged = staged_code != ' ' && staged_code != '?';
-            let code = if staged { staged_code } else { unstaged_code };
-            GitFileStatus {
-                path,
-                status: status_name(code),
-                staged,
-            }
-        })
-        .collect()
+fn parse_porcelain(raw: &[u8]) -> Vec<GitFileStatus> {
+    let records = raw.split(|byte| *byte == 0).collect::<Vec<_>>();
+    let mut files = Vec::new();
+    let mut index = 0;
+    while index < records.len() {
+        let record = records[index];
+        index += 1;
+        if record.len() < 4 || record.starts_with(b"##") {
+            continue;
+        }
+        let staged_code = record[0] as char;
+        let unstaged_code = record[1] as char;
+        let path = record[3..].to_vec();
+        // With -z, a rename/copy record stores the destination first and the
+        // source in the following NUL-delimited record. Git operations use
+        // the destination path, so intentionally discard the source here.
+        if matches!(staged_code, 'R' | 'C') && index < records.len() {
+            index += 1;
+        }
+        let staged = staged_code != ' ' && staged_code != '?';
+        let code = if staged { staged_code } else { unstaged_code };
+        files.push(GitFileStatus {
+            path: String::from_utf8_lossy(&path).into_owned(),
+            status: status_name(code),
+            staged,
+        });
+    }
+    files
 }
 
 fn status_name(code: char) -> String {
@@ -299,12 +310,44 @@ fn git_optional(path: &Path, args: &[&str]) -> Option<String> {
 }
 
 fn git_run(path: &Path, args: &[String]) -> Result<GitCommandResult> {
-    let mut child = Command::new("git")
+    let result = git_run_raw(path, args)?;
+    Ok(GitCommandResult {
+        ok: result.ok,
+        stdout: String::from_utf8_lossy(&result.stdout).trim().to_string(),
+        stderr: String::from_utf8_lossy(&result.stderr).trim().to_string(),
+    })
+}
+
+fn git_status_porcelain(path: &Path) -> Result<Vec<u8>> {
+    let args = strings(&["status", "--porcelain=v1", "-z", "-uall"]);
+    let result = git_run_raw(path, &args)?;
+    if result.ok {
+        Ok(result.stdout)
+    } else {
+        Err(Error::msg(if result.stderr.is_empty() {
+            String::from_utf8_lossy(&result.stdout).trim().to_string()
+        } else {
+            String::from_utf8_lossy(&result.stderr).trim().to_string()
+        }))
+    }
+}
+
+struct RawGitCommandResult {
+    ok: bool,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+fn git_run_raw(path: &Path, args: &[String]) -> Result<RawGitCommandResult> {
+    let mut command = Command::new("git");
+    command
         .args(args)
         .current_dir(path)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    crate::process::suppress_console_window(&mut command);
+    let mut child = command
         .spawn()
         .map_err(|err| Error::msg(format!("git is unavailable: {err}")))?;
     let stdout = child.stdout.take().map(read_pipe_limited);
@@ -328,10 +371,10 @@ fn git_run(path: &Path, args: &[String]) -> Result<GitCommandResult> {
     };
     let stdout = receive_pipe(stdout, deadline)?;
     let stderr = receive_pipe(stderr, deadline)?;
-    Ok(GitCommandResult {
+    Ok(RawGitCommandResult {
         ok: status.success(),
-        stdout: String::from_utf8_lossy(&stdout).trim().to_string(),
-        stderr: String::from_utf8_lossy(&stderr).trim().to_string(),
+        stdout,
+        stderr,
     })
 }
 
@@ -436,4 +479,39 @@ fn empty_to_none(value: String) -> Option<String> {
 
 fn now() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_porcelain;
+
+    #[test]
+    fn parses_nul_terminated_renames_using_the_destination_path() {
+        let files = parse_porcelain(b"R  src/foo bar.rs\0old.txt\0");
+
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "src/foo bar.rs");
+        assert_eq!(files[0].status, "renamed");
+        assert!(files[0].staged);
+    }
+
+    #[test]
+    fn preserves_spaces_quotes_and_non_ascii_in_paths() {
+        let files = parse_porcelain(" M src/quoted \"名字\".rs\0".as_bytes());
+
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "src/quoted \"名字\".rs");
+        assert_eq!(files[0].status, "modified");
+        assert!(!files[0].staged);
+    }
+
+    #[test]
+    fn parses_an_ordinary_modified_file() {
+        let files = parse_porcelain(b" M src/main.rs\0");
+
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "src/main.rs");
+        assert_eq!(files[0].status, "modified");
+        assert!(!files[0].staged);
+    }
 }

@@ -1,15 +1,23 @@
 import { Dialog } from "@base-ui/react/dialog";
 import {
+  ArrowsClockwise,
   ArrowDown,
   ArrowElbowDownLeft,
   ArrowUp,
+  DownloadSimple,
   FolderSimple,
   FolderSimplePlus,
+  GearSix,
+  ListBullets,
   Lightning,
   MagnifyingGlass,
+  MapPin,
+  Question,
+  ShieldCheck,
   Scan,
   Sparkle,
   Star,
+  X,
 } from "@phosphor-icons/react";
 import { AnimatePresence, motion, MotionConfig } from "framer-motion";
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
@@ -38,6 +46,15 @@ function itemDomId(listId: string, key: string) {
 }
 
 function actionIcon(id: string) {
+  if (id === "open-help") return <Question size={18} weight="duotone" aria-hidden />;
+  if (id === "open-settings") return <GearSix size={18} weight="duotone" aria-hidden />;
+  if (id === "open-tasks") return <ListBullets size={18} weight="duotone" aria-hidden />;
+  if (id === "open-approvals") return <ShieldCheck size={18} weight="duotone" aria-hidden />;
+  if (id === "refresh-project") return <ArrowsClockwise size={18} weight="duotone" aria-hidden />;
+  if (id === "reveal-project") return <MapPin size={18} weight="duotone" aria-hidden />;
+  if (id === "favorite-project") return <Star size={18} weight="duotone" aria-hidden />;
+  if (id === "check-updates") return <DownloadSimple size={18} weight="duotone" aria-hidden />;
+  if (id === "clear-filters") return <X size={18} weight="duotone" aria-hidden />;
   if (id === "scan-all") return <Scan size={18} weight="duotone" aria-hidden />;
   if (id === "add-root") return <FolderSimplePlus size={18} weight="duotone" aria-hidden />;
   if (id === "register") return <FolderSimple size={18} weight="duotone" aria-hidden />;

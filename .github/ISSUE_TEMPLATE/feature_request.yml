@@ -1,0 +1,37 @@
+name: Feature request
+description: Suggest a focused improvement to RepoAtlas
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        RepoAtlas is a local-first desktop application. Explain how the proposal preserves explicit Scan Root authorization, local data ownership, and reversible actions.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What workflow is difficult today, and who experiences it?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the smallest useful behavior, including any Project, Task Definition, Task Run, or Pending Approval semantics.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: boundaries
+    attributes:
+      label: Safety boundary
+      options:
+        - label: This proposal does not require RepoAtlas to delete, move, or edit a real project directory implicitly.
+          required: true
+        - label: If external execution or external AI evidence is involved, the proposal includes an explicit approval/review boundary.
+          required: true

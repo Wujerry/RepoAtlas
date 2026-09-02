@@ -442,14 +442,12 @@ impl Core {
         {
             return Err(Error::msg("unsupported project document"));
         }
-        let project_root = paths::canonicalize(Path::new(&detail.project.canonical_path))?;
-        let file = paths::canonicalize(&project_root.join(relative))?;
-        if !paths::is_within(&file, &project_root) || !file.is_file() {
-            return Err(Error::msg("document path is outside the project"));
-        }
+        let file = environment::open_regular_project_file(
+            Path::new(&detail.project.canonical_path),
+            relative,
+        )?;
         let mut bytes = Vec::with_capacity(MAX_DOCUMENT_BYTES + 1);
-        fs::File::open(&file)?
-            .take((MAX_DOCUMENT_BYTES + 1) as u64)
+        file.take((MAX_DOCUMENT_BYTES + 1) as u64)
             .read_to_end(&mut bytes)?;
         let truncated = bytes.len() > MAX_DOCUMENT_BYTES;
         bytes.truncate(MAX_DOCUMENT_BYTES);
@@ -1037,7 +1035,7 @@ impl Core {
             "UPDATE projects SET last_opened_at = ?1, updated_at = ?1 WHERE id = ?2",
             params![now(), id],
         )?;
-        self.record_project_event(id, "open", "Opened project", None)?;
+        self.record_open_activity(id)?;
         self.get_project_summary(id)?
             .ok_or_else(|| Error::NotFound(id.into()))
     }
@@ -1578,6 +1576,10 @@ impl Core {
         crate::broker::list_runs(&self.conn, project_id)
     }
 
+    pub fn list_active_task_runs(&self) -> Result<Vec<crate::models::TaskRun>> {
+        crate::broker::list_active_runs(&self.conn)
+    }
+
     pub fn get_task_run(&self, run_id: &str) -> Result<crate::models::TaskRun> {
         crate::broker::get_run(&self.conn, run_id)
     }
@@ -1777,6 +1779,24 @@ impl Core {
             params![event.id, event.project_id, event.kind, event.title, event.detail, event.created_at],
         )?;
         Ok(event)
+    }
+
+    fn record_open_activity(&self, id: &str) -> Result<Option<ProjectEvent>> {
+        const OPEN_EVENT_KIND: &str = "open";
+        const OPEN_EVENT_TITLE: &str = "Opened project";
+        let recent_open: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT id FROM project_events WHERE project_id = ?1 AND kind = ?2 AND title = ?3 AND datetime(created_at) >= datetime('now', '-30 minutes') ORDER BY datetime(created_at) DESC, id DESC LIMIT 1",
+                params![id, OPEN_EVENT_KIND, OPEN_EVENT_TITLE],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if recent_open.is_some() {
+            return Ok(None);
+        }
+        self.record_project_event(id, OPEN_EVENT_KIND, OPEN_EVENT_TITLE, None)
+            .map(Some)
     }
 
     pub fn record_audit_event(

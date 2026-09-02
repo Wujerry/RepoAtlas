@@ -1,0 +1,58 @@
+name: Bug report
+description: Report a reproducible problem in RepoAtlas
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please remove personal paths, credentials, database files, and task logs from examples and attachments.
+  - type: input
+    id: version
+    attributes:
+      label: RepoAtlas version
+      description: Use the release tag or commit if known.
+      placeholder: v0.1.0 or main@abc1234
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows x64
+        - macOS Intel
+        - macOS Apple Silicon
+        - Linux development environment
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include the smallest safe reproduction and the affected Project or Scan Root shape without private paths.
+      placeholder: |
+        1. Add a Scan Root containing ...
+        2. Refresh discovery ...
+        3. Open the Project ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Safe diagnostics
+      description: Paste redacted error text or screenshots. Never attach SQLite/WAL/SHM files, credentials, or private project data.
+      render: text

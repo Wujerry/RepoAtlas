@@ -1,7 +1,8 @@
 use repoatlas_core::{
-    scan::ScanEngine, AppSettings, AtlasReport, Broker, Core, GitDiff, GitOp, GitStatus, LogChunk,
-    PendingApproval, ProjectPatch, ProjectQuery, ProjectRemoval, ProjectSummary, ScanProgress,
-    ScanResult, ScanRoot, ScanRootRemoval, SearchHit, TaskRun, TaskSpec,
+    launch, scan::ScanEngine, AppSettings, AtlasReport, Broker, Core, ExternalTools, GitDiff,
+    GitOp, GitStatus, LogChunk, PendingApproval, ProjectPatch, ProjectQuery, ProjectRemoval,
+    ProjectSummary, ScanProgress, ScanResult, ScanRoot, ScanRootRemoval, SearchHit, TaskRun,
+    TaskSpec,
 };
 use serde::Serialize;
 use std::path::PathBuf;
@@ -14,6 +15,51 @@ pub struct AppState {
     pub core: Mutex<Core>,
     pub broker: Broker,
     pub cancel: Arc<AtomicBool>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TaskPersistenceFailure {
+    run_id: String,
+    error: String,
+    run: Option<TaskRun>,
+}
+
+fn retry_core_write<T, F>(mut operation: F) -> repoatlas_core::Result<T>
+where
+    F: FnMut() -> repoatlas_core::Result<T>,
+{
+    const ATTEMPTS: usize = 5;
+    let mut last_error = None;
+    for attempt in 1..=ATTEMPTS {
+        match operation() {
+            Ok(value) => return Ok(value),
+            Err(error) => {
+                last_error = Some(error);
+                if attempt < ATTEMPTS {
+                    std::thread::yield_now();
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+            }
+        }
+    }
+    Err(last_error.expect("retry_core_write always attempts at least once"))
+}
+
+fn emit_task_persistence_failure(
+    app: &AppHandle,
+    run_id: &str,
+    error: impl Into<String>,
+    run: Option<TaskRun>,
+) {
+    let payload = TaskPersistenceFailure {
+        run_id: run_id.into(),
+        error: error.into(),
+        run,
+    };
+    if let Err(emit_error) = app.emit("task://persistence-failed", payload) {
+        eprintln!("could not emit task persistence failure for {run_id}: {emit_error}");
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -31,7 +77,50 @@ pub struct McpSetupInfo {
     pub platform: String,
     pub binary_name: String,
     pub binary_path: Option<String>,
+    pub binary_origin: Option<String>,
     pub workspace_path: Option<String>,
+}
+
+fn is_cargo_target_artifact(path: &std::path::Path) -> bool {
+    path.ancestors().any(|dir| {
+        matches!(
+            dir.file_name().and_then(|name| name.to_str()),
+            Some("debug") | Some("release")
+        ) && dir
+            .parent()
+            .is_some_and(|parent| parent.file_name() == Some(std::ffi::OsStr::new("target")))
+    })
+}
+
+#[cfg(test)]
+mod mcp_setup_tests {
+    use super::is_cargo_target_artifact;
+    use std::path::Path;
+
+    #[test]
+    fn classifies_cargo_target_artifacts_as_development() {
+        let debug_binary = Path::new("F:\\code\\RepoAtlas")
+            .join("target")
+            .join("debug")
+            .join("repoatlas-mcp.exe");
+        let release_binary = Path::new("F:\\code\\RepoAtlas")
+            .join("target")
+            .join("release")
+            .join("repoatlas-mcp.exe");
+        assert!(is_cargo_target_artifact(&debug_binary));
+        assert!(is_cargo_target_artifact(&release_binary));
+    }
+
+    #[test]
+    fn classifies_installed_binaries_as_installed() {
+        let installed = Path::new("C:\\Program Files\\RepoAtlas").join("repoatlas-mcp.exe");
+        let resource_binary = Path::new("C:\\Program Files\\RepoAtlas")
+            .join("resources")
+            .join("repoatlas-mcp")
+            .join("repoatlas-mcp.exe");
+        assert!(!is_cargo_target_artifact(&installed));
+        assert!(!is_cargo_target_artifact(&resource_binary));
+    }
 }
 
 #[tauri::command]
@@ -69,14 +158,22 @@ fn update_settings(
         .map_err(err_to_string)
 }
 
-fn resolve_api_key(profile: &repoatlas_core::ProviderProfile, explicit: &str) -> String {
-    if !explicit.is_empty() {
-        return explicit.to_string();
+fn resolve_api_key(
+    profile: &repoatlas_core::ProviderProfile,
+    explicit: &str,
+) -> Result<String, String> {
+    if !explicit.trim().is_empty() {
+        return Ok(explicit.trim().to_string());
     }
-    if profile.credential_ref.is_empty() {
-        return String::new();
+    let stored =
+        repoatlas_core::secrets::load_secret(&profile.id, profile.credential_blob.as_deref())
+            .map_err(err_to_string)?;
+    if !stored.trim().is_empty() {
+        return Ok(stored);
     }
-    std::env::var(&profile.credential_ref).unwrap_or_default()
+    Ok(repoatlas_core::secrets::resolve_legacy_env(
+        &profile.credential_ref,
+    ))
 }
 
 #[tauri::command]
@@ -240,7 +337,7 @@ async fn summarize_project(
             .map_err(err_to_string)?;
             (profile, evidence)
         };
-        let key = resolve_api_key(&profile, &api_key);
+        let key = resolve_api_key(&profile, &api_key)?;
         let caller = repoatlas_core::ai::AiCaller {
             profile: profile.clone(),
             api_key: key,
@@ -300,7 +397,7 @@ async fn ask_project(
                 .map_err(err_to_string)?;
             (profile, evidence, history)
         };
-        let key = resolve_api_key(&profile, &api_key);
+        let key = resolve_api_key(&profile, &api_key)?;
         let caller = repoatlas_core::ai::AiCaller {
             profile: profile.clone(),
             api_key: key,
@@ -479,6 +576,12 @@ fn mcp_setup_info(app: AppHandle) -> Result<McpSetupInfo, String> {
     if let Ok(resource_dir) = app.path().resource_dir() {
         candidates.push(resource_dir.join(&binary_name));
         candidates.push(resource_dir.join("repoatlas-mcp").join(&binary_name));
+        candidates.push(
+            resource_dir
+                .join("resources")
+                .join("repoatlas-mcp")
+                .join(&binary_name),
+        );
     }
     let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -494,11 +597,19 @@ fn mcp_setup_info(app: AppHandle) -> Result<McpSetupInfo, String> {
         candidates.push(workspace.join("target").join("debug").join(&binary_name));
     }
     let binary_path = candidates.into_iter().find(|path| path.is_file());
+    let binary_origin = binary_path.as_ref().map(|path| {
+        if is_cargo_target_artifact(path) {
+            "development"
+        } else {
+            "installed"
+        }
+    });
     Ok(McpSetupInfo {
         db_path: db_path(&app)?.to_string_lossy().into_owned(),
         platform: std::env::consts::OS.to_string(),
         binary_name,
         binary_path: binary_path.map(|path| path.to_string_lossy().into_owned()),
+        binary_origin: binary_origin.map(str::to_string),
         workspace_path: workspace.map(|path| path.to_string_lossy().into_owned()),
     })
 }
@@ -766,6 +877,16 @@ fn list_task_runs(state: State<Arc<AppState>>, project_id: String) -> Result<Vec
 }
 
 #[tauri::command]
+fn list_active_task_runs(state: State<Arc<AppState>>) -> Result<Vec<TaskRun>, String> {
+    state
+        .core
+        .lock()
+        .map_err(|err| err.to_string())?
+        .list_active_task_runs()
+        .map_err(err_to_string)
+}
+
+#[tauri::command]
 fn read_task_log(state: State<Arc<AppState>>, run_id: String) -> Result<String, String> {
     state
         .core
@@ -834,44 +955,102 @@ fn start_task_spec(app: &AppHandle, state: &AppState, spec: TaskSpec) -> Result<
                 move |run_id, code| {
                     let app_handle = app_handle.clone();
                     std::thread::spawn(move || {
-                        if let Some(state) = app_handle.try_state::<Arc<AppState>>() {
-                            let core = match state.core.lock() {
-                                Ok(core) => core,
-                                Err(_) => return,
-                            };
-                            let status = if code == Some(0) {
-                                "succeeded"
-                            } else {
-                                "failed"
-                            };
-                            match core.finish_task_run(&run_id, status, code) {
-                                Ok(run) => {
-                                    let _ = core.record_project_event(
+                        let Some(state) = app_handle.try_state::<Arc<AppState>>() else {
+                            emit_task_persistence_failure(
+                                &app_handle,
+                                &run_id,
+                                "application state was unavailable while finishing the task",
+                                None,
+                            );
+                            return;
+                        };
+                        let core = match state.core.lock() {
+                            Ok(core) => core,
+                            Err(error) => {
+                                emit_task_persistence_failure(
+                                    &app_handle,
+                                    &run_id,
+                                    format!("task persistence lock failed: {error}"),
+                                    None,
+                                );
+                                return;
+                            }
+                        };
+                        let status = if code == Some(0) {
+                            "succeeded"
+                        } else {
+                            "failed"
+                        };
+                        match retry_core_write(|| core.finish_task_run(&run_id, status, code)) {
+                            Ok(run) => {
+                                let mut persistence_errors = Vec::new();
+                                if let Err(error) = retry_core_write(|| {
+                                    core.record_project_event(
                                         &run.project_id,
                                         "task",
                                         "Finished task",
                                         Some(status),
-                                    );
-                                    let _ = core.record_audit_event(
+                                    )
+                                }) {
+                                    persistence_errors.push(format!(
+                                        "project completion event could not be persisted: {error}"
+                                    ));
+                                }
+                                if let Err(error) = retry_core_write(|| {
+                                    core.record_audit_event(
                                         "desktop",
                                         "finish_task_run",
                                         "task_run",
                                         Some(&run.id),
                                         Some(status),
                                         status,
-                                    );
-                                    let _ = app_handle.emit("task://exited", run);
+                                    )
+                                }) {
+                                    persistence_errors.push(format!(
+                                        "task completion audit could not be persisted: {error}"
+                                    ));
                                 }
-                                Err(error) => {
-                                    let _ = core.record_audit_event(
+                                if !persistence_errors.is_empty() {
+                                    emit_task_persistence_failure(
+                                        &app_handle,
+                                        &run.id,
+                                        persistence_errors.join("; "),
+                                        Some(run.clone()),
+                                    );
+                                }
+                                if let Err(error) = app_handle.emit("task://exited", &run) {
+                                    emit_task_persistence_failure(
+                                        &app_handle,
+                                        &run.id,
+                                        format!("task exit event could not be delivered: {error}"),
+                                        Some(run.clone()),
+                                    );
+                                }
+                            }
+                            Err(error) => {
+                                let finish_error = error.to_string();
+                                let mut persistence_error = finish_error.clone();
+                                if let Err(audit_error) = retry_core_write(|| {
+                                    core.record_audit_event(
                                         "desktop",
                                         "finish_task_run",
                                         "task_run",
                                         Some(&run_id),
-                                        Some(&error.to_string()),
+                                        Some(&finish_error),
                                         "failed",
-                                    );
+                                    )
+                                }) {
+                                    persistence_error.push_str(&format!(
+                                        "; completion failure audit could not be persisted: {audit_error}"
+                                    ));
                                 }
+                                let run = retry_core_write(|| core.get_task_run(&run_id)).ok();
+                                emit_task_persistence_failure(
+                                    &app_handle,
+                                    &run_id,
+                                    persistence_error,
+                                    run,
+                                );
                             }
                         }
                     });
@@ -879,20 +1058,40 @@ fn start_task_spec(app: &AppHandle, state: &AppState, spec: TaskSpec) -> Result<
             },
         )
         .map_err(err_to_string)?;
-    let _ = core.record_project_event(&run.project_id, "task", "Started task", Some(&run.kind));
-    if let Err(error) = core.record_audit_event(
-        "desktop",
-        "start_task",
-        "task",
-        run.task_id.as_deref().or(Some(&run.project_id)),
-        Some(&run.kind),
-        "started",
-    ) {
+    if let Err(error) = retry_core_write(|| {
+        core.record_project_event(&run.project_id, "task", "Started task", Some(&run.kind))
+    }) {
+        emit_task_persistence_failure(
+            app,
+            &run.id,
+            format!("task start event could not be persisted: {error}"),
+            Some(run.clone()),
+        );
+    }
+    if let Err(error) = retry_core_write(|| {
+        core.record_audit_event(
+            "desktop",
+            "start_task",
+            "task",
+            run.task_id.as_deref().or(Some(&run.project_id)),
+            Some(&run.kind),
+            "started",
+        )
+    }) {
         // Do not leave a live process behind when the required audit write
         // fails. Stop/reap the child and close its run record before returning
         // the persistence error to the UI.
         let _ = state.broker.stop(core.connection(), &run.id);
-        let _ = core.finish_task_run(&run.id, "failed", None);
+        if let Err(finish_error) =
+            retry_core_write(|| core.finish_task_run(&run.id, "failed", None))
+        {
+            emit_task_persistence_failure(
+                app,
+                &run.id,
+                format!("task start audit failed and task completion could not be persisted: {finish_error}"),
+                Some(run.clone()),
+            );
+        }
         return Err(err_to_string(error));
     }
     Ok(run)
@@ -908,6 +1107,29 @@ fn write_task_stdin(
         .broker
         .write_stdin(&run_id, &text)
         .map_err(err_to_string)
+}
+
+#[tauri::command]
+fn resize_task_run(
+    state: State<Arc<AppState>>,
+    run_id: String,
+    cols: u16,
+    rows: u16,
+) -> Result<(), String> {
+    state
+        .broker
+        .resize(&run_id, cols, rows)
+        .map_err(err_to_string)
+}
+
+#[tauri::command]
+fn show_main_window(app: AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        window.show().map_err(|err| err.to_string())?;
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -940,58 +1162,22 @@ fn stop_task(state: State<Arc<AppState>>, run_id: String) -> Result<TaskRun, Str
 
 #[tauri::command]
 fn open_in_explorer(path: String) -> Result<(), String> {
-    open_path(&path)
+    launch::open_in_file_manager(&path).map_err(err_to_string)
 }
 
 #[tauri::command]
-fn open_in_terminal(path: String) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        let system_root = std::env::var_os("SystemRoot")
-            .or_else(|| std::env::var_os("WINDIR"))
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
-        Command::new(system_root.join("System32").join("cmd.exe"))
-            .args(["/D", "/K"])
-            .current_dir(&path)
-            .spawn()
-            .map_err(|err| err.to_string())?;
-        Ok(())
-    }
-    #[cfg(target_os = "macos")]
-    {
-        Command::new("open")
-            .args(["-a", "Terminal", &path])
-            .spawn()
-            .map_err(|err| err.to_string())?;
-        Ok(())
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    {
-        let _ = path;
-        Err("unsupported platform".into())
-    }
+fn list_external_tools() -> ExternalTools {
+    launch::list_external_tools()
+}
+
+#[tauri::command]
+fn open_in_terminal(path: String, terminal: Option<String>) -> Result<(), String> {
+    launch::open_in_terminal(&path, terminal.as_deref()).map_err(err_to_string)
 }
 
 #[tauri::command]
 fn open_in_ide(app: AppHandle, path: String, ide: String) -> Result<(), String> {
-    let command = match ide.as_str() {
-        "vscode" => Some(("code", vec![path.clone()])),
-        "cursor" => Some(("cursor", vec![path.clone()])),
-        "zed" => Some(("zed", vec![path.clone()])),
-        "visualstudio" => Some(("devenv", vec![path.clone()])),
-        "jetbrains" => Some(("idea", vec![path.clone()])),
-        "xcode" => Some(("open", vec!["-a".into(), "Xcode".into(), path.clone()])),
-        _ => None,
-    };
-    let opened = if let Some((program, args)) = command {
-        Command::new(program).args(args).spawn().is_ok()
-    } else {
-        false
-    };
-    if !opened {
-        open_path(&path)?;
-    }
+    launch::open_in_ide(&path, &ide).map_err(err_to_string)?;
     if let Some(state) = app.try_state::<Arc<AppState>>() {
         if let Ok(core) = state.core.lock() {
             if let Ok(projects) = core.list_projects(ProjectQuery::default()) {
@@ -1000,6 +1186,30 @@ fn open_in_ide(app: AppHandle, path: String, ide: String) -> Result<(), String> 
                     .find(|project| project.canonical_path == path)
                 {
                     let _ = core.record_project_event(&project.id, "ide", "Opened IDE", Some(&ide));
+                    let _ = core.mark_opened(&project.id);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn open_in_agent(app: AppHandle, path: String, agent: String) -> Result<(), String> {
+    launch::open_in_agent(&path, &agent).map_err(err_to_string)?;
+    if let Some(state) = app.try_state::<Arc<AppState>>() {
+        if let Ok(core) = state.core.lock() {
+            if let Ok(projects) = core.list_projects(ProjectQuery::default()) {
+                if let Some(project) = projects
+                    .into_iter()
+                    .find(|project| project.canonical_path == path)
+                {
+                    let _ = core.record_project_event(
+                        &project.id,
+                        "agent",
+                        "Opened agent",
+                        Some(&agent),
+                    );
                     let _ = core.mark_opened(&project.id);
                 }
             }
@@ -1226,31 +1436,7 @@ fn open_project_file(
         .map_err(|err| err.to_string())?
         .resolve_project_file(&project_id, &path)
         .map_err(err_to_string)?;
-    open_path(&file.to_string_lossy())
-}
-
-fn open_path(path: &str) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        Command::new("explorer")
-            .arg(path)
-            .spawn()
-            .map_err(|err| err.to_string())?;
-        Ok(())
-    }
-    #[cfg(target_os = "macos")]
-    {
-        Command::new("open")
-            .arg(path)
-            .spawn()
-            .map_err(|err| err.to_string())?;
-        Ok(())
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    {
-        let _ = path;
-        Err("unsupported platform".into())
-    }
+    launch::open_in_file_manager(&file.to_string_lossy()).map_err(err_to_string)
 }
 
 fn reveal_path(path: &std::path::Path) -> Result<(), String> {
@@ -1360,6 +1546,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let path = db_path(app.handle())?;
             let core = Core::open(&path).map_err(|err| err.to_string())?;
@@ -1373,6 +1561,18 @@ pub fn run() {
                 broker,
                 cancel: Arc::new(AtomicBool::new(false)),
             }));
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(2500));
+                if let Some(window) = handle.get_webview_window("main") {
+                    if window.is_visible().unwrap_or(false) {
+                        return;
+                    }
+                    let _ = window.show();
+                    let _ = window.unminimize();
+                    let _ = window.set_focus();
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1434,13 +1634,18 @@ pub fn run() {
             git_diff,
             git_execute,
             list_task_runs,
+            list_active_task_runs,
             read_task_log,
             start_task,
             write_task_stdin,
             stop_task,
+            resize_task_run,
+            show_main_window,
             open_in_explorer,
+            list_external_tools,
             open_in_terminal,
-            open_in_ide
+            open_in_ide,
+            open_in_agent
         ])
         .run(tauri::generate_context!())
         .expect("error while running RepoAtlas");

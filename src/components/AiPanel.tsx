@@ -1,11 +1,14 @@
-import { Brain, ChatCircleDots, FloppyDisk, Key, Sparkle, Trash, WarningCircle } from "@phosphor-icons/react";
+import { Brain, ChatCircleDots, FloppyDisk, Sparkle, Trash, WarningCircle } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
 import type { MessageKey } from "../i18n";
 import { api } from "../lib/api";
+import { formatLocaleTag } from "../lib/format";
 import type { AiMemoryItem, AiSummary, AnalysisPlan, ProviderProfile, ToastTone } from "../types";
 import { Button } from "./ui/button";
 import { ConfirmDialog } from "./ui/confirm";
 import { EmptyState, Skeleton } from "./ui/feedback";
+import { AnimatePresence, motion } from "framer-motion";
+import { fadeMotion } from "../lib/motion";
 
 type AiPanelProps = {
   projectId: string;
@@ -20,7 +23,6 @@ type PendingAiAction = { kind: "summary" } | { kind: "ask"; question: string };
 export function AiPanel({ projectId, t, notify, onOpenSettings }: AiPanelProps) {
   const [providers, setProviders] = useState<ProviderProfile[]>([]);
   const [providerId, setProviderId] = useState("");
-  const [apiKey, setApiKey] = useState("");
   const [summary, setSummary] = useState<AiSummary | null>(null);
   const [evidenceSummary, setEvidenceSummary] = useState<AiSummary | null>(null);
   const [summaries, setSummaries] = useState<AiSummary[]>([]);
@@ -73,7 +75,7 @@ export function AiPanel({ projectId, t, notify, onOpenSettings }: AiPanelProps) 
   async function generateSummary() {
     if (!providerId) return; setBusy("summary");
     try {
-      const next = await api.summarizeProject(projectId, providerId, apiKey);
+      const next = await api.summarizeProject(projectId, providerId, "");
       setSummary(next);
       setSummaries(await api.listSummaries(projectId));
       notify("success", t("summaryReady"));
@@ -85,7 +87,7 @@ export function AiPanel({ projectId, t, notify, onOpenSettings }: AiPanelProps) 
 
   async function ask(preparedQuestion: string) {
     if (!providerId || !preparedQuestion.trim()) return; setBusy("ask");
-    try { setAnswer(await api.askProject(projectId, providerId, apiKey, preparedQuestion.trim())); setQuestion(""); return true; }
+    try { setAnswer(await api.askProject(projectId, providerId, "", preparedQuestion.trim())); setQuestion(""); return true; }
     catch (error) { notify("error", t("questionFailed"), errorDetail(error, t("unknownAiError"))); return false; }
     finally { setBusy(null); }
   }
@@ -139,23 +141,29 @@ export function AiPanel({ projectId, t, notify, onOpenSettings }: AiPanelProps) 
   if (providers.length === 0) return <EmptyState title={t("noProviders")} body={t("noProvidersHint")} actions={onOpenSettings ? <Button variant="primary" type="button" onClick={onOpenSettings}>{t("openAiSettings")}</Button> : undefined} />;
 
   return <div className="knowledge-layout">
-    <section className="content-card knowledge-toolbar"><div className="section-heading"><div><p className="eyebrow">{t("providerContext")}</p><h2>{t("projectKnowledge")}</h2></div><Brain weight="duotone" /></div>
-      <div className="provider-bar"><label className="field-group"><span>{t("aiProviders")}</span><select value={providerId} onChange={(event) => setProviderId(event.target.value)}>{providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.name} · {provider.model}</option>)}</select></label><label className="field-group"><span><Key />{t("apiKey")}</span><input type="password" autoComplete="off" value={apiKey} placeholder={t("apiKeyHint")} onChange={(event) => setApiKey(event.target.value)} /></label></div>
+    <section className="content-card knowledge-toolbar">
+      <div className="section-heading"><div><p className="eyebrow">{t("knowledge")}</p><h2>{t("projectKnowledge")}</h2></div><Brain weight="duotone" /></div>
+      <p className="knowledge-intro">{t("knowledgeIntro")}</p>
+      <div className="provider-bar"><label className="field-group"><span>{t("knowledgeModelHint")}</span><select value={providerId} onChange={(event) => setProviderId(event.target.value)}>{providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.name} · {provider.model}</option>)}</select></label></div>
       <p className="privacy-note">{t("providerPrivacyHint")}</p>
     </section>
-    <section className="content-card summary-card"><div className="section-heading"><div><p className="eyebrow">{t("regenerable")}</p><h2>{t("summary")}</h2></div><Button variant="primary" loading={busy === "summary"} onClick={() => void prepareAnalysis({ kind: "summary" })}><Sparkle weight="fill" />{summary ? t("regenerate") : t("generateSummary")}</Button></div>
-      {summary ? <div className="summary-copy"><p>{summary.text}</p><span>{summary.model ?? "AI"} · {formatDate(summary.createdAt)}</span></div> : <EmptyState compact title={t("noSummary")} body={t("noSummaryHint")} />}
+    <section className="content-card summary-card">
+      <div className="section-heading"><div><p className="eyebrow">01</p><h2>{t("summary")}</h2></div><Button variant="primary" loading={busy === "summary"} onClick={() => void prepareAnalysis({ kind: "summary" })}><Sparkle weight="fill" />{summary ? t("regenerate") : t("generateSummary")}</Button></div>
+      <AnimatePresence mode="wait" initial={false}>{summary ? <motion.div key={summary.id} className="summary-copy" {...fadeMotion}><p>{summary.text}</p><span>{summary.model ?? "AI"} · {formatDate(summary.createdAt)}</span></motion.div> : <motion.p key="empty-summary" className="muted-copy" {...fadeMotion}>{t("noSummaryHint")}</motion.p>}</AnimatePresence>
       {summaries.length > 0 && <div className="summary-history"><span>{t("summaryHistory")}</span>{summaries.map((item) => <div key={item.id}><p>{item.text}</p><div className="summary-history-actions"><Button size="sm" variant="quiet" onClick={() => setEvidenceSummary(item)}>{t("evidenceSnapshot")}</Button><Button size="sm" variant="quiet" onClick={() => setSummary(item)}>{t("restoreConversation")}</Button><Button size="sm" variant="quiet" onClick={() => void api.acceptSummaryMemory(item.id).then(() => load()).then(() => notify("success", t("memorySaved"))).catch((error) => notify("error", t("memorySaveFailed"), errorDetail(error, t("unknownAiError"))))}>{t("acceptAsMemory")}</Button></div></div>)}</div>}
     </section>
-    <section className="content-card qa-card"><div className="section-heading"><div><p className="eyebrow">{t("conversation")}</p><h2>{t("projectQa")}</h2></div><ChatCircleDots weight="duotone" /></div>
-      {answer && <div className="answer-bubble">{answer}</div>}
+    <section className="content-card qa-card">
+      <div className="section-heading"><div><p className="eyebrow">02</p><h2>{t("projectQa")}</h2></div><ChatCircleDots weight="duotone" /></div>
+      <p className="muted-copy">{t("knowledgeAskHint")}</p>
+      <AnimatePresence initial={false}>{answer && <motion.div key={answer} className="answer-bubble" {...fadeMotion}>{answer}</motion.div>}</AnimatePresence>
       <form className="question-form" onSubmit={(event) => { event.preventDefault(); void prepareAnalysis({ kind: "ask", question: question.trim() }); }}><label><span className="sr-only">{t("askHint")}</span><textarea value={question} placeholder={t("askHint")} onChange={(event) => setQuestion(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void prepareAnalysis({ kind: "ask", question: question.trim() }); } }} /></label><Button type="submit" variant="primary" loading={busy === "ask"} disabled={!question.trim()}>{t("ask")}</Button></form>
     </section>
-    <section className="content-card memory-card"><div className="section-heading"><div><p className="eyebrow">{t("userControlled")}</p><h2>{t("aiMemory")}</h2></div><FloppyDisk weight="duotone" /></div>
+    <section className="content-card memory-card">
+      <div className="section-heading"><div><p className="eyebrow">03</p><h2>{t("aiMemory")}</h2></div><FloppyDisk weight="duotone" /></div>
+      <p className="muted-copy">{t("knowledgeNotesHint")}</p>
       <form className="inline-form" onSubmit={(event) => { event.preventDefault(); void saveMemory(); }}><label><span>{t("memoryDraft")}</span><input value={memoryDraft} onChange={(event) => setMemoryDraft(event.target.value)} /></label><Button type="submit" loading={busy === "memory"} disabled={!memoryDraft.trim()}>{t("save")}</Button></form>
-      {memory.length === 0 ? <p className="muted-copy">{t("noMemory")}</p> : <div className="memory-list">{memory.map((item) => <div key={item.id}><span>{item.text}</span><Button variant="quiet" size="icon" aria-label={t("remove")} loading={deletingMemoryId === item.id} disabled={Boolean(deletingMemoryId)} onClick={() => setMemoryToDelete(item)}><Trash /></Button></div>)}</div>}
-    </section>
-    <ConfirmDialog
+      {memory.length === 0 ? <p className="muted-copy">{t("noMemory")}</p> : <div className="memory-list"><AnimatePresence initial={false}>{memory.map((item) => <motion.div key={item.id} {...fadeMotion}><span>{item.text}</span><Button variant="quiet" size="icon" aria-label={t("remove")} loading={deletingMemoryId === item.id} disabled={Boolean(deletingMemoryId)} onClick={() => setMemoryToDelete(item)}><Trash /></Button></motion.div>)}</AnimatePresence></div>}
+    </section>    <ConfirmDialog
       open={Boolean(pendingAiAction && analysisPlan)}
       title={t("reviewAiPlan")}
       body={analysisPlan ? formatAnalysisPlan(analysisPlan, t) : ""}
@@ -188,7 +196,7 @@ export function AiPanel({ projectId, t, notify, onOpenSettings }: AiPanelProps) 
   </div>;
 }
 
-function formatDate(value: string) { try { return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)); } catch { return value; } }
+function formatDate(value: string) { try { return new Intl.DateTimeFormat(formatLocaleTag(), { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)); } catch { return value; } }
 
 function formatAnalysisPlan(plan: AnalysisPlan, t: (key: MessageKey) => string) {
   const destination = `${plan.isLocal ? t("localProcessing") : t("externalProcessing")}: ${plan.providerName} · ${plan.model}${plan.baseUrl ? `\n${plan.baseUrl}` : ""}`;

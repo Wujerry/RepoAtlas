@@ -4,6 +4,7 @@ use crate::models::{AppSettings, ScanRoot};
 use crate::paths;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use std::fs;
 use std::path::Path;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -72,109 +73,220 @@ pub fn import_into(
     if file.format != "repoatlas-export" {
         return Err(Error::msg("not a RepoAtlas export file"));
     }
-    put_setting(conn, "theme", &file.settings.theme)?;
-    put_setting(conn, "locale", &file.settings.locale)?;
-    put_setting(conn, "uiFont", &file.settings.ui_font)?;
-    put_setting(conn, "consoleFont", &file.settings.console_font)?;
-    for root in &file.scan_roots {
-        conn.execute(
-            "INSERT OR IGNORE INTO scan_roots (id, path, created_at) VALUES (?1, ?2, ?3)",
-            params![root.id, root.path, root.created_at],
-        )?;
-    }
-    let mut count = 0;
-    for project in &file.projects {
-        let path = Path::new(&project.canonical_path);
-        if !path.is_dir() {
-            continue;
-        }
-        let canonical = paths::canonicalize(path)?;
-        let scan_root_id = root_for(&canonical);
-        let path_string = paths::path_to_string(&canonical);
-        let id: Option<String> = conn
-            .query_row(
-                "SELECT id FROM projects WHERE canonical_path = ?1",
-                params![path_string],
-                |row| row.get(0),
-            )
-            .optional()?;
-        let id = id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-        let vcs_kind = if canonical.join(".git").exists() {
-            "git"
-        } else if canonical.join(".svn").exists() {
-            "svn"
-        } else {
-            "none"
-        };
-        let now = now();
-        conn.execute(
-            r#"
-            INSERT INTO projects (id, canonical_path, display_name, detected_name, notes, description, vcs_kind, availability,
-                archived, favorite, origin, scan_root_id, languages_json, frameworks_json, package_managers_json,
-                facts_json, tasks_json, search_blob, last_opened_at, created_at, updated_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'ready', ?8, ?9, 'import', ?10, '[]', '[]', '[]', '[]', '[]', '', ?11, ?12, ?12)
-            ON CONFLICT(canonical_path) DO UPDATE SET
-                display_name=excluded.display_name, notes=excluded.notes,
-                description=COALESCE(excluded.description, projects.description), archived=excluded.archived,
-                favorite=excluded.favorite, last_opened_at=excluded.last_opened_at, updated_at=excluded.updated_at
-            "#,
-            params![
-                id, path_string, project.display_name, project.display_name, project.notes, project.description,
-                vcs_kind, project.archived as i64, project.favorite as i64, scan_root_id,
-                project.last_opened_at, now,
-            ],
-        )?;
-        conn.execute(
-            "DELETE FROM project_tags WHERE project_id = ?1",
-            params![id],
-        )?;
-        let mut tags_for_search = Vec::new();
-        for tag in &project.tags {
-            let tag = tag.trim();
-            if !tag.is_empty() {
-                tags_for_search.push(tag.to_string());
-                conn.execute(
-                    "INSERT OR IGNORE INTO project_tags (project_id, tag) VALUES (?1, ?2)",
-                    params![id, tag],
-                )?;
+
+    // Validate every filesystem-backed value before taking the database write
+    // lock. An invalid root or icon must not leave a partially imported store.
+    let scan_roots = file
+        .scan_roots
+        .iter()
+        .map(validate_scan_root)
+        .collect::<Result<Vec<_>>>()?;
+    let icons = file
+        .projects
+        .iter()
+        .map(|project| {
+            project
+                .icon
+                .as_ref()
+                .map(|icon| {
+                    let bytes = decode_base64(&icon.data)?;
+                    let mime = environment::validate_icon_payload(Some(&icon.mime_type), &bytes)?;
+                    Ok(ValidatedIcon { mime, bytes })
+                })
+                .transpose()
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    conn.execute_batch("BEGIN IMMEDIATE")?;
+    let result = (|| {
+        put_setting(conn, "theme", &file.settings.theme)?;
+        put_setting(conn, "locale", &file.settings.locale)?;
+        put_setting(conn, "uiFont", &file.settings.ui_font)?;
+        put_setting(conn, "consoleFont", &file.settings.console_font)?;
+
+        for root in &scan_roots {
+            let existing_id: Option<String> = conn
+                .query_row(
+                    "SELECT id FROM scan_roots WHERE path = ?1",
+                    params![root.path],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if existing_id.is_some() {
+                continue;
             }
-        }
-        let search_blob = [
-            project.display_name.clone(),
-            path_string.clone(),
-            project.notes.clone().unwrap_or_default(),
-            project.description.clone().unwrap_or_default(),
-            tags_for_search.join(" "),
-        ]
-        .join("\n");
-        conn.execute(
-            "UPDATE projects SET search_blob = ?1 WHERE id = ?2",
-            params![search_blob, id],
-        )?;
-        if let Some(icon) = &project.icon {
-            let bytes = decode_base64(&icon.data)?;
-            let mime = environment::validate_icon_payload(Some(&icon.mime_type), &bytes)?;
+            let id_in_use: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM scan_roots WHERE id = ?1)",
+                params![root.id],
+                |row| row.get(0),
+            )?;
+            let id = if root.id.is_empty() || id_in_use {
+                uuid::Uuid::new_v4().to_string()
+            } else {
+                root.id.clone()
+            };
             conn.execute(
-                "INSERT INTO project_icon_overrides (project_id, mime_type, bytes, source_name, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5)
-                 ON CONFLICT(project_id) DO UPDATE SET mime_type = excluded.mime_type, bytes = excluded.bytes,
-                 source_name = excluded.source_name, updated_at = excluded.updated_at",
-                params![id, mime, bytes, icon.source_name, now],
+                "INSERT INTO scan_roots (id, path, created_at, last_scanned_at) VALUES (?1, ?2, ?3, ?4)",
+                params![id, root.path, root.created_at, root.last_scanned_at],
             )?;
         }
-        for table in ["project_fts_unicode", "project_fts_trigram"] {
+
+        let mut count = 0;
+        for (index, project) in file.projects.iter().enumerate() {
+            let path = Path::new(&project.canonical_path);
+            if !path.is_dir() {
+                continue;
+            }
+            let canonical = paths::canonicalize(path)?;
+            if !canonical.is_dir() {
+                continue;
+            }
+            let scan_root_id = root_for(&canonical);
+            let path_string = paths::path_to_string(&canonical);
+            let id: Option<String> = conn
+                .query_row(
+                    "SELECT id FROM projects WHERE canonical_path = ?1",
+                    params![path_string],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let id = id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            let vcs_kind = if canonical.join(".git").exists() {
+                "git"
+            } else if canonical.join(".svn").exists() {
+                "svn"
+            } else {
+                "none"
+            };
+            let now = now();
             conn.execute(
-                &format!("DELETE FROM {table} WHERE project_id = ?1"),
+                r#"
+                INSERT INTO projects (id, canonical_path, display_name, detected_name, notes, description, vcs_kind, availability,
+                    archived, favorite, origin, scan_root_id, languages_json, frameworks_json, package_managers_json,
+                    facts_json, tasks_json, search_blob, last_opened_at, created_at, updated_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'ready', ?8, ?9, 'import', ?10, '[]', '[]', '[]', '[]', '[]', '', ?11, ?12, ?12)
+                ON CONFLICT(canonical_path) DO UPDATE SET
+                    display_name=excluded.display_name, notes=excluded.notes,
+                    description=COALESCE(excluded.description, projects.description), archived=excluded.archived,
+                    favorite=excluded.favorite, last_opened_at=excluded.last_opened_at, updated_at=excluded.updated_at
+                "#,
+                params![
+                    id, path_string, project.display_name, project.display_name, project.notes, project.description,
+                    vcs_kind, project.archived as i64, project.favorite as i64, scan_root_id,
+                    project.last_opened_at, now,
+                ],
+            )?;
+            conn.execute(
+                "DELETE FROM project_tags WHERE project_id = ?1",
                 params![id],
             )?;
+            let mut tags_for_search = Vec::new();
+            for tag in &project.tags {
+                let tag = tag.trim();
+                if !tag.is_empty() {
+                    tags_for_search.push(tag.to_string());
+                    conn.execute(
+                        "INSERT OR IGNORE INTO project_tags (project_id, tag) VALUES (?1, ?2)",
+                        params![id, tag],
+                    )?;
+                }
+            }
+            let search_blob = [
+                project.display_name.clone(),
+                path_string.clone(),
+                project.notes.clone().unwrap_or_default(),
+                project.description.clone().unwrap_or_default(),
+                tags_for_search.join(" "),
+            ]
+            .join("\n");
             conn.execute(
-                &format!("INSERT INTO {table} (project_id, content) VALUES (?1, ?2)"),
-                params![id, search_blob],
+                "UPDATE projects SET search_blob = ?1 WHERE id = ?2",
+                params![search_blob, id],
             )?;
+            if let Some(icon) = &project.icon {
+                let validated = icons
+                    .get(index)
+                    .and_then(|icon| icon.as_ref())
+                    .ok_or_else(|| Error::msg("validated project icon is missing"))?;
+                conn.execute(
+                    "INSERT INTO project_icon_overrides (project_id, mime_type, bytes, source_name, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5)
+                     ON CONFLICT(project_id) DO UPDATE SET mime_type = excluded.mime_type, bytes = excluded.bytes,
+                     source_name = excluded.source_name, updated_at = excluded.updated_at",
+                    params![id, validated.mime, validated.bytes, icon.source_name, now],
+                )?;
+            }
+            for table in ["project_fts_unicode", "project_fts_trigram"] {
+                conn.execute(
+                    &format!("DELETE FROM {table} WHERE project_id = ?1"),
+                    params![id],
+                )?;
+                conn.execute(
+                    &format!("INSERT INTO {table} (project_id, content) VALUES (?1, ?2)"),
+                    params![id, search_blob],
+                )?;
+            }
+            count += 1;
         }
-        count += 1;
+        Ok(count)
+    })();
+    match result {
+        Ok(count) => match conn.execute_batch("COMMIT") {
+            Ok(()) => Ok(count),
+            Err(error) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                Err(error.into())
+            }
+        },
+        Err(error) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(error)
+        }
     }
-    Ok(count)
+}
+
+struct ValidatedIcon {
+    mime: String,
+    bytes: Vec<u8>,
+}
+
+fn validate_scan_root(root: &ScanRoot) -> Result<ScanRoot> {
+    let path = Path::new(&root.path);
+    let metadata = fs::symlink_metadata(path)?;
+    if is_reparse_point(&metadata) {
+        return Err(Error::msg("scan root cannot be a symbolic link"));
+    }
+    let canonical = paths::canonicalize(path)?;
+    if !canonical.is_dir() {
+        return Err(Error::msg(format!(
+            "scan root is not a directory: {}",
+            paths::path_to_string(&canonical)
+        )));
+    }
+    if canonical.parent().is_none() || canonical.parent() == Some(canonical.as_path()) {
+        return Err(Error::msg(
+            "filesystem root cannot be imported as a scan root",
+        ));
+    }
+    Ok(ScanRoot {
+        id: root.id.clone(),
+        path: paths::path_to_string(&canonical),
+        created_at: root.created_at.clone(),
+        last_scanned_at: root.last_scanned_at.clone(),
+    })
+}
+
+#[cfg(windows)]
+fn is_reparse_point(metadata: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn is_reparse_point(metadata: &fs::Metadata) -> bool {
+    metadata.file_type().is_symlink()
 }
 
 pub fn backup_to(conn: &Connection, dest: &Path) -> Result<()> {

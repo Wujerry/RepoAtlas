@@ -61,7 +61,7 @@ function renderList(overrides: Partial<React.ComponentProps<typeof ProjectList>>
       onSelect={vi.fn()}
       query=""
       onQuery={vi.fn()}
-      filters={{ vcs: "", language: "", tag: "" }}
+      filters={{ language: "", tag: "" }}
       onFilters={vi.fn()}
       scanning={false}
       progress={null}
@@ -139,6 +139,17 @@ describe("ProjectList tree", () => {
     fireEvent.keyDown(tree, { key: "F10", shiftKey: true });
 
     expect(await screen.findByRole("menuitem", { name: t("editName") })).toBeInTheDocument();
+  });
+
+  it("gives every project context action a unique icon", async () => {
+    renderList({ onReveal: vi.fn(), onRelocate: vi.fn() });
+    const option = await screen.findByRole("treeitem", { name: "atlas" });
+    fireEvent.contextMenu(within(option).getByRole("button", { name: "atlas" }));
+
+    const items = await screen.findAllByRole("menuitem");
+    const icons = items.map((item) => item.querySelector(".menu-item-icon svg")?.innerHTML ?? "");
+    expect(icons.every(Boolean)).toBe(true);
+    expect(new Set(icons).size).toBe(icons.length);
   });
 
   it("changes a project icon and restores automatic detection from the context menu", async () => {
@@ -242,7 +253,7 @@ describe("ProjectList tree", () => {
     await waitFor(() => expect(screen.getByRole("treeitem", { name: "atlas" })).toBeInTheDocument());
     expect(container.querySelector(".scan-status")).toBeTruthy();
     expect(container.querySelector(".list-header-actions")?.textContent).toContain(t("addRootShort"));
-    expect(container.querySelector(".list-header-actions")?.textContent).toContain(t("discoverProjects"));
+    expect(container.querySelector(".list-header-actions")?.textContent).toContain(t("discoverShort"));
     expect(container.querySelector(".list-footer")?.textContent).not.toContain(t("addRootShort"));
     expect(container.querySelector(".list-footer")?.textContent).not.toContain(t("discoverProjects"));
 
@@ -254,7 +265,7 @@ describe("ProjectList tree", () => {
         onSelect={vi.fn()}
         query=""
         onQuery={vi.fn()}
-        filters={{ vcs: "", language: "", tag: "" }}
+        filters={{ language: "", tag: "" }}
         onFilters={vi.fn()}
         scanning
         progress={{ scanId: "scan-1", rootPath: "C:\\code", phase: "walk", visited: 4, discovered: 2, currentPath: "C:\\code\\atlas", message: null }}
@@ -291,4 +302,12 @@ describe("ProjectList tree", () => {
     fireEvent.click(screen.getByRole("button", { name: t("removeFolder") }));
     await waitFor(() => expect(onRemoveFolder).toHaveBeenCalledWith("C:\\code", ["atlas", "portal"]));
   });
+  it("exposes the sort menu and reports sort changes", async () => {
+    const onSort = vi.fn();
+    renderList({ onSort });
+    fireEvent.click(await screen.findByRole("button", { name: t("sortBy") }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("sortName") }));
+    expect(onSort).toHaveBeenCalledWith("name");
+  });
+
 });

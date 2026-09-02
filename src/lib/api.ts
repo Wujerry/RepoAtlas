@@ -19,6 +19,7 @@ import type {
   ConversationSummary,
   ProjectSummary,
   ReadmeDocument,
+  ExternalTools,
   EnvironmentInspection,
   AtlasReport,
   PendingApproval,
@@ -32,9 +33,9 @@ import type {
   ScanRoot,
   ScanRootRemoval,
   SearchHit,
+  TaskPersistenceFailure,
   TaskRun,
 } from "../types";
-
 export const api = {
   bootstrap: () => invoke<Bootstrap>("bootstrap"),
   getSettings: () => invoke<AppSettings>("get_settings"),
@@ -80,12 +81,16 @@ export const api = {
   gitExecute: (projectId: string, op: GitOp) =>
     invoke<GitCommandResult>("git_execute", { projectId, op }),
   listTaskRuns: (projectId: string) => invoke<TaskRun[]>("list_task_runs", { projectId }),
+  listActiveTaskRuns: () => invoke<TaskRun[]>("list_active_task_runs"),
   readTaskLog: (runId: string) => invoke<string>("read_task_log", { runId }),
   startTask: (projectId: string, taskId: string) => invoke<TaskRun>("start_task", { projectId, taskId }),
   writeTaskStdin: (runId: string, text: string) => invoke<void>("write_task_stdin", { runId, text }),
   stopTask: (runId: string) => invoke<TaskRun>("stop_task", { runId }),
+  resizeTaskRun: (runId: string, cols: number, rows: number) => invoke<void>("resize_task_run", { runId, cols, rows }),
+  showMainWindow: () => invoke<void>("show_main_window"),
   openInExplorer: (path: string) => invoke<void>("open_in_explorer", { path }),
-  openInTerminal: (path: string) => invoke<void>("open_in_terminal", { path }),
+  listExternalTools: () => invoke<ExternalTools>("list_external_tools"),
+  openInTerminal: (path: string, terminal?: string) => invoke<void>("open_in_terminal", { path, terminal }),
   listProviderProfiles: () => invoke<ProviderProfile[]>("list_provider_profiles"),
   upsertProviderProfile: (upsert: ProviderUpsert) => invoke<ProviderProfile>("upsert_provider_profile", { upsert }),
   deleteProviderProfile: (id: string) => invoke<void>("delete_provider_profile", { id }),
@@ -108,6 +113,7 @@ export const api = {
   importJsonFrom: (path: string) => invoke<number>("import_json_from", { path }),
   backupDb: (dest: string) => invoke<void>("backup_db", { dest }),
   openInIde: (path: string, ide: string) => invoke<void>("open_in_ide", { path, ide }),
+  openInAgent: (path: string, agent: string) => invoke<void>("open_in_agent", { path, agent }),
 };
 
 export async function onScanProgress(handler: (progress: ScanProgress) => void): Promise<UnlistenFn> {
@@ -128,4 +134,8 @@ export async function onTaskLog(handler: (chunk: LogChunk) => void): Promise<Unl
 
 export async function onTaskExited(handler: (run: TaskRun) => void): Promise<UnlistenFn> {
   return listen<TaskRun>("task://exited", (event) => handler(event.payload));
+}
+
+export async function onTaskPersistenceFailed(handler: (failure: TaskPersistenceFailure) => void): Promise<UnlistenFn> {
+  return listen<TaskPersistenceFailure>("task://persistence-failed", (event) => handler(event.payload));
 }

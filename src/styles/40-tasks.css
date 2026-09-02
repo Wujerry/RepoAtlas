@@ -5,12 +5,14 @@
 .task-catalog, .run-history { min-width: 0; width: 100%; }
 .task-console { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 42px; border: 1px solid var(--line); border-bottom: 0; border-radius: 14px 14px 0 0; background: color-mix(in srgb, var(--bg-elevated) 94%, transparent); box-shadow: 0 -10px 28px color-mix(in srgb, #000 12%, transparent); }
 .task-console.is-collapsed { grid-template-rows: auto; }
+.task-console.is-open { min-height: 220px; }
 .task-console-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 42px; padding: 6px 10px; }
 .task-console-toggle { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 0; border: 0; background: transparent; color: var(--text); text-align: left; }
 .task-console-toggle svg { width: 14px; height: 14px; color: var(--muted); }
 .task-console-toggle strong { overflow: hidden; font-size: 12px; font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
 .task-console-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; } .task-console-actions .button { white-space: nowrap; }
-.task-console-body { display: grid; grid-template-rows: minmax(0, 1fr) auto; min-height: 0; }
+.task-console-body { display: grid; grid-template-rows: minmax(0, 1fr); min-height: 0; }
+.task-console.is-open .task-console-body { min-height: 180px; }
 .task-layout .log-pane { min-height: 160px; max-height: none; height: min(32vh, 280px); border: 0; border-top: 1px solid var(--line); border-radius: 0; }
 .task-console-input { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 8px 10px; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--bg-subtle) 88%, transparent); }
 .log-pane .ansi-bold { font-weight: 700; }
@@ -75,3 +77,73 @@
 .task-arguments-empty { margin: 0; padding: 9px; border: 1px dashed var(--line); border-radius: 7px; color: var(--muted); font-size: 10px; }
 .run-list { display: grid; gap: 4px; }.run-list button { display: grid; grid-template-columns: auto 1fr auto; gap: 3px 7px; align-items: center; padding: 8px; border: 0; border-radius: 8px; background: transparent; text-align: left; }.run-list button:hover, .run-list button.active { background: var(--bg-hover); }.run-list strong { font-size: 10.5px; }.run-list button > span:nth-child(3) { color: var(--muted); font-size: 10px; }.run-list time { grid-column: 2 / -1; color: var(--muted); font-family: var(--font-mono); font-size: 10px; }.run-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }.run-succeeded { background: var(--ok); }.run-failed { background: var(--danger); }.run-running { background: var(--accent-fill); animation: status-pulse 1.2s ease-in-out infinite; }
 
+/* Console themes: the task console can be forced dark or light independently
+   of the system theme. These rules override the shared .diff-pane/.log-pane
+   backgrounds from 30-content-git.css, which is imported earlier. */
+.log-pane.log-pane--dark, :root[data-theme="light"] .log-pane.log-pane--dark { background: #090909; color: #d4d4d4; }
+.log-pane.log-pane--light, :root[data-theme="light"] .log-pane.log-pane--light { background: #f6f5f2; color: #1f2328; }
+
+/* Selected text must stay readable against the fixed console backgrounds. */
+.log-pane--dark ::selection { background: #3d5a80; color: #ffffff; }
+.log-pane--light ::selection { background: #b8d4f0; color: #1a1a1a; }
+
+/* ANSI palette tuned for the light console (GitHub-light style). Same
+   specificity as the dark palette above; later rules win for --light panes. */
+.log-pane--light .ansi-black { color: #57606a; }
+.log-pane--light .ansi-red { color: #c0392b; }
+.log-pane--light .ansi-green { color: #1a7f37; }
+.log-pane--light .ansi-yellow { color: #9a6700; }
+.log-pane--light .ansi-blue { color: #0969da; }
+.log-pane--light .ansi-magenta { color: #8250df; }
+.log-pane--light .ansi-cyan { color: #1b7c83; }
+.log-pane--light .ansi-white { color: #1f2328; }
+.log-pane--light .ansi-bright-black { color: #6e7781; }
+.log-pane--light .ansi-bright-red { color: #a40e26; }
+.log-pane--light .ansi-bright-green { color: #116329; }
+.log-pane--light .ansi-bright-yellow { color: #7d4e00; }
+.log-pane--light .ansi-bright-blue { color: #0550ae; }
+.log-pane--light .ansi-bright-magenta { color: #6639ba; }
+.log-pane--light .ansi-bright-cyan { color: #106671; }
+.log-pane--light .ansi-bright-white { color: #000000; }
+
+.task-run-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 22px; max-width: 220px; padding: 0 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--bg-elevated); color: var(--text-soft); font-size: 10px; }
+.task-run-chip strong { overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.task-run-chip:hover, .task-run-chip.active { border-color: color-mix(in srgb, var(--accent-fill) 34%, var(--line)); background: var(--accent-wash); color: var(--accent); }
+
+.task-run-tail { max-height: 200px; margin: 8px 0 0; overflow: auto; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text-soft); font-family: var(--console-font); font-size: 11px; line-height: 1.5; font-variant-ligatures: none; white-space: pre; }
+
+.task-workbench { position: absolute; inset: 0; z-index: 30; display: grid; grid-template-columns: 280px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); background: var(--bg); }
+.task-workbench-list { display: grid; align-content: start; gap: 16px; min-width: 0; padding: 16px; border-right: 1px solid var(--line); background: color-mix(in srgb, var(--bg) 92%, transparent); overflow: auto; }
+.task-workbench-list header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.task-workbench-list h2 { margin: 0; font-size: 18px; }
+.task-workbench-list h3 { margin: 0 0 8px; color: var(--muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+.task-workbench-list section { display: grid; gap: 4px; }
+.task-workbench-list button { display: grid; gap: 2px; padding: 8px; border: 0; border-radius: 8px; background: transparent; text-align: left; }
+.task-workbench-list button.active, .task-workbench-list button:hover { background: var(--bg-hover); }
+.task-workbench-actions { display: flex; gap: 8px; }
+.task-workbench-grid { display: grid; align-content: stretch; gap: 10px; min-width: 0; min-height: 0; height: 100%; padding: 12px; }
+.task-workbench-grid.is-one { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr); }
+.task-workbench-grid.is-two { grid-template-columns: 1fr 1fr; grid-template-rows: minmax(0, 1fr); }
+.task-workbench-grid.is-three, .task-workbench-grid.is-four { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+.task-terminal-pane { display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; min-height: 0; height: 100%; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--bg-elevated); transition: border-color .16s cubic-bezier(.2,.8,.2,1); }
+.task-terminal-pane.is-focused { border-color: color-mix(in srgb, var(--accent-fill) 46%, var(--line)); }
+.task-terminal-pane header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.task-terminal-pane header strong { display: block; font-size: 12px; }
+.task-terminal-pane header span, .task-terminal-pane header code { color: var(--muted); font-size: 10px; }
+.task-terminal-pane-actions { display: flex; flex: 0 0 auto; align-items: center; align-self: center; gap: 8px; }
+.task-terminal-pane-actions .button { min-height: 28px; height: 28px; padding: 0 9px; }
+.task-workbench-empty { display: grid; grid-column: 1 / -1; min-height: 0; height: 100%; place-content: center; justify-items: start; gap: 8px; padding: 32px 40px; }
+.task-workbench-empty-mark { position: relative; display: grid; width: 64px; height: 64px; margin-bottom: 8px; border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line)); border-radius: 18px; place-items: center; background: color-mix(in srgb, var(--accent-wash) 72%, var(--bg-elevated)); color: var(--accent); }
+.task-workbench-empty-mark svg:first-child { width: 30px; height: 30px; }
+.task-workbench-empty-mark svg:last-child { position: absolute; right: 10px; bottom: 10px; width: 14px; height: 14px; }
+.task-workbench-empty h3 { margin: 0; font-size: 20px; letter-spacing: -.03em; }
+.task-workbench-empty p { max-width: 46ch; margin: 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
+.task-workbench-empty-hint { display: inline-flex; align-items: center; gap: 8px; margin-top: 8px; color: var(--text-soft); font-size: 11px; }
+.task-workbench-empty-hint kbd { min-width: 28px; padding: 3px 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg-elevated); color: var(--muted); font-family: var(--font-mono); font-size: 10px; text-align: center; }
+.task-xterm { min-width: 0; min-height: 160px; height: 100%; padding: 8px 10px; background: transparent; }
+.task-xterm.task-xterm--dark { background: #090909; }
+.task-xterm.task-xterm--light { background: #f6f5f2; }
+.task-console .task-xterm { height: min(32vh, 280px); border-top: 1px solid var(--line); }
+.task-xterm .xterm { padding: 0; }
+.task-xterm .xterm, .task-xterm .xterm-screen, .task-xterm .xterm-viewport { width: 100%; height: 100%; }
+.task-xterm .xterm-viewport { background-color: transparent !important; }

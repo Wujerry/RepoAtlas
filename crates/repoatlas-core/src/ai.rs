@@ -1,3 +1,4 @@
+use crate::environment;
 use crate::error::{Error, Result};
 use crate::models::{
     AiMemoryItem, AiSummary, ChatMessage, ConversationSummary, ProviderProfile, ProviderUpsert,
@@ -157,7 +158,7 @@ pub mod presets {
 
 pub fn list_profiles(conn: &Connection) -> Result<Vec<ProviderProfile>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, protocol, base_url, model, credential_ref, created_at, updated_at FROM provider_profiles ORDER BY name",
+        "SELECT id, name, protocol, base_url, model, credential_ref, credential_blob, created_at, updated_at FROM provider_profiles ORDER BY name",
     )?;
     let rows = stmt
         .query_map([], profile_row)?
@@ -173,11 +174,20 @@ pub fn upsert_profile(conn: &Connection, upsert: ProviderUpsert) -> Result<Provi
         Some(id) if !id.is_empty() => id.to_string(),
         _ => Uuid::new_v4().to_string(),
     };
-    let existing: Option<(String, String, String)> = conn
+    type ProfileRow = (String, String, String, String, Option<Vec<u8>>);
+    let existing: Option<ProfileRow> = conn
         .query_row(
-            "SELECT protocol, base_url, model FROM provider_profiles WHERE id = ?1",
+            "SELECT protocol, base_url, model, credential_ref, credential_blob FROM provider_profiles WHERE id = ?1",
             params![id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
         )
         .optional()?;
     let protocol = if upsert.protocol.trim().is_empty() {
@@ -221,46 +231,66 @@ pub fn upsert_profile(conn: &Connection, upsert: ProviderUpsert) -> Result<Provi
             ));
         }
     }
-    let credential_ref = upsert.credential_ref.trim();
-    if !credential_ref.is_empty() {
-        let mut chars = credential_ref.chars();
-        let valid = chars
-            .next()
-            .is_some_and(|character| character.is_ascii_alphabetic() || character == '_')
-            && chars.all(|character| character.is_ascii_alphanumeric() || character == '_');
-        if !valid {
-            return Err(Error::msg(
-                "credential reference must be an environment variable name",
-            ));
-        }
-    }
     let now = now();
-    // Empty means "keep/entry"; empty credential_ref means none. We store ref only, never the key.
     let base_url = upsert
         .base_url
         .map(|value| value.trim().to_string())
         .or_else(|| existing.as_ref().map(|entry| entry.1.clone()));
-    conn.execute(
+    let api_key = upsert.api_key.trim();
+    // Keep the previously stored secret available so a failed database write
+    // can restore it: on macOS the Keychain entry is overwritten before the
+    // database insert completes.
+    let previous_secret = if !api_key.is_empty() {
+        match existing.as_ref() {
+            Some(entry) => Some(crate::secrets::load_secret(&id, entry.4.as_deref())?),
+            None => None,
+        }
+    } else {
+        None
+    };
+    let (credential_ref, credential_blob) = if !api_key.is_empty() {
+        let blob = crate::secrets::store_secret(&id, api_key)?;
+        (String::new(), blob)
+    } else if let Some(entry) = existing.as_ref() {
+        (entry.3.clone(), entry.4.clone())
+    } else {
+        (String::new(), None)
+    };
+    if let Err(error) = conn.execute(
         r#"
-        INSERT INTO provider_profiles (id, name, protocol, base_url, model, credential_ref, created_at, updated_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
+        INSERT INTO provider_profiles (id, name, protocol, base_url, model, credential_ref, credential_blob, created_at, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
         ON CONFLICT(id) DO UPDATE SET
             name=excluded.name, protocol=excluded.protocol, base_url=excluded.base_url,
-            model=excluded.model, credential_ref=excluded.credential_ref, updated_at=excluded.updated_at
+            model=excluded.model, credential_ref=excluded.credential_ref,
+            credential_blob=excluded.credential_blob, updated_at=excluded.updated_at
         "#,
-        params![id, upsert.name.trim(), protocol, base_url, model, credential_ref, now],
-    )?;
+        params![id, upsert.name.trim(), protocol, base_url, model, credential_ref, credential_blob, now],
+    ) {
+        if !api_key.is_empty() {
+            match previous_secret {
+                Some(previous) if !previous.is_empty() => {
+                    let _ = crate::secrets::store_secret(&id, &previous);
+                }
+                _ => {
+                    let _ = crate::secrets::delete_secret(&id);
+                }
+            }
+        }
+        return Err(error.into());
+    }
     get_profile(conn, &id)
 }
 
 pub fn delete_profile(conn: &Connection, id: &str) -> Result<()> {
     conn.execute("DELETE FROM provider_profiles WHERE id = ?1", params![id])?;
+    crate::secrets::delete_secret(id)?;
     Ok(())
 }
 
 pub fn get_profile(conn: &Connection, id: &str) -> Result<ProviderProfile> {
     conn.query_row(
-        "SELECT id, name, protocol, base_url, model, credential_ref, created_at, updated_at FROM provider_profiles WHERE id = ?1",
+        "SELECT id, name, protocol, base_url, model, credential_ref, credential_blob, created_at, updated_at FROM provider_profiles WHERE id = ?1",
         params![id],
         profile_row,
     )
@@ -625,23 +655,22 @@ pub fn evidence_for(path: &Path, max_chars: usize) -> Result<EvidenceBundle> {
         "pom.xml",
         "tauri.conf.json",
     ] {
+        let relative = Path::new(name);
         let file = path.join(name);
-        if file.is_file() {
-            if selected_paths
-                .iter()
-                .any(|selected| same_evidence_path(selected, &file))
-            {
-                continue;
-            }
-            if let Some(text) = read_evidence_file(&file) {
-                let redacted = redact_secret_lines(&text);
-                suspicious_secret_count += redacted.suspicious_secret_count;
-                parts.push(format!("===== {name} =====\n{}", redacted.text));
-                files.push(name.to_string());
-                selected_paths.push(file);
-                if parts.iter().map(|part| part.chars().count()).sum::<usize>() > max_chars {
-                    break;
-                }
+        if selected_paths
+            .iter()
+            .any(|selected| same_evidence_path(selected, &file))
+        {
+            continue;
+        }
+        if let Some(text) = read_evidence_file(path, relative) {
+            let redacted = redact_secret_lines(&text);
+            suspicious_secret_count += redacted.suspicious_secret_count;
+            parts.push(format!("===== {name} =====\n{}", redacted.text));
+            files.push(name.to_string());
+            selected_paths.push(file);
+            if parts.iter().map(|part| part.chars().count()).sum::<usize>() > max_chars {
+                break;
             }
         }
     }
@@ -660,8 +689,8 @@ pub fn evidence_for(path: &Path, max_chars: usize) -> Result<EvidenceBundle> {
 /// manifests that are much larger than the final prompt budget; bounding the
 /// read here prevents those files from consuming memory before `max_chars`
 /// is applied. The explicit marker keeps the snapshot honest for the model.
-fn read_evidence_file(path: &Path) -> Option<String> {
-    let file = std::fs::File::open(path).ok()?;
+fn read_evidence_file(root: &Path, relative: &Path) -> Option<String> {
+    let file = environment::open_regular_project_file(root, relative).ok()?;
     let mut bytes = Vec::new();
     file.take(MAX_EVIDENCE_FILE_BYTES + 1)
         .read_to_end(&mut bytes)
@@ -817,15 +846,23 @@ pub fn is_local_provider(profile: &ProviderProfile) -> bool {
 }
 
 fn profile_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProviderProfile> {
+    let credential_ref: String = row.get(5)?;
+    let credential_blob: Option<Vec<u8>> = row.get(6)?;
+    let has_credential = !credential_ref.trim().is_empty()
+        || credential_blob
+            .as_ref()
+            .is_some_and(|value| !value.is_empty());
     Ok(ProviderProfile {
         id: row.get(0)?,
         name: row.get(1)?,
         protocol: row.get(2)?,
         base_url: row.get(3)?,
         model: row.get(4)?,
-        credential_ref: row.get(5)?,
-        created_at: row.get(6)?,
-        updated_at: row.get(7)?,
+        credential_ref,
+        credential_blob,
+        has_credential,
+        created_at: row.get(7)?,
+        updated_at: row.get(8)?,
     })
 }
 
@@ -886,6 +923,35 @@ mod tests {
     }
 
     #[test]
+    fn evidence_skips_an_external_readme_symlink() {
+        let project = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        fs::write(outside.path().join("secret.md"), "outside secret").unwrap();
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(
+            outside.path().join("secret.md"),
+            project.path().join("README.md"),
+        )
+        .unwrap();
+        #[cfg(windows)]
+        if std::os::windows::fs::symlink_file(
+            outside.path().join("secret.md"),
+            project.path().join("README.md"),
+        )
+        .is_err()
+        {
+            return;
+        }
+        #[cfg(not(any(unix, windows)))]
+        return;
+
+        let evidence = evidence_for(project.path(), 8000).unwrap();
+        assert!(!evidence.files.iter().any(|file| file == "README.md"));
+        assert!(!evidence.text.contains("outside secret"));
+    }
+
+    #[test]
     fn local_provider_detection_matches_supported_local_endpoints() {
         let profile = |name: &str, protocol: &str, base_url: Option<&str>| ProviderProfile {
             id: "provider".into(),
@@ -894,6 +960,8 @@ mod tests {
             base_url: base_url.map(str::to_string),
             model: "model".into(),
             credential_ref: String::new(),
+            credential_blob: None,
+            has_credential: false,
             created_at: String::new(),
             updated_at: String::new(),
         };
@@ -918,5 +986,85 @@ mod tests {
             "openai-chat",
             Some("https://api.openai.com/v1"),
         )));
+    }
+}
+
+#[cfg(all(test, any(windows, target_os = "macos")))]
+mod upsert_profile_tests {
+    use super::upsert_profile;
+    use crate::models::ProviderUpsert;
+
+    fn remote_upsert(id: Option<String>, name: &str, model: &str, api_key: &str) -> ProviderUpsert {
+        ProviderUpsert {
+            id,
+            name: name.into(),
+            protocol: "openai-compatible".into(),
+            base_url: Some("https://api.deepseek.com/v1".into()),
+            model: model.into(),
+            api_key: api_key.into(),
+            credential_ref: String::new(),
+        }
+    }
+
+    #[test]
+    fn editing_with_a_blank_key_keeps_the_stored_credential() {
+        let conn = crate::db::open_in_memory().unwrap();
+        let created = upsert_profile(
+            &conn,
+            remote_upsert(None, "DeepSeek", "deepseek-chat", "sk-original"),
+        )
+        .unwrap();
+        assert!(created.has_credential);
+
+        let updated = upsert_profile(
+            &conn,
+            remote_upsert(
+                Some(created.id.clone()),
+                "DeepSeek Renamed",
+                "deepseek-reasoner",
+                "",
+            ),
+        )
+        .unwrap();
+
+        assert!(updated.has_credential);
+        let blob = updated.credential_blob.expect("credential blob survives");
+        let restored = crate::secrets::load_secret(&updated.id, Some(&blob)).unwrap();
+        assert_eq!(restored, "sk-original");
+    }
+
+    #[test]
+    fn a_failed_database_write_restores_the_previous_credential() {
+        let conn = crate::db::open_in_memory().unwrap();
+        let created = upsert_profile(
+            &conn,
+            remote_upsert(None, "DeepSeek", "deepseek-chat", "sk-original"),
+        )
+        .unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_profile_upsert BEFORE INSERT ON provider_profiles
+             WHEN NEW.name = 'boom' BEGIN SELECT RAISE(ABORT, 'forced failure'); END;",
+        )
+        .unwrap();
+
+        let error = upsert_profile(
+            &conn,
+            remote_upsert(
+                Some(created.id.clone()),
+                "boom",
+                "deepseek-chat",
+                "sk-replacement",
+            ),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("forced failure"));
+
+        let unchanged = super::get_profile(&conn, &created.id).unwrap();
+        assert!(unchanged.has_credential);
+        let blob = unchanged
+            .credential_blob
+            .expect("previous credential survives");
+        let restored = crate::secrets::load_secret(&unchanged.id, Some(&blob)).unwrap();
+        assert_eq!(restored, "sk-original");
     }
 }

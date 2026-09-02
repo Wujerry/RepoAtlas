@@ -1,0 +1,80 @@
+.splash-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+}
+.splash-brand {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+}
+.splash-icon {
+  width: 72px;
+  height: 72px;
+  overflow: visible;
+  filter: drop-shadow(0 16px 28px color-mix(in srgb, #000 18%, transparent));
+}
+.splash-icon img {
+  display: block;
+  width: 72px;
+  height: 72px;
+  border-radius: 18px;
+  animation: splash-icon 1200ms cubic-bezier(.2,.8,.2,1) both;
+}
+.splash-wordmark {
+  position: relative;
+  display: inline-block;
+  overflow: hidden;
+  color: #ffa31a;
+  font-family: var(--font-sans);
+  font-size: clamp(34px, 6vw, 52px);
+  font-weight: 560;
+  letter-spacing: .02em;
+  line-height: 1;
+}
+.splash-wordmark span {
+  display: block;
+  clip-path: inset(0 100% 0 0);
+  animation: splash-word 1200ms cubic-bezier(.2,.8,.2,1) both;
+}
+.splash-wordmark::after {
+  content: "";
+  position: absolute;
+  top: 8%;
+  bottom: 8%;
+  left: 0;
+  width: 2px;
+  background: #ffa31a;
+  animation: splash-caret 1200ms cubic-bezier(.2,.8,.2,1) both;
+}
+@keyframes splash-icon {
+  0% { opacity: 0; }
+  18% { opacity: 1; }
+  100% { opacity: 1; }
+}
+@keyframes splash-word {
+  0%, 18% { clip-path: inset(0 100% 0 0); }
+  72% { clip-path: inset(0 0 0 0); }
+  100% { clip-path: inset(0 0 0 0); }
+}
+@keyframes splash-caret {
+  0%, 18% { opacity: .2; left: 0; }
+  72% { opacity: 1; left: 100%; }
+  88%, 100% { opacity: 0; left: 100%; }
+}
+.splash-screen.is-static .splash-icon img,
+.splash-screen.is-static .splash-wordmark span,
+.splash-screen.is-static .splash-wordmark::after {
+  animation: none;
+}
+.splash-screen.is-static .splash-icon img { opacity: 1; }
+.splash-screen.is-static .splash-wordmark span { clip-path: none; }
+.splash-screen.is-static .splash-wordmark::after { opacity: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .splash-icon img, .splash-wordmark span, .splash-wordmark::after { animation: none !important; }
+  .splash-icon img { opacity: 1; }
+  .splash-wordmark span { clip-path: none; }
+}

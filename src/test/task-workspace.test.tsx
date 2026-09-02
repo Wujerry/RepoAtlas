@@ -39,7 +39,7 @@ function renderWorkspace(overrides: Partial<React.ComponentProps<typeof TaskWork
       notify={vi.fn()}
       onSaveTasks={vi.fn()}
       onRun={vi.fn()}
-      onStop={vi.fn()}
+      onStopRun={vi.fn()}
       onClearLog={vi.fn()}
       onHistory={vi.fn()}
       {...overrides}
@@ -103,39 +103,33 @@ describe("TaskWorkspace console", () => {
     expect(within(editor).queryAllByRole("textbox", { name: /Argument/u })).toHaveLength(0);
   });
 
-  it("opens after run and sends interactive input", async () => {
-    const onSendInput = vi.fn();
-    const onStop = vi.fn();
-    const { rerender } = renderWorkspace({ onSendInput, onStop });
+  it("opens after run and can stop the live task", async () => {
+    const onStopRun = vi.fn();
+    const { rerender } = renderWorkspace({ onStopRun });
     expect(screen.getByLabelText("Task console")).toHaveClass("is-collapsed");
 
     rerender(
       <TaskWorkspace
-        tasks={[task("task-1")]}
-        runs={[run("running")]}
-        loading={false}
-        running={run("running")}
-        activeRunId="run-1"
+      tasks={[task("task-1")]}
+      runs={[run("running")]}
+      loading={false}
+      activeRunId="run-1"
         log="listening on 5173"
         t={t}
         notify={vi.fn()}
         onSaveTasks={vi.fn()}
         onRun={vi.fn()}
-        onStop={onStop}
+        onStopRun={onStopRun}
         onClearLog={vi.fn()}
         onHistory={vi.fn()}
-        onSendInput={onSendInput}
       />,
     );
 
     expect(screen.getByLabelText("Task console")).toHaveClass("is-open");
     expect(screen.getByText("listening on 5173")).toBeInTheDocument();
-
-    fireEvent.change(screen.getByLabelText(t("taskInput")), { target: { value: "yes" } });
-    fireEvent.click(screen.getByRole("button", { name: t("sendInput") }));
-    await waitFor(() => expect(onSendInput).toHaveBeenCalledWith("run-1", "yes\n"));
+    expect(screen.queryByLabelText(t("taskInput"))).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: t("stop") }));
-    expect(onStop).toHaveBeenCalledTimes(1);
+    expect(onStopRun).toHaveBeenCalledWith("run-1");
   });
 });

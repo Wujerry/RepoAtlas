@@ -209,6 +209,32 @@ fn open_project_file(root: &Path, relative: &Path, _expected: &Path) -> Result<f
     }
 }
 
+/// Open a regular file beneath a project root without following path links.
+///
+/// Callers that do not have a detected-file allowlist still need the same
+/// descriptor/handle boundary as project documents. Validate the relative
+/// path here before handing it to the platform-specific opener.
+pub(crate) fn open_regular_project_file(root: &Path, relative: &Path) -> Result<fs::File> {
+    if relative.is_absolute()
+        || relative.as_os_str().is_empty()
+        || relative.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::Prefix(_) | Component::RootDir
+            )
+        })
+    {
+        return Err(Error::msg("document path is outside the project"));
+    }
+    let root = paths::canonicalize(root)?;
+    let expected = root.join(relative);
+    let file = open_project_file(&root, relative, &expected)?;
+    if !file.metadata()?.is_file() {
+        return Err(Error::msg("document path is outside the project"));
+    }
+    Ok(file)
+}
+
 // Unix has the primitives needed to make the authorization check and open
 // one operation: each component is opened relative to an already-opened
 // directory and O_NOFOLLOW is applied to every component.  This prevents an
@@ -810,13 +836,14 @@ fn run_version_command_until(program: &str, args: &[&str], deadline: Instant) ->
     if Instant::now() >= deadline {
         return None;
     }
-    let mut child = Command::new(program)
+    let mut command = Command::new(program);
+    command
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .ok()?;
+        .stderr(Stdio::piped());
+    crate::process::suppress_console_window(&mut command);
+    let mut child = command.spawn().ok()?;
 
     // Drain both streams concurrently.  A child can otherwise block itself
     // by filling one pipe before it exits, which would make the timeout

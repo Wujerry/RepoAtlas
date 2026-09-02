@@ -32,6 +32,10 @@
 
 .dialog-backdrop { position: fixed; inset: 0; z-index: 60; background: rgba(3, 5, 3, .58); backdrop-filter: blur(4px); animation: fade-in .16s ease; }
 .dialog-popup { position: fixed; top: 50%; left: 50%; z-index: 61; width: min(420px, calc(100vw - 32px)); padding: 20px; border: 1px solid var(--line-strong); border-radius: 16px; outline: none; background: var(--bg-elevated); box-shadow: var(--shadow); transform: translate(-50%, -50%); animation: dialog-in .2s cubic-bezier(.2,.8,.2,1); }
+.dialog-backdrop[data-ending-style], .command-backdrop[data-ending-style] { animation: fade-out .2s cubic-bezier(.2,.8,.2,1) both; }
+.dialog-popup[data-ending-style] { animation: dialog-out .22s cubic-bezier(.2,.8,.2,1) both; }
+.menu-popup[data-ending-style] { animation: menu-out .16s cubic-bezier(.2,.8,.2,1) both; }
+.toast { animation: toast-in .22s cubic-bezier(.2,.8,.2,1); }
 .dialog-title { font-size: 16px; font-weight: 650; letter-spacing: -.02em; }
 .dialog-description { margin-top: 8px; color: var(--muted); font-size: 12px; line-height: 1.55; white-space: pre-line; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 7px; margin-top: 20px; }
@@ -49,4 +53,3 @@
 .approval-item code { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .approval-item > div:last-child { display: flex; gap: 6px; }
 .tooltip-popup { z-index: 75; padding: 5px 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg-elevated); color: var(--text); box-shadow: var(--shadow-soft); font-size: 10px; }
-

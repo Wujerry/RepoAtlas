@@ -15,12 +15,74 @@ use args::{
 };
 use schema::tool_schemas;
 
+const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
+
 #[derive(Debug, Deserialize)]
 struct RpcRequest {
     id: Option<Value>,
     method: String,
     #[serde(default)]
     params: Value,
+}
+
+#[derive(Debug)]
+struct ParsedRequest {
+    request: RpcRequest,
+    // `RpcRequest.id` retains its historical shape for direct unit tests. This
+    // separate bit distinguishes a missing id (notification) from id: null.
+    has_id: bool,
+}
+
+#[derive(Debug)]
+struct EnvelopeError {
+    code: i32,
+    message: &'static str,
+    id: Value,
+    has_id: bool,
+    always_respond: bool,
+}
+
+#[derive(Debug, Default)]
+struct ProtocolState {
+    initialized: bool,
+    initialized_notification: bool,
+}
+
+trait ProtocolStateAccess {
+    fn is_initialized(&self) -> bool;
+    fn mark_initialized(&mut self);
+    fn mark_initialized_notification(&mut self);
+}
+
+impl ProtocolStateAccess for ProtocolState {
+    fn is_initialized(&self) -> bool {
+        self.initialized
+    }
+
+    fn mark_initialized(&mut self) {
+        self.initialized = true;
+    }
+
+    fn mark_initialized_notification(&mut self) {
+        self.initialized_notification = true;
+    }
+}
+
+// A bool keeps the helper convenient for focused tests and callers that only
+// need the request-handshake state. The full stdin loop uses ProtocolState so
+// the initialized notification is tracked independently as required by MCP.
+impl ProtocolStateAccess for bool {
+    fn is_initialized(&self) -> bool {
+        *self
+    }
+
+    fn mark_initialized(&mut self) {
+        *self = true;
+    }
+
+    fn mark_initialized_notification(&mut self) {
+        // A lifecycle notification does not complete the initialize request.
+    }
 }
 
 fn task_log_dir(db_path: Option<&PathBuf>) -> PathBuf {
@@ -46,32 +108,130 @@ fn main() -> io::Result<()> {
     let stdout = io::stdout();
     let mut out = stdout.lock();
     let mut reader = stdin.lock();
+    let mut protocol_state = ProtocolState::default();
 
     loop {
         let mut line = String::new();
         if reader.read_line(&mut line)? == 0 {
             break;
         }
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
+        if let Some(response) = handle_line(
+            &core,
+            &broker,
+            finish_db.as_ref(),
+            &line,
+            &mut protocol_state,
+        ) {
+            let _ = writeln!(out, "{response}");
+            let _ = out.flush();
         }
-        let request: RpcRequest = match serde_json::from_str(line) {
-            Ok(req) => req,
-            Err(_) => continue,
-        };
-        // JSON-RPC notifications deliberately have no response, including
-        // error responses. Still dispatch the request so a notification can
-        // perform a permitted metadata mutation.
-        if request.id.is_none() {
-            let _ = dispatch(&core, &broker, finish_db.as_ref(), &request);
-            continue;
-        }
-        let response = dispatch(&core, &broker, finish_db.as_ref(), &request);
-        let _ = writeln!(out, "{response}");
-        let _ = out.flush();
     }
     Ok(())
+}
+
+fn handle_line<S: ProtocolStateAccess>(
+    core: &Core,
+    broker: &Broker,
+    db_path: Option<&PathBuf>,
+    line: &str,
+    initialized_state: &mut S,
+) -> Option<String> {
+    if line.trim().is_empty() {
+        return None;
+    }
+
+    let parsed = match parse_request(line.trim()) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            // A malformed object without an id is a notification-shaped
+            // invalid request and must stay silent. Parse errors are the one
+            // exception permitted to use a null id response.
+            if error.always_respond || error.has_id {
+                return Some(error_response(error.id, error.code, error.message));
+            }
+            return None;
+        }
+    };
+
+    let ParsedRequest { request, has_id } = parsed;
+    if !has_id {
+        // MCP notifications are lifecycle signals. In particular, do not
+        // dispatch arbitrary notification methods as metadata mutations.
+        match request.method.as_str() {
+            "notifications/initialized" => initialized_state.mark_initialized_notification(),
+            "notifications/cancelled" => {}
+            _ => {}
+        }
+        return None;
+    }
+
+    let id = request.id.clone().unwrap_or(Value::Null);
+    if request.method == "initialize" {
+        let result = initialize_result(&request.params);
+        initialized_state.mark_initialized();
+        return Some(result_response(id, result));
+    }
+
+    if !initialized_state.is_initialized() {
+        return Some(error_response(id, -32600, "Server not initialized"));
+    }
+
+    Some(dispatch(core, broker, db_path, &request))
+}
+
+fn parse_request(line: &str) -> Result<ParsedRequest, EnvelopeError> {
+    let value: Value = serde_json::from_str(line).map_err(|_| EnvelopeError {
+        code: -32700,
+        message: "Parse error",
+        id: Value::Null,
+        // Parse failures cannot be classified as notifications.
+        has_id: true,
+        always_respond: true,
+    })?;
+
+    let Some(object) = value.as_object() else {
+        return Err(EnvelopeError {
+            code: -32600,
+            message: "Invalid Request",
+            id: Value::Null,
+            // A primitive/array has no notification envelope, so answer it.
+            has_id: true,
+            always_respond: false,
+        });
+    };
+
+    let id = object.get("id").cloned();
+    let has_id = id.is_some();
+    let response_id = id.clone().unwrap_or(Value::Null);
+
+    if object.get("jsonrpc") != Some(&Value::String("2.0".into())) {
+        return Err(EnvelopeError {
+            code: -32600,
+            message: "Invalid Request",
+            id: response_id,
+            has_id,
+            always_respond: false,
+        });
+    }
+
+    let Some(method) = object.get("method").and_then(Value::as_str) else {
+        return Err(EnvelopeError {
+            code: -32600,
+            message: "Invalid Request",
+            id: response_id,
+            has_id,
+            always_respond: false,
+        });
+    };
+
+    Ok(ParsedRequest {
+        request: RpcRequest {
+            id,
+            method: method.to_string(),
+            params: object.get("params").cloned().unwrap_or(Value::Null),
+        },
+        has_id,
+    })
 }
 
 fn dispatch(
@@ -80,45 +240,74 @@ fn dispatch(
     db_path: Option<&PathBuf>,
     request: &RpcRequest,
 ) -> String {
-    let id = request.id.clone();
-    if request.method == "initialize" {
-        let result = json!({
-            "protocolVersion": "2025-06-18",
-            "capabilities": { "tools": {} },
-            "serverInfo": { "name": "repoatlas-mcp", "version": env!("CARGO_PKG_VERSION") }
-        });
-        return respond(id, Ok(result));
+    dispatch_request(core, broker, db_path, request)
+}
+
+fn dispatch_request(
+    core: &Core,
+    broker: &Broker,
+    db_path: Option<&PathBuf>,
+    request: &RpcRequest,
+) -> String {
+    let id = request.id.clone().unwrap_or(Value::Null);
+    match request.method.as_str() {
+        "initialize" => result_response(id, initialize_result(&request.params)),
+        "tools/list" => result_response(id, json!({ "tools": tool_schemas() })),
+        "tools/call" => match route(core, broker, db_path, &request.params) {
+            Ok(result) => result_response(id, result),
+            Err(RouteError::InvalidParams) => error_response(id, -32602, "Invalid params"),
+            Err(RouteError::Tool(error)) => result_response(id, tool_error_result(error)),
+        },
+        _ => error_response(id, -32601, "Method not found"),
     }
-    if request.method == "tools/list" {
-        let result = json!({ "tools": tool_schemas() });
-        return respond(id, Ok(result));
-    }
-    // Keep the complete tools/call envelope here. `route` needs both the tool name and its
-    // arguments; passing only params.arguments would silently turn every call into an unknown
-    // tool request.
-    let result = route(core, broker, db_path, &request.method, &request.params);
-    respond(id, result)
+}
+
+fn initialize_result(params: &Value) -> Value {
+    // MCP servers select a supported version. The current server remains
+    // compatible with the known versions and chooses its current version for
+    // unknown future client requests as allowed by the protocol.
+    let requested_version = params
+        .as_object()
+        .and_then(|params| params.get("protocolVersion"))
+        .and_then(Value::as_str);
+    let protocol_version = match requested_version {
+        Some(MCP_PROTOCOL_VERSION) | None => MCP_PROTOCOL_VERSION,
+        Some(_) => MCP_PROTOCOL_VERSION,
+    };
+    json!({
+        "protocolVersion": protocol_version,
+        "capabilities": { "tools": {} },
+        "serverInfo": { "name": "repoatlas-mcp", "version": env!("CARGO_PKG_VERSION") }
+    })
+}
+
+enum RouteError {
+    InvalidParams,
+    Tool(String),
 }
 
 fn route(
     core: &Core,
     broker: &Broker,
     db_path: Option<&PathBuf>,
-    tool: &str,
     p: &Value,
-) -> Result<Value, String> {
-    match tool {
-        "tools/call" => {
-            let name = p.get("name").and_then(Value::as_str).unwrap_or("");
-            let args = p
-                .get("arguments")
-                .cloned()
-                .unwrap_or(Value::Object(Default::default()));
-            call(core, broker, db_path, name, &args)
-                .map(|result| json!({ "content": [ { "type": "text", "text": result } ] }))
-        }
-        _ => Err(format!("unknown method: {tool}")),
+) -> Result<Value, RouteError> {
+    let Some(params) = p.as_object() else {
+        return Err(RouteError::InvalidParams);
+    };
+    let Some(name) = params.get("name").and_then(Value::as_str) else {
+        return Err(RouteError::InvalidParams);
+    };
+    let args = params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| Value::Object(Default::default()));
+    if !args.is_object() {
+        return Err(RouteError::InvalidParams);
     }
+    call(core, broker, db_path, name, &args)
+        .map(|result| json!({ "content": [ { "type": "text", "text": result } ] }))
+        .map_err(RouteError::Tool)
 }
 
 fn call(
@@ -649,14 +838,24 @@ fn record_mcp_audit(
         .map_err(|error| format!("operation completed but audit could not be persisted: {error}"))
 }
 
-fn respond(id: Option<Value>, result: Result<Value, String>) -> String {
-    match result {
-        Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }).to_string(),
-        Err(error) => {
-            json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32000, "message": error } })
-                .to_string()
-        }
-    }
+fn result_response(id: Value, result: Value) -> String {
+    json!({ "jsonrpc": "2.0", "id": id, "result": result }).to_string()
+}
+
+fn error_response(id: Value, code: i32, message: &str) -> String {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": { "code": code, "message": message }
+    })
+    .to_string()
+}
+
+fn tool_error_result(error: String) -> Value {
+    json!({
+        "content": [{ "type": "text", "text": error }],
+        "isError": true
+    })
 }
 
 #[cfg(test)]
@@ -811,6 +1010,216 @@ mod tests {
             .expect("text")
             .contains('['));
         assert!(response.get("error").is_none());
+    }
+
+    #[test]
+    fn non_json_line_returns_parse_error() {
+        let core = Core::open_in_memory().expect("core");
+        let broker =
+            Broker::new(std::env::temp_dir().join("repoatlas-mcp-protocol-logs")).expect("broker");
+        let mut state = ProtocolState::default();
+        let response = handle_line(&core, &broker, None, "this is not json\n", &mut state)
+            .expect("parse error response");
+        let response: Value = serde_json::from_str(&response).expect("response json");
+        assert_eq!(response["jsonrpc"], "2.0");
+        assert_eq!(response["id"], Value::Null);
+        assert_eq!(response["error"]["code"], -32700);
+        assert_eq!(response["error"]["message"], "Parse error");
+    }
+
+    #[test]
+    fn invalid_jsonrpc_version_returns_invalid_request() {
+        let core = Core::open_in_memory().expect("core");
+        let broker =
+            Broker::new(std::env::temp_dir().join("repoatlas-mcp-protocol-logs")).expect("broker");
+        let mut state = ProtocolState::default();
+        let response = handle_line(
+            &core,
+            &broker,
+            None,
+            r#"{"jsonrpc":"1.0","id":4,"method":"tools/list"}"#,
+            &mut state,
+        )
+        .expect("invalid request response");
+        let response: Value = serde_json::from_str(&response).expect("response json");
+        assert_eq!(response["id"], 4);
+        assert_eq!(response["error"]["code"], -32600);
+        assert_eq!(response["error"]["message"], "Invalid Request");
+    }
+
+    #[test]
+    fn non_object_json_returns_invalid_request() {
+        let core = Core::open_in_memory().expect("core");
+        let broker =
+            Broker::new(std::env::temp_dir().join("repoatlas-mcp-protocol-logs")).expect("broker");
+        let mut state = ProtocolState::default();
+        let response =
+            handle_line(&core, &broker, None, "[]", &mut state).expect("invalid request response");
+        let response: Value = serde_json::from_str(&response).expect("response json");
+        assert_eq!(response["id"], Value::Null);
+        assert_eq!(response["error"]["code"], -32600);
+    }
+
+    #[test]
+    fn null_id_is_a_request_not_a_notification() {
+        let core = Core::open_in_memory().expect("core");
+        let broker =
+            Broker::new(std::env::temp_dir().join("repoatlas-mcp-protocol-logs")).expect("broker");
+        let mut state = ProtocolState::default();
+        let response = handle_line(
+            &core,
+            &broker,
+            None,
+            r#"{"jsonrpc":"2.0","id":null,"method":"initialize"}"#,
+            &mut state,
+        )
+        .expect("initialize response");
+        let response: Value = serde_json::from_str(&response).expect("response json");
+        assert_eq!(response["id"], Value::Null);
+        assert_eq!(response["result"]["protocolVersion"], MCP_PROTOCOL_VERSION);
+        assert!(state.initialized);
+    }
+
+    #[test]
+    fn tools_call_without_name_is_invalid_params() {
+        let core = Core::open_in_memory().expect("core");
+        let broker =
+            Broker::new(std::env::temp_dir().join("repoatlas-mcp-protocol-logs")).expect("broker");
+        let mut state = ProtocolState {
+            initialized: true,
+            ..ProtocolState::default()
+        };
+        let response = handle_line(
+            &core,
+            &broker,
+            None,
+            r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{}}"#,
+            &mut state,
+        )
+        .expect("invalid params response");
+        let response: Value = serde_json::from_str(&response).expect("response json");
+        assert_eq!(response["error"]["code"], -32602);
+        assert_eq!(response["error"]["message"], "Invalid params");
+        assert!(response.get("result").is_none());
+    }
+
+    #[test]
+    fn unknown_method_returns_method_not_found_after_initialize() {
+        let core = Core::open_in_memory().expect("core");
+        let broker =
+            Broker::new(std::env::temp_dir().join("repoatlas-mcp-protocol-logs")).expect("broker");
+        let mut state = ProtocolState::default();
+        let initialize = handle_line(
+            &core,
+            &broker,
+            None,
+            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#,
+            &mut state,
+        )
+        .expect("initialize response");
+        let initialize: Value = serde_json::from_str(&initialize).expect("initialize json");
+        assert_eq!(
+            initialize["result"]["protocolVersion"],
+            MCP_PROTOCOL_VERSION
+        );
+        assert!(state.initialized);
+
+        let response = handle_line(
+            &core,
+            &broker,
+            None,
+            r#"{"jsonrpc":"2.0","id":2,"method":"does/not-exist"}"#,
+            &mut state,
+        )
+        .expect("method error response");
+        let response: Value = serde_json::from_str(&response).expect("response json");
+        assert_eq!(response["error"]["code"], -32601);
+        assert_eq!(response["error"]["message"], "Method not found");
+    }
+
+    #[test]
+    fn unknown_tool_is_a_call_tool_error_result() {
+        let core = Core::open_in_memory().expect("core");
+        let broker =
+            Broker::new(std::env::temp_dir().join("repoatlas-mcp-protocol-logs")).expect("broker");
+        let mut state = ProtocolState {
+            initialized: true,
+            ..ProtocolState::default()
+        };
+        let response = handle_line(
+            &core,
+            &broker,
+            None,
+            r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"not_a_tool","arguments":{}}}"#,
+            &mut state,
+        )
+        .expect("tool response");
+        let response: Value = serde_json::from_str(&response).expect("response json");
+        assert_eq!(response["result"]["isError"], true);
+        assert!(response["result"]["content"][0]["text"]
+            .as_str()
+            .expect("tool error text")
+            .contains("unknown tool"));
+        assert!(response.get("error").is_none());
+    }
+
+    #[test]
+    fn requests_before_initialize_are_rejected_but_initialize_succeeds() {
+        let core = Core::open_in_memory().expect("core");
+        let broker =
+            Broker::new(std::env::temp_dir().join("repoatlas-mcp-protocol-logs")).expect("broker");
+        let mut state = ProtocolState::default();
+        let response = handle_line(
+            &core,
+            &broker,
+            None,
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#,
+            &mut state,
+        )
+        .expect("not initialized response");
+        let response: Value = serde_json::from_str(&response).expect("response json");
+        assert_eq!(response["error"]["code"], -32600);
+        assert_eq!(response["error"]["message"], "Server not initialized");
+
+        let response = handle_line(
+            &core,
+            &broker,
+            None,
+            r#"{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"future"}}"#,
+            &mut state,
+        )
+        .expect("initialize response");
+        let response: Value = serde_json::from_str(&response).expect("response json");
+        assert_eq!(response["result"]["protocolVersion"], MCP_PROTOCOL_VERSION);
+        assert!(state.initialized);
+    }
+
+    #[test]
+    fn missing_id_notification_has_no_response_and_initialized_is_recorded() {
+        let core = Core::open_in_memory().expect("core");
+        let broker =
+            Broker::new(std::env::temp_dir().join("repoatlas-mcp-protocol-logs")).expect("broker");
+        let mut state = ProtocolState::default();
+        assert!(handle_line(
+            &core,
+            &broker,
+            None,
+            r#"{"jsonrpc":"2.0","method":"tools/list"}"#,
+            &mut state,
+        )
+        .is_none());
+        assert!(!state.initialized);
+
+        assert!(handle_line(
+            &core,
+            &broker,
+            None,
+            r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+            &mut state,
+        )
+        .is_none());
+        assert!(state.initialized_notification);
+        assert!(!state.initialized);
     }
 
     #[test]

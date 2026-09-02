@@ -1,4 +1,4 @@
-import { buildProjectTree, collectGroupIds, collectProjectsInGroup, flattenProjectTree, isSameOrAncestorPath, scanRootsUnderPath, splitCanonicalPath } from "../lib/project-tree";
+import { buildProjectTree, collectGroupIds, collectProjectsInGroup, flattenProjectTree, isSameOrAncestorPath, scanRootsUnderPath, sortProjects, splitCanonicalPath } from "../lib/project-tree";
 import type { ProjectSummary } from "../types";
 import { describe, expect, it } from "vitest";
 
@@ -25,6 +25,10 @@ function project(id: string, canonicalPath: string): ProjectSummary {
     lastOpenedAt: null,
     updatedAt: "2026-08-21T00:00:00Z",
   };
+}
+
+function withTimes(id: string, canonicalPath: string, lastOpenedAt: string | null, updatedAt: string): ProjectSummary {
+  return { ...project(id, canonicalPath), lastOpenedAt, updatedAt };
 }
 
 describe("project tree", () => {
@@ -94,5 +98,23 @@ describe("project tree", () => {
     expect(code).toBeTruthy();
     expect(collectProjectsInGroup(roots, code!.id).map((item) => item.id).sort()).toEqual(["atlas", "portal"]);
     expect(scanRootsUnderPath([{ id: "root-code", path: "C:\\code" }, { id: "root-docs", path: "C:\\docs" }], "C:\\code").map((root) => root.id)).toEqual(["root-code"]);
+  });
+  it("sortProjects supports recency, name, and path orders with stable fallbacks", () => {
+    const opened = withTimes("opened", "C:\\code\\portal", "2026-08-21T10:00:00Z", "2026-08-21T00:00:00Z");
+    const older = withTimes("older", "C:\\code\\atlas", "2026-08-20T10:00:00Z", "2026-08-19T00:00:00Z");
+    const never = withTimes("never", "C:\\code\\api", null, "2026-08-18T00:00:00Z");
+    const list = [opened, never, older];
+    expect(sortProjects(list, "default").map((item) => item.id)).toEqual(["opened", "never", "older"]);
+    expect(sortProjects(list, "name").map((item) => item.id)).toEqual(["never", "older", "opened"]);
+    expect(sortProjects(list, "path").map((item) => item.id)).toEqual(["never", "older", "opened"]);
+    expect(sortProjects(list, "recent-opened").map((item) => item.id)).toEqual(["opened", "older", "never"]);
+    expect(sortProjects(list, "recent-updated").map((item) => item.id)).toEqual(["opened", "older", "never"]);
+  });
+  it("applies the requested sort inside groups while keeping path-based group order", () => {
+    const roots = buildProjectTree([
+      withTimes("zulu", "F:\\code\\zulu", "2026-08-21T10:00:00Z", "2026-08-21T00:00:00Z"),
+      withTimes("alpha", "F:\\code\\alpha", "2026-08-22T10:00:00Z", "2026-08-22T00:00:00Z"),
+    ], "recent-opened");
+    expect(roots[0]?.children[0]?.projects.map((item) => item.id)).toEqual(["alpha", "zulu"]);
   });
 });

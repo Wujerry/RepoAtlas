@@ -1,26 +1,27 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { BookOpenText, Brain, CaretDown, Code, Copy, DotsThree, FolderOpen, GitBranch, PencilSimple, Play, Star, TerminalWindow } from "@phosphor-icons/react";
+import { BookOpenText, Brain, CaretDown, Code, Copy, DotsThree, FolderOpen, GitBranch, PencilSimple, Play, Sparkle, Star, TerminalWindow } from "@phosphor-icons/react";
 import { Dialog } from "@base-ui/react/dialog";
 import { save } from "@tauri-apps/plugin-dialog";
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { MessageKey } from "../i18n";
-import { api, onTaskExited, onTaskLog } from "../lib/api";
+import { api, onTaskExited, onTaskLog, onTaskPersistenceFailed } from "../lib/api";
 import { stackOf } from "../lib/format";
 import type { GitOp, GitStatus, ProjectDetail, ProjectTab, ReadmeDocument, TaskRun, ToastTone } from "../types";
-import type { EnvironmentInspection, ProjectFile } from "../types";
+import type { EnvironmentInspection, ExternalTool, ProjectFile } from "../types";
 import { AiPanel } from "./AiPanel";
 import { Button } from "./ui/button";
 import { ConfirmDialog } from "./ui/confirm";
 import { Skeleton } from "./ui/feedback";
 import { ActionMenu } from "./ui/menu";
 import { DescriptionDialog } from "./ui/description-dialog";
-import { IdeGlyph } from "../lib/project-identity";
+import { AgentGlyph, IdeGlyph, TerminalGlyph } from "../lib/project-identity";
 import { OverviewWorkspace } from "./OverviewWorkspace";
 import { GitWorkspace } from "./GitWorkspace";
 import { TaskWorkspace } from "./TaskWorkspace";
 import { InlineLoadError, MarkdownDocument, statusKey, taskConfirmation } from "./DashboardShared";
+import { rememberStartedRun } from "../lib/task-runs";
 
-export function Dashboard({ detail, t, notify, onFavorite, onArchive, onRefresh, onRemove, onOpenExplorer, onOpenTerminal, onOpenIde, onOpenSettings, onDescription, onNotes, onTags, onOpenProject, onRelocate }: {
+export function Dashboard({ detail, t, notify, onFavorite, onArchive, onRefresh, onRemove, onOpenExplorer, onOpenTerminal, onOpenIde, onOpenAgent, onOpenSettings, onDescription, onNotes, onTags, onOpenProject, onRelocate }: {
   detail: ProjectDetail;
   t: (key: MessageKey) => string;
   notify: (tone: ToastTone, title: string, detail?: string) => void;
@@ -29,8 +30,9 @@ export function Dashboard({ detail, t, notify, onFavorite, onArchive, onRefresh,
   onRefresh: () => void | Promise<void>;
   onRemove: () => void | Promise<void>;
   onOpenExplorer: () => void;
-  onOpenTerminal: () => void;
+  onOpenTerminal: (terminal?: string) => void;
   onOpenIde: (ide: string) => void;
+  onOpenAgent: (agent: string) => void;
   onOpenSettings: () => void;
   onDescription: (description: string | null) => void | Promise<void>;
   onNotes: (notes: string) => void;
@@ -48,7 +50,7 @@ export function Dashboard({ detail, t, notify, onFavorite, onArchive, onRefresh,
   const [runsLoading, setRunsLoading] = useState(false);
   const [runsError, setRunsError] = useState<string>();
   const [activeRunId, setActiveRunId] = useState<string>();
-  const [log, setLog] = useState("");
+  const [logs, setLogs] = useState<Record<string, string>>({});
   const [commitMessage, setCommitMessage] = useState("");
   const [pendingGit, setPendingGit] = useState<GitOp | null>(null);
   const [gitBusy, setGitBusy] = useState(false);
@@ -70,6 +72,9 @@ export function Dashboard({ detail, t, notify, onFavorite, onArchive, onRefresh,
   const [descriptionOpen, setDescriptionOpen] = useState(false);
   const [descriptionDraft, setDescriptionDraft] = useState(project.description ?? "");
   const [descriptionSaving, setDescriptionSaving] = useState(false);
+  const [ides, setIdes] = useState<ExternalTool[]>([]);
+  const [terminals, setTerminals] = useState<ExternalTool[]>([]);
+  const [agentTools, setAgentTools] = useState<ExternalTool[]>([]);
   const [overviewSection, setOverviewSection] = useState<"status" | "environment" | "readme" | "agents" | "profile" | "notes">("status");
   const [environment, setEnvironment] = useState<EnvironmentInspection>();
   const [environmentLoading, setEnvironmentLoading] = useState(false);
@@ -97,21 +102,38 @@ export function Dashboard({ detail, t, notify, onFavorite, onArchive, onRefresh,
     setRunsError(undefined);
     try {
       const next = await api.listTaskRuns(project.id); setRuns(next);
-      const running = next.find((run) => run.status === "running");
-      if (running) { setActiveRunId(running.id); setLog(await api.readTaskLog(running.id)); }
+      const runningRuns = next.filter((run) => run.status === "running");
+      if (runningRuns.length > 0) {
+        setActiveRunId((current) => (current && runningRuns.some((run) => run.id === current) ? current : runningRuns[0].id));
+        const loaded = await Promise.all(runningRuns.map(async (run) => [run.id, await api.readTaskLog(run.id)] as const));
+        setLogs((current) => ({ ...current, ...Object.fromEntries(loaded) }));
+      }
     } catch (error) { setRunsError(String(error)); notify("error", t("tasksLoadFailed"), String(error)); }
     finally { setRunsLoading(false); }
   }
 
   useEffect(() => {
-    setTab("overview"); setOverviewSection("status"); setGit(null); setGitError(undefined); setRuns([]); setRunsError(undefined); setLog(""); setCommitMessage(""); setSelectedDiff(undefined); setDiff("");
+    setTab("overview"); setOverviewSection("status"); setGit(null); setGitError(undefined); setRuns([]); setRunsError(undefined); setLogs({}); setCommitMessage(""); setSelectedDiff(undefined); setDiff("");
     setDescriptionDraft(project.description ?? "");
     setAgents(undefined); setAgentsMissing(false);
     setEnvironment(undefined); setEnvironmentError(undefined);
     setPreviewFile(null); setPreviewDoc(undefined); setPreviewError(undefined);
     agentsRequested.current = undefined;
-    void loadGit(); void loadRuns();
+    void loadRuns();
   }, [project.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api.listExternalTools().then((tools) => {
+      if (cancelled) return;
+      setIdes(tools.ides);
+      setTerminals(tools.terminals);
+      setAgentTools(tools.agents ?? []);
+    }).catch((error) => {
+      if (!cancelled) notify("error", t("openFailed"), String(error));
+    });
+    return () => { cancelled = true; };
+  }, [notify, t]);
 
   useEffect(() => {
     const sequence = ++readmeSequence.current;
@@ -126,19 +148,19 @@ export function Dashboard({ detail, t, notify, onFavorite, onArchive, onRefresh,
 
   useEffect(() => {
     const unsubs = Promise.all([
-      onTaskLog((chunk) => { if (chunk.runId === activeRunId) setLog((current) => (current + chunk.text).slice(-200000)); }),
+      onTaskLog((chunk) => { setLogs((current) => ({ ...current, [chunk.runId]: ((current[chunk.runId] ?? "") + chunk.text).slice(-200000) })); }),
       onTaskExited((run) => {
         if (run.projectId !== project.id) return;
         if (run.status === "succeeded") {
           notify("success", t("taskFinished"), `${run.kind} · ${t(statusKey(run.status))}`);
           void api.readTaskLog(run.id).then((output) => {
             setActiveRunId(run.id);
-            setLog(output);
+            setLogs((current) => ({ ...current, [run.id]: output }));
           });
         } else {
           void api.readTaskLog(run.id).then((output) => {
             setActiveRunId(run.id);
-            setLog(output);
+            setLogs((current) => ({ ...current, [run.id]: output }));
             const tail = output.trim().split(/\r?\n/u).slice(-8).join("\n");
             const exit = run.exitCode == null ? t(statusKey(run.status)) : `${t("taskExitCode")} ${run.exitCode}`;
             notify("warning", t("taskFinished"), [run.kind, exit, tail].filter(Boolean).join("\n"));
@@ -148,19 +170,27 @@ export function Dashboard({ detail, t, notify, onFavorite, onArchive, onRefresh,
         }
         void loadRuns();
       }),
+      onTaskPersistenceFailed((failure) => {
+        const run = failure.run;
+        if (run && run.projectId !== project.id) return;
+        notify("error", t("taskPersistenceFailed"), failure.error);
+        if (run) {
+          setActiveRunId(run.id);
+          void loadRuns();
+        }
+      }),
     ]);
     return () => { void unsubs.then((functions) => functions.forEach((unsubscribe) => unsubscribe())); };
   }, [activeRunId, notify, project.id, t]);
 
-  const running = useMemo(() => runs.find((run) => run.status === "running"), [runs]);
   const stagedCount = git?.files.filter((file) => file.staged).length ?? 0;
 
   async function runTask(taskId: string) {
-    const task = detail.tasks.find((item) => item.id === taskId); if (!task || running) return;
+    const task = detail.tasks.find((item) => item.id === taskId); if (!task) return;
     setTaskBusy(true);
     try {
       const run = await api.startTask(project.id, task.id);
-      setPendingTaskId(undefined); setActiveRunId(run.id); setLog(""); await loadRuns(); notify("info", t("taskStarted"), task.name);
+      setPendingTaskId(undefined); setActiveRunId(run.id); setLogs((current) => ({ ...current, [run.id]: "" })); rememberStartedRun(run); await loadRuns(); notify("info", t("taskStarted"), task.name);
     } catch (error) { notify("error", t("taskStartFailed"), String(error)); }
     finally { setTaskBusy(false); }
   }
@@ -230,18 +260,27 @@ export function Dashboard({ detail, t, notify, onFavorite, onArchive, onRefresh,
   }, [tab, project.id, readmeLoading, agentsLoading]);
 
   useEffect(() => {
+    if (project.vcsKind !== "git") return;
+    if (tab !== "git" && tab !== "overview") return;
+    void loadGit();
+  }, [project.id, project.vcsKind, tab]);
+
+  useEffect(() => {
     if (tab !== "overview") return;
     let cancelled = false;
-    setEnvironmentLoading(true);
-    setEnvironmentError(undefined);
-    void api.inspectProjectEnvironment(project.id).then((value) => {
-      if (!cancelled) setEnvironment(value);
-    }).catch((error) => {
-      if (!cancelled) setEnvironmentError(String(error));
-    }).finally(() => {
-      if (!cancelled) setEnvironmentLoading(false);
-    });
-    return () => { cancelled = true; };
+    const timer = window.setTimeout(() => {
+      if (cancelled) return;
+      setEnvironmentLoading(true);
+      setEnvironmentError(undefined);
+      void api.inspectProjectEnvironment(project.id).then((value) => {
+        if (!cancelled) setEnvironment(value);
+      }).catch((error) => {
+        if (!cancelled) setEnvironmentError(String(error));
+      }).finally(() => {
+        if (!cancelled) setEnvironmentLoading(false);
+      });
+    }, 180);
+    return () => { cancelled = true; window.clearTimeout(timer); };
   }, [project.id, tab]);
 
   async function openAtlasReport() {
@@ -292,13 +331,39 @@ export function Dashboard({ detail, t, notify, onFavorite, onArchive, onRefresh,
             <div className="hero-badges">{stackOf(project).map((item) => <span className="badge" key={item}>{item}</span>)}</div>
           </div>
           <div className="hero-actions">
-            <ActionMenu trigger={<Button variant="primary" size="md"><Code weight="bold" />{t("openIde")}<CaretDown /></Button>} items={[
-              { label: "Cursor", icon: <IdeGlyph ide="cursor" />, onClick: () => onOpenIde("cursor") },
-              { label: "VS Code", icon: <IdeGlyph ide="vscode" />, onClick: () => onOpenIde("vscode") },
-              { label: "Zed", icon: <IdeGlyph ide="zed" />, onClick: () => onOpenIde("zed") },
-              { label: "JetBrains", icon: <IdeGlyph ide="jetbrains" />, onClick: () => onOpenIde("jetbrains") },
+            <ActionMenu trigger={<Button variant="primary" size="md"><Sparkle weight="bold" />{t("openAgent")}<CaretDown /></Button>} items={[
+              ...(agentTools.length
+                ? agentTools.map((agent) => ({
+                    label: agent.name,
+                    icon: <AgentGlyph agent={agent.id} />,
+                    onClick: () => onOpenAgent(agent.id),
+                  }))
+                : [{
+                    label: t("noAgentDetected"),
+                    onClick: () => notify("warning", t("noAgentDetected"), t("agentNotInstalled")),
+                  }]),
             ]} />
-            <Button onClick={onOpenTerminal}><TerminalWindow />{t("openTerminal")}</Button>
+            {terminals.length > 1 ? (
+              <ActionMenu trigger={<Button><TerminalWindow />{t("openTerminal")}<CaretDown /></Button>} items={terminals.map((terminal) => ({
+                label: terminal.name,
+                icon: <TerminalGlyph terminal={terminal.id} />,
+                onClick: () => onOpenTerminal(terminal.id),
+              }))} />
+            ) : (
+              <Button onClick={() => onOpenTerminal(terminals[0]?.id)}><TerminalWindow />{t("openTerminal")}</Button>
+            )}
+            <ActionMenu trigger={<Button><Code weight="bold" />{t("openIde")}<CaretDown /></Button>} items={[
+              ...(ides.length
+                ? ides.map((ide) => ({
+                    label: ide.name,
+                    icon: <IdeGlyph ide={ide.id} />,
+                    onClick: () => onOpenIde(ide.id),
+                  }))
+                : [{
+                    label: t("noIdeDetected"),
+                    onClick: () => notify("warning", t("noIdeDetected"), t("ideNotInstalled")),
+                  }]),
+            ]} />
             <Button onClick={onOpenExplorer}><FolderOpen />{t("openExplorer")}</Button>
             <Button size="icon" aria-label={project.favorite ? t("unfavorite") : t("favorite")} onClick={() => void onFavorite()}><Star weight={project.favorite ? "fill" : "regular"} /></Button>
             <ActionMenu trigger={<Button size="icon" aria-label={t("moreActions")}><DotsThree weight="bold" /></Button>} items={[
@@ -326,7 +391,7 @@ export function Dashboard({ detail, t, notify, onFavorite, onArchive, onRefresh,
       </header>
       {tab === "tasks" ? (
         <div id="project-panel-tasks" role="tabpanel" aria-labelledby="project-tab-tasks" className="workspace-content workspace-content-tasks">
-          <TaskWorkspace tasks={detail.tasks} runs={runs} loading={runsLoading} error={runsError} running={running} activeRunId={activeRunId} log={log} t={t} notify={notify} onRetry={() => void loadRuns()} onSaveTasks={async (tasks) => { await api.updateProject(project.id, { tasks }); await onRefresh(); }} onRun={setPendingTaskId} onStop={async () => { if (!running) return; try { await api.stopTask(running.id); await loadRuns(); } catch (error) { notify("error", t("taskStopFailed"), String(error)); } }} onClearLog={() => setLog("")} onHistory={async (run) => { setActiveRunId(run.id); try { setLog(await api.readTaskLog(run.id)); } catch (error) { notify("error", t("logLoadFailed"), String(error)); } }} onSendInput={async (runId, text) => { await api.writeTaskStdin(runId, text); }} />
+          <TaskWorkspace tasks={detail.tasks} runs={runs} loading={runsLoading} error={runsError} activeRunId={activeRunId} log={(activeRunId ? logs[activeRunId] : "") ?? ""} t={t} notify={notify} onRetry={() => void loadRuns()} onSaveTasks={async (tasks) => { await api.updateProject(project.id, { tasks }); await onRefresh(); }} onRun={setPendingTaskId} onStopRun={async (runId) => { try { await api.stopTask(runId); await loadRuns(); } catch (error) { notify("error", t("taskStopFailed"), String(error)); } }} onClearLog={() => activeRunId && setLogs((current) => ({ ...current, [activeRunId]: "" }))} onHistory={async (run) => { setActiveRunId(run.id); try { const output = await api.readTaskLog(run.id); setLogs((current) => ({ ...current, [run.id]: output })); } catch (error) { notify("error", t("logLoadFailed"), String(error)); } }} />
         </div>
       ) : (
         <div id={`project-panel-${tab}`} role="tabpanel" aria-labelledby={`project-tab-${tab}`} className="workspace-scroll" ref={contentRef}>

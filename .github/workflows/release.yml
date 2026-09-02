@@ -1,0 +1,342 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  validate:
+    name: Validate release contract
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      prerelease: ${{ steps.classify.outputs.prerelease }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.11.0
+
+      - name: Check version and tag
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node scripts/check-version.mjs --tag "$RELEASE_TAG"
+
+      - name: Classify release
+        id: classify
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          is_prerelease="$(node -p '/^v\d+\.\d+\.\d+-/.test(process.env.RELEASE_TAG)')"
+          echo "prerelease=$is_prerelease" >> "$GITHUB_OUTPUT"
+
+      - name: Require updater signing key
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            echo 'TAURI_SIGNING_PRIVATE_KEY is required for updater artifacts.' >&2
+            exit 1
+          fi
+
+      - name: Check platform signing readiness
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+        run: |
+          windows_ready=true
+          macos_ready=true
+          if [ -z "${WINDOWS_CERTIFICATE:-}" ] || [ -z "${WINDOWS_CERTIFICATE_PASSWORD:-}" ]; then
+            windows_ready=false
+          fi
+          if [ -z "${APPLE_CERTIFICATE:-}" ] || [ -z "${APPLE_CERTIFICATE_PASSWORD:-}" ] || \
+             [ -z "${APPLE_SIGNING_IDENTITY:-}" ] || [ -z "${APPLE_TEAM_ID:-}" ] || \
+             [ -z "${APPLE_ID:-}" ] || [ -z "${APPLE_PASSWORD:-}" ]; then
+            macos_ready=false
+          fi
+          if [ "$windows_ready" != "true" ] && [ "${{ steps.classify.outputs.prerelease }}" != "true" ]; then
+            echo 'Stable releases require Windows Authenticode credentials (WINDOWS_CERTIFICATE and WINDOWS_CERTIFICATE_PASSWORD).' >&2
+            exit 1
+          fi
+          {
+            echo '### Release signing gate'
+            echo
+            echo "- Windows Authenticode credentials: $windows_ready"
+            echo "- macOS Developer ID and notarization credentials: $macos_ready"
+            echo
+            echo 'The workflow always creates a draft release. Stable releases must be Authenticode-signed before publishing; prerelease Windows artifacts without a certificate are labeled UNSIGNED-BETA.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  create-release:
+    name: Create draft release
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      release-id: ${{ steps.create.outputs.release_id }}
+      prerelease: ${{ needs.validate.outputs.prerelease }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Create draft release
+        id: create
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          PRERELEASE: ${{ needs.validate.outputs.prerelease }}
+        run: |
+          args=("--verify-tag" "--draft" "--title" "RepoAtlas $RELEASE_TAG")
+          if [ "$PRERELEASE" = "true" ]; then
+            args+=("--prerelease")
+          fi
+          gh release create "$RELEASE_TAG" "${args[@]}" \
+            --notes "Draft release for $RELEASE_TAG. Review platform signatures, checksums, updater metadata, installation, and upgrade behavior before publishing."
+          release_id="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq '.id')"
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build (${{ matrix.name }})
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - name: macOS Intel
+            os: macos-15-intel
+            target: x86_64-apple-darwin
+          - name: macOS Apple Silicon
+            os: macos-14
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    permissions:
+      # GITHUB_TOKEN is write-scoped for draft asset upload only.
+      contents: write
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PRERELEASE: ${{ needs.create-release.outputs.prerelease }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10.20.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.11.0
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Import Windows Authenticode certificate
+        id: windows-signing
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          PRERELEASE: ${{ needs.create-release.outputs.prerelease }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE) -or [string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_PASSWORD)) {
+            if ($env:PRERELEASE -eq 'true') {
+              Write-Output '::warning::Windows signing secrets are not configured; Windows artifacts are staged as UNSIGNED-BETA.'
+              exit 0
+            }
+            Write-Error 'Stable releases require Windows Authenticode secrets (WINDOWS_CERTIFICATE and WINDOWS_CERTIFICATE_PASSWORD).'
+            exit 1
+          }
+          $certificateDirectory = Join-Path $env:RUNNER_TEMP 'repoatlas-certificate'
+          New-Item -ItemType Directory -Force -Path $certificateDirectory | Out-Null
+          $encodedPath = Join-Path $certificateDirectory 'certificate.txt'
+          $certificatePath = Join-Path $certificateDirectory 'certificate.pfx'
+          Set-Content -Path $encodedPath -Value $env:WINDOWS_CERTIFICATE -NoNewline
+          certutil -decode $encodedPath $certificatePath | Out-Host
+          $password = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText
+          $certificate = Import-PfxCertificate -FilePath $certificatePath -CertStoreLocation Cert:\CurrentUser\My -Password $password | Select-Object -First 1
+          $configPath = 'src-tauri\tauri.conf.json'
+          $config = Get-Content -Raw -Path $configPath | ConvertFrom-Json
+          if (-not $config.bundle.windows) {
+            $config.bundle | Add-Member -MemberType NoteProperty -Name windows -Value ([pscustomobject]@{})
+          }
+          # Merge only the signing fields so the rest of bundle.windows is
+          # preserved exactly as configured.
+          $signingFields = [ordered]@{
+            certificateThumbprint = ($certificate.Thumbprint -replace '\s', '')
+            digestAlgorithm = 'sha256'
+            timestampUrl = 'http://timestamp.digicert.com'
+          }
+          foreach ($field in $signingFields.GetEnumerator()) {
+            if ($config.bundle.windows.PSObject.Properties[$field.Key]) {
+              $config.bundle.windows.($field.Key) = $field.Value
+            } else {
+              $config.bundle.windows | Add-Member -MemberType NoteProperty -Name $field.Key -Value $field.Value
+            }
+          }
+          $config | ConvertTo-Json -Depth 100 | Set-Content -Path $configPath -Encoding utf8
+          Remove-Item -Recurse -Force $certificateDirectory
+          Add-Content -Path $env:GITHUB_OUTPUT -Value 'signed=true'
+
+      - name: Assert NSIS installer hooks are configured
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        shell: pwsh
+        run: |
+          $config = Get-Content -Raw -Path 'src-tauri\tauri.conf.json' | ConvertFrom-Json
+          $hooks = $config.bundle.windows.nsis.installerHooks
+          if (-not $hooks -or [string]::IsNullOrWhiteSpace([string]$hooks)) {
+            Write-Error 'bundle.windows.nsis.installerHooks is missing from tauri.conf.json; installer custom actions would be silently dropped.'
+            exit 1
+          }
+          Write-Output "NSIS installer hooks present: $hooks"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # rust-toolchain v1
+        with:
+          toolchain: 1.97.1
+          target: ${{ matrix.target }}
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Build and upload Tauri bundles
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
+        env:
+          # Only macOS matrix legs receive Apple signing and notarization secrets.
+          APPLE_CERTIFICATE: ${{ contains(matrix.target, 'apple-darwin') && secrets.APPLE_CERTIFICATE || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ contains(matrix.target, 'apple-darwin') && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
+          APPLE_SIGNING_IDENTITY: ${{ contains(matrix.target, 'apple-darwin') && secrets.APPLE_SIGNING_IDENTITY || '' }}
+          APPLE_TEAM_ID: ${{ contains(matrix.target, 'apple-darwin') && secrets.APPLE_TEAM_ID || '' }}
+          APPLE_ID: ${{ contains(matrix.target, 'apple-darwin') && secrets.APPLE_ID || '' }}
+          APPLE_PASSWORD: ${{ contains(matrix.target, 'apple-darwin') && secrets.APPLE_PASSWORD || '' }}
+        with:
+          projectPath: .
+          releaseId: ${{ needs.create-release.outputs.release-id }}
+          releaseDraft: true
+          releaseName: RepoAtlas ${{ github.ref_name }}
+          uploadUpdaterJson: false
+          uploadUpdaterSignatures: true
+          args: --target ${{ matrix.target }}
+
+      - name: Stage updater and installer artifacts
+        shell: pwsh
+        env:
+          STAGE_LABEL: ${{ matrix.target == 'x86_64-pc-windows-msvc' && steps.windows-signing.outputs.signed != 'true' && 'UNSIGNED-BETA' || '' }}
+        run: |
+          $arguments = @('scripts/stage-release-artifacts.mjs', '--target', '${{ matrix.target }}', '--output', 'release-assets')
+          if ($env:STAGE_LABEL) {
+            $arguments += @('--label', $env:STAGE_LABEL)
+          }
+          node @arguments
+
+      - name: Upload staged artifacts for manifest generation
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: release-${{ matrix.target }}
+          path: release-assets
+          if-no-files-found: error
+          retention-days: 7
+
+  finalize:
+    name: Publish draft metadata
+    needs: [create-release, build]
+    runs-on: ubuntu-latest
+    permissions:
+      # GITHUB_TOKEN is write-scoped for draft asset upload only.
+      contents: write
+      actions: read
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.11.0
+
+      - name: Download staged artifacts
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate updater manifest
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          node scripts/build-updater-manifest.mjs \
+            --version "${RELEASE_TAG#v}" \
+            --artifacts release-assets \
+            --output latest.json \
+            --base-url "https://github.com/wujer/RepoAtlas/releases/download/$RELEASE_TAG"
+
+      - name: Generate checksums
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if compgen -G 'release-assets/*UNSIGNED-BETA*' > /dev/null; then
+            echo "# RepoAtlas ${RELEASE_TAG}: Windows artifacts are UNSIGNED-BETA (no Authenticode signature)." > SHA256SUMS
+          fi
+          (cd release-assets && find . -type f -print0 | sort -z | xargs -0 sha256sum | sed 's#^\./##') >> SHA256SUMS
+          (cd release-assets && sha256sum -c ../SHA256SUMS)
+
+      - name: Upload updater manifest and checksums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release upload "$RELEASE_TAG" latest.json SHA256SUMS release-assets/* --clobber
+          if grep -q 'UNSIGNED-BETA' SHA256SUMS; then
+            body="$(gh release view "$RELEASE_TAG" --json body --jq .body)"
+            {
+              echo "$body"
+              echo
+              echo '## UNSIGNED-BETA'
+              echo
+              echo 'The Windows installers in this release have no Authenticode signature. Verify SHA256SUMS before running them; Microsoft SmartScreen may show a warning.'
+            } | gh release edit "$RELEASE_TAG" --notes-file -
+          fi

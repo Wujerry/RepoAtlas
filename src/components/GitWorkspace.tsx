@@ -1,5 +1,7 @@
 import { GitBranch, GitCommit } from "@phosphor-icons/react";
+import { AnimatePresence, motion } from "framer-motion";
 import type { MessageKey } from "../i18n";
+import { fadeMotion } from "../lib/motion";
 import { formatTime } from "../lib/format";
 import type { GitOp, GitStatus } from "../types";
 import { Button } from "./ui/button";
@@ -19,7 +21,7 @@ export function GitWorkspace({ git, loading, error, busy, commitMessage, setComm
     <section className="content-card git-files"><div className="section-heading"><div><p className="eyebrow">{t("workingTree")}</p><h2>{t("changedFiles")}</h2></div></div>
       {git.files.length === 0 ? <EmptyState compact title={t("noChanges")} body={t("cleanWorkspaceHint")} /> : <div className="file-list">{git.files.map((file) => <div className={`file-row ${selectedDiff?.path === file.path && selectedDiff.staged === file.staged ? "active" : ""}`} key={`${file.path}-${file.staged}`}><button onClick={() => onDiff(file.path, file.staged)}><span className="file-status">{file.status}</span><code title={file.path}>{file.path}</code><span>{file.staged ? t("staged") : t("unstaged")}</span></button><Button variant="quiet" onClick={() => onGit({ type: file.staged ? "unstage" : "stage", paths: [file.path] })}>{file.staged ? t("unstage") : t("stage")}</Button></div>)}</div>}
     </section>
-    <section className="content-card diff-card"><div className="section-heading"><div><p className="eyebrow">{selectedDiff?.staged ? t("stagedDiff") : t("workingDiff")}</p><h2>{selectedDiff?.path ?? t("selectFile")}</h2></div></div>{diffLoading ? <Skeleton className="skeleton-code" /> : <pre className="diff-pane">{diff || t("selectFileHint")}</pre>}</section>
+    <section className="content-card diff-card"><div className="section-heading"><div><p className="eyebrow">{selectedDiff?.staged ? t("stagedDiff") : t("workingDiff")}</p><h2>{selectedDiff?.path ?? t("selectFile")}</h2></div></div><AnimatePresence mode="wait" initial={false}>{diffLoading ? <motion.div key="diff-loading" {...fadeMotion}><Skeleton className="skeleton-code" /></motion.div> : <motion.pre key={selectedDiff?.path ?? "empty"} className="diff-pane" {...fadeMotion}>{diff || t("selectFileHint")}</motion.pre>}</AnimatePresence></section>
     <aside className="git-sidebar"><section className="content-card"><div className="section-heading"><div><p className="eyebrow">{t("repository")}</p><h2>{t("branches")}</h2></div></div><div className="compact-list">{git.branches.slice(0, 12).map((branch) => <div key={branch}><GitBranch /><span>{branch}</span></div>)}</div></section>
       <section className="content-card"><div className="section-heading"><div><p className="eyebrow">{t("recentActivity")}</p><h2>{t("history")}</h2></div></div><div className="commit-list">{git.log.slice(0, 10).map((entry) => <div key={entry.sha}><code>{entry.sha.slice(0, 7)}</code><strong>{entry.subject}</strong><span>{entry.author} · {formatTime(entry.committedAt)}</span></div>)}</div></section></aside>
   </div>;

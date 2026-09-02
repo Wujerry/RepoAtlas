@@ -12,7 +12,12 @@
     "core:window:allow-toggle-maximize",
     "core:window:allow-start-dragging",
     "core:window:allow-is-maximized",
+    "core:window:allow-show",
+    "core:window:allow-unminimize",
+    "core:window:allow-set-focus",
     "dialog:default",
-    "opener:default"
+    "opener:default",
+    "process:default",
+    "updater:default"
   ]
 }

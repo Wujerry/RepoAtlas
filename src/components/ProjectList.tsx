@@ -1,6 +1,6 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { open } from "@tauri-apps/plugin-dialog";
-import { CaretRight, Copy, FolderSimple, FunnelSimple, Image, ListBullets, MagnifyingGlass, PencilSimple, Star, TreeStructure } from "@phosphor-icons/react";
+import { ArrowCounterClockwise, CaretRight, Check, Copy, FolderSimple, Image, ListBullets, MagnifyingGlass, MapPin, NotePencil, PencilSimple, SortAscending, Star, Trash, TreeStructure } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { MessageKey } from "../i18n";
 import { api } from "../lib/api";
@@ -13,17 +13,18 @@ import {
   flattenProjectTree,
   groupLabel,
   isSameOrAncestorPath,
+  sortProjects,
   scanRootsUnderPath,
+  type ProjectSort,
   type ProjectTreeRow,
 } from "../lib/project-tree";
 import type { ProjectScope, ProjectSummary, ScanProgress, ScanRoot } from "../types";
 import { Button } from "./ui/button";
 import { ConfirmDialog } from "./ui/confirm";
 import { EmptyState } from "./ui/feedback";
-import { ItemContextMenu } from "./ui/menu";
+import { ActionMenu, ItemContextMenu } from "./ui/menu";
 
 export interface ProjectFilters {
-  vcs: string;
   language: string;
   tag: string;
 }
@@ -37,6 +38,17 @@ const scopeKeys: Record<ProjectScope, MessageKey> = {
 
 const scopeOptions: ProjectScope[] = ["projects", "favorites", "recent", "archived"];
 
+const sortOptions: ProjectSort[] = ["default", "recent-opened", "recent-updated", "recent-committed", "name", "path"];
+
+const sortLabels: Record<ProjectSort, MessageKey> = {
+  default: "sortDefault",
+  "recent-opened": "sortRecentOpened",
+  "recent-updated": "sortRecentUpdated",
+  "recent-committed": "sortRecentCommitted",
+  name: "sortName",
+  path: "sortPath",
+};
+
 interface ProjectListProps {
   projects: ProjectSummary[];
   allProjects: ProjectSummary[];
@@ -46,6 +58,8 @@ interface ProjectListProps {
   onQuery: (value: string) => void;
   filters: ProjectFilters;
   onFilters: (filters: ProjectFilters) => void;
+  sort?: ProjectSort;
+  onSort?: (sort: ProjectSort) => void;
   scope?: ProjectScope;
   onScope?: (scope: ProjectScope) => void;
   scanning: boolean;
@@ -75,6 +89,8 @@ export function ProjectList({
   onQuery,
   filters,
   onFilters,
+  sort = "default",
+  onSort,
   scope = "projects",
   onScope,
   scanning,
@@ -108,10 +124,11 @@ export function ProjectList({
   const [pendingFolder, setPendingFolder] = useState<{ path: string; projectIds: string[]; rootCount: number }>();
   const [icons, setIcons] = useState<Record<string, { kind: string; source: string | null; dataUrl: string | null }>>({});
   const projectIconRevision = projects.map((project) => `${project.id}:${project.updatedAt}`).join("|");
-  const roots = useMemo(() => buildProjectTree(projects), [projects]);
+  const roots = useMemo(() => buildProjectTree(projects, sort), [projects, sort]);
   const groupIds = useMemo(() => collectGroupIds(roots), [roots]);
   const rows = useMemo(() => flattenProjectTree(roots, expandedGroups), [expandedGroups, roots]);
-  const visibleRows = useMemo<ProjectTreeRow[]>(() => layout === "tree" ? rows : projects.map((project, index) => ({
+  const sortedProjects = useMemo(() => sortProjects(projects, sort), [projects, sort]);
+  const visibleRows = useMemo<ProjectTreeRow[]>(() => layout === "tree" ? rows : sortedProjects.map((project, index) => ({
     kind: "project",
     id: `project:${project.id}`,
     project,
@@ -119,13 +136,12 @@ export function ProjectList({
     parentId: "",
     siblingIndex: index + 1,
     siblingCount: projects.length,
-  })), [layout, projects, rows]);
+  })), [layout, sortedProjects, rows]);
   const facets = useMemo(() => ({
-    vcs: [...new Set(allProjects.map((project) => project.vcsKind).filter(Boolean))].sort(),
     languages: [...new Set(allProjects.flatMap((project) => project.languages))].sort(),
     tags: [...new Set(allProjects.flatMap((project) => project.tags))].sort(),
   }), [allProjects]);
-  const hasFacetFilters = Boolean(filters.vcs || filters.language || filters.tag);
+  const hasFacetFilters = Boolean(filters.language || filters.tag);
   const hasTextFilter = Boolean(query.trim() || hasFacetFilters);
 
   useEffect(() => {
@@ -367,6 +383,7 @@ export function ProjectList({
           items={[{
             label: t("removeFolder"),
             danger: true,
+            icon: <Trash />,
             onClick: () => {
               setPendingFolder({
                 path: row.path,
@@ -412,13 +429,13 @@ export function ProjectList({
               </button>}
               items={[
                 { label: t("editName"), icon: <PencilSimple />, onClick: () => { setEditing({ id: row.project.id, field: "name" }); setDraft(row.project.displayName); } },
-                { label: t("editDescription"), icon: <PencilSimple />, onClick: () => { setEditing({ id: row.project.id, field: "description" }); setDraft(row.project.description ?? ""); } },
+                { label: t("editDescription"), icon: <NotePencil />, onClick: () => { setEditing({ id: row.project.id, field: "description" }); setDraft(row.project.description ?? ""); } },
                 { label: t("changeProjectIcon"), icon: <Image />, onClick: () => void chooseProjectIcon(row.project.id) },
-                { label: t("resetProjectIcon"), onClick: () => void clearProjectIcon(row.project.id) },
+                { label: t("resetProjectIcon"), icon: <ArrowCounterClockwise />, onClick: () => void clearProjectIcon(row.project.id) },
                 { label: t("copyPath"), icon: <Copy />, onClick: () => void navigator.clipboard?.writeText(row.project.canonicalPath) },
                 ...(onReveal ? [{ label: t("revealInExplorer"), icon: <FolderSimple />, onClick: () => onReveal(row.project.canonicalPath) }] : []),
-                ...(onRelocate ? [{ label: t("relocateProject"), onClick: () => void onRelocate(row.project.id) }] : []),
-                { label: t("removeRecord"), danger: true, onClick: () => setPendingProject(row.project) },
+                ...(onRelocate ? [{ label: t("relocateProject"), icon: <MapPin />, onClick: () => void onRelocate(row.project.id) }] : []),
+                { label: t("removeRecord"), danger: true, icon: <Trash />, onClick: () => setPendingProject(row.project) },
               ]}
             />
           </>}
@@ -431,7 +448,7 @@ export function ProjectList({
     <section className="list-pane" aria-label={t("projects")}>
       <header className="list-header">
         <div className="list-heading"><p className="eyebrow">{t("library")}</p><div><h1>{t("projects")}</h1><span className="project-count">{projects.length}</span></div></div>
-        <div className="list-header-actions"><Button variant="quiet" onClick={onAddRoot}>{t("addRootShort")}</Button><Button variant="quiet" onClick={onScan} disabled={scanning}>{t("discoverProjects")}</Button></div>
+        <div className="list-header-actions"><Button variant="quiet" onClick={onAddRoot}>{t("addRootShort")}</Button><Button variant="quiet" onClick={onScan} disabled={scanning}>{t("discoverShort")}</Button></div>
       </header>
       <div className="list-toolbar">
         <label className="search-field">
@@ -443,21 +460,32 @@ export function ProjectList({
         </div>}
         <div className="list-toolbar-meta">
           <div className="facet-row" aria-label={t("filters")}>
-            <FunnelSimple aria-hidden="true" />
-            <select aria-label={t("vcsFilter")} value={filters.vcs} onChange={(event) => onFilters({ ...filters, vcs: event.target.value })}>
-              <option value="">{t("allVcs")}</option>{facets.vcs.map((value) => <option key={value} value={value}>{value}</option>)}
-            </select>
             <select aria-label={t("languageFilter")} value={filters.language} onChange={(event) => onFilters({ ...filters, language: event.target.value })}>
               <option value="">{t("allLanguages")}</option>{facets.languages.map((value) => <option key={value} value={value}>{value}</option>)}
             </select>
             {facets.tags.length > 0 && <select aria-label={t("tagFilter")} value={filters.tag} onChange={(event) => onFilters({ ...filters, tag: event.target.value })}>
               <option value="">{t("allTags")}</option>{facets.tags.map((value) => <option key={value} value={value}>{value}</option>)}
             </select>}
-            {(query.trim() || hasFacetFilters) && <button className="clear-filters" onClick={() => { onQuery(""); onFilters({ vcs: "", language: "", tag: "" }); }}>{t("clear")}</button>}
+            {(query.trim() || hasFacetFilters) && <button className="clear-filters" onClick={() => { onQuery(""); onFilters({ language: "", tag: "" }); }}>{t("clear")}</button>}
           </div>
-          <div className="list-view-toggle" role="group" aria-label={t("listLayout")}>
-            <button type="button" className={layout === "tree" ? "active" : ""} aria-pressed={layout === "tree"} aria-label={t("treeView")} onClick={() => setLayout("tree")}><TreeStructure aria-hidden="true" /></button>
-            <button type="button" className={layout === "flat" ? "active" : ""} aria-pressed={layout === "flat"} aria-label={t("flatView")} onClick={() => setLayout("flat")}><ListBullets aria-hidden="true" /></button>
+          <div className="list-view-tools">
+            <ActionMenu
+              trigger={
+                <button type="button" className="sort-trigger" aria-haspopup="menu" aria-label={t("sortBy")}>
+                  <SortAscending aria-hidden="true" />
+                  <span aria-hidden="true">{t(sortLabels[sort])}</span>
+                </button>
+              }
+              items={sortOptions.map((value) => ({
+                label: t(sortLabels[value]),
+                icon: sort === value ? <Check aria-hidden="true" /> : undefined,
+                onClick: () => onSort?.(value),
+              }))}
+            />
+            <div className="list-view-toggle" role="group" aria-label={t("listLayout")}>
+              <button type="button" className={layout === "tree" ? "active" : ""} aria-pressed={layout === "tree"} aria-label={t("treeView")} onClick={() => setLayout("tree")}><TreeStructure aria-hidden="true" /></button>
+              <button type="button" className={layout === "flat" ? "active" : ""} aria-pressed={layout === "flat"} aria-label={t("flatView")} onClick={() => setLayout("flat")}><ListBullets aria-hidden="true" /></button>
+            </div>
           </div>
         </div>
       </div>

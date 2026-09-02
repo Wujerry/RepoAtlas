@@ -1,0 +1,176 @@
+.settings-updater .settings-card-action {
+  align-items: flex-start;
+}
+
+.settings-updater .settings-card-action .button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-update-version {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  padding: 11px 0 13px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.settings-update-version > div {
+  display: grid;
+  gap: 3px;
+  min-width: 110px;
+}
+
+.settings-update-version span,
+.settings-update-version time {
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.settings-update-version code {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.settings-update-status {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 11px;
+  align-items: start;
+  padding-top: 14px;
+}
+
+.settings-update-icon {
+  width: 20px;
+  height: 20px;
+  color: var(--muted);
+}
+
+.settings-update-status.is-available .settings-update-icon,
+.settings-update-status.is-ready .settings-update-icon {
+  color: var(--accent);
+}
+
+.settings-update-status.is-error .settings-update-icon {
+  color: var(--danger);
+}
+
+.settings-update-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.settings-update-copy strong {
+  font-size: 12px;
+}
+
+.settings-update-copy > span {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.settings-update-notes {
+  display: grid;
+  gap: 3px;
+  margin-top: 6px;
+  padding-top: 7px;
+  border-top: 1px solid var(--line);
+}
+
+.settings-update-notes > span {
+  color: var(--text-soft);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.settings-update-notes p {
+  max-height: 92px;
+  margin: 0;
+  overflow: auto;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.settings-update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  align-self: end;
+}
+
+.settings-update-status progress {
+  width: min(100%, 360px);
+  height: 6px;
+  margin-top: 4px;
+  accent-color: var(--accent);
+}
+
+.settings-update-progress {
+  width: min(100%, 360px);
+  height: 6px;
+  margin-top: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg-hover);
+}
+
+.settings-update-progress::after {
+  display: block;
+  width: 38%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  content: "";
+  animation: updater-progress 1.2s ease-in-out infinite;
+}
+
+.settings-update-status.is-error {
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--danger) 25%, var(--line));
+  border-radius: 9px;
+  background: var(--danger-wash);
+}
+
+.settings-update-status.is-error .settings-update-copy > span {
+  overflow-wrap: anywhere;
+}
+
+.is-spinning {
+  animation: updater-spin 1s linear infinite;
+}
+
+@keyframes updater-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes updater-progress {
+  0% { transform: translateX(-140%); }
+  100% { transform: translateX(290%); }
+}
+
+@media (max-width: 720px) {
+  .settings-update-status {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .settings-update-actions,
+  .settings-update-status > .button {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .is-spinning,
+  .settings-update-progress::after {
+    animation: none;
+  }
+}

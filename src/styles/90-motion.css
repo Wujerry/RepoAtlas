@@ -7,6 +7,12 @@
 @keyframes detail-in { from { opacity: 0; transform: translateY(8px); } }
 @keyframes dialog-in { from { opacity: 0; transform: translate(-50%, -48%) scale(.98); } }
 @keyframes menu-in { from { opacity: 0; transform: scale(.97); } }
+@keyframes fade-out { to { opacity: 0; } }
+@keyframes dialog-out { to { opacity: 0; transform: translate(-50%, -48%) scale(.985); } }
+@keyframes menu-out { to { opacity: 0; transform: scale(.97); } }
+@keyframes toast-out { to { opacity: 0; transform: translateY(8px) scale(.98); } }
+@keyframes scan-in { from { opacity: 0; transform: translateY(-6px); } }
+@keyframes scan-done { 0%,100% { transform: scale(1); } 50% { transform: scale(1.35); } }
 
 @media (min-width: 1280px) {
 }

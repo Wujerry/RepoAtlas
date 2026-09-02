@@ -448,7 +448,11 @@ pub struct ProviderProfile {
     pub protocol: String,
     pub base_url: Option<String>,
     pub model: String,
+    #[serde(default, skip_serializing)]
     pub credential_ref: String,
+    #[serde(default, skip_serializing)]
+    pub credential_blob: Option<Vec<u8>>,
+    pub has_credential: bool,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -484,6 +488,9 @@ pub struct ProviderUpsert {
     pub protocol: String,
     pub base_url: Option<String>,
     pub model: String,
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
     pub credential_ref: String,
 }
 

@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "node scripts/copy-mcp-sidecar.mjs && pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -21,7 +21,7 @@
         "decorations": false,
         "transparent": false,
         "resizable": true,
-        "visible": true
+        "visible": false
       }
     ],
     "security": {
@@ -30,7 +30,16 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
+    "windows": {
+      "nsis": {
+        "installerHooks": "./windows/installer-hooks.nsh"
+      }
+    },
+    "resources": [
+      "resources/repoatlas-mcp/*"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -38,5 +47,16 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNGNDc3M0I5NUNDQjAwMgpSV1FDc015Vk8zZjBBMy9FYm5WQXZHYmtxZlpCOE85L3FtUFFmdmpLcEtLaEdQUUxhaVNVbHAwYQo=",
+      "endpoints": [
+        "https://github.com/wujer/RepoAtlas/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

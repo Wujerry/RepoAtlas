@@ -2,12 +2,13 @@ use crate::error::{Error, Result};
 use crate::models::{LogChunk, TaskRun, TaskSpec};
 use crate::paths;
 use chrono::{SecondsFormat, Utc};
+use portable_pty::{CommandBuilder, MasterPty, PtySize};
 use rusqlite::{params, Connection};
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
+use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -15,6 +16,8 @@ use uuid::Uuid;
 
 const DEFAULT_CONCURRENCY: usize = 4;
 const MAX_LOG_BYTES: u64 = 10 * 1024 * 1024;
+const DEFAULT_PTY_COLS: u16 = 80;
+const DEFAULT_PTY_ROWS: u16 = 24;
 
 /// Format a start failure with enough structured context to fix the task.
 /// Environment variables are intentionally omitted because they may contain
@@ -56,8 +59,11 @@ struct LiveRun {
     id: String,
     project_id: String,
     kind: String,
-    child: Child,
-    stdin: Option<std::process::ChildStdin>,
+    child: Box<dyn portable_pty::Child + Send + Sync>,
+    writer: Option<Box<dyn Write + Send>>,
+    master: Option<Box<dyn MasterPty + Send>>,
+    #[cfg(windows)]
+    job: job_object::JobHandle,
 }
 
 impl Broker {
@@ -141,14 +147,6 @@ impl Broker {
         let (resolved_executable, resolved_argv, task_path) =
             resolve_task_command(&spec.executable, &spec.argv, &cwd)
                 .map_err(|reason| start_error(&spec, &cwd, reason))?;
-        #[cfg(windows)]
-        let mut command = windows_command(&resolved_executable, &resolved_argv)?;
-        #[cfg(not(windows))]
-        let mut command = {
-            let mut command = Command::new(&resolved_executable);
-            command.args(&resolved_argv);
-            command
-        };
 
         let run = TaskRun {
             id: id.clone(),
@@ -167,24 +165,94 @@ impl Broker {
         };
         insert_run(conn, &run)?;
 
-        command
-            .current_dir(&cwd)
-            .env("PATH", task_path)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        let mut command = match pty_command(&resolved_executable, &resolved_argv) {
+            Ok(command) => command,
+            Err(reason) => {
+                let _ = crate::broker::finish_run(conn, &id, "failed", None);
+                return Err(start_error(&spec, &cwd, reason));
+            }
+        };
+        command.cwd(&cwd);
+        command.env("PATH", task_path);
+        command.env("TERM", "xterm-256color");
+        command.env("COLORTERM", "truecolor");
+        let pty_system = portable_pty::native_pty_system();
+        let pair = pty_system
+            .openpty(PtySize {
+                rows: DEFAULT_PTY_ROWS,
+                cols: DEFAULT_PTY_COLS,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|err| {
+                let _ = crate::broker::finish_run(conn, &id, "failed", None);
+                start_error(&spec, &cwd, err)
+            })?;
+        let mut child = match pair.slave.spawn_command(command) {
+            Ok(child) => child,
+            Err(err) => {
+                let _ = crate::broker::finish_run(conn, &id, "failed", None);
+                return Err(start_error(&spec, &cwd, err));
+            }
+        };
+        let reader = match pair.master.try_clone_reader() {
+            Ok(reader) => reader,
+            Err(err) => {
+                abort_spawn(child.as_mut());
+                let _ = crate::broker::finish_run(conn, &id, "failed", None);
+                return Err(start_error(&spec, &cwd, err));
+            }
+        };
+        let writer = match pair.master.take_writer() {
+            Ok(writer) => writer,
+            Err(err) => {
+                abort_spawn(child.as_mut());
+                let _ = crate::broker::finish_run(conn, &id, "failed", None);
+                return Err(start_error(&spec, &cwd, err));
+            }
+        };
         #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            command.creation_flags(0x08000000);
-        }
-        let mut child = command.spawn().map_err(|err| {
-            let _ = crate::broker::finish_run(conn, &id, "failed", None);
-            start_error(&spec, &cwd, err)
-        })?;
-        let stdout = child.stdout.take();
-        let stderr = child.stderr.take();
-        let stdin = child.stdin.take();
+        let job = {
+            // Assign the fresh child to a kill-on-close Job Object before it
+            // can spawn descendants. Job membership is inherited by every
+            // later descendant regardless of parent-chain changes, so stop
+            // can terminate processes that taskkill tree-walks miss when an
+            // intermediate process exits or is reparented first.
+            // Cleanup is only guaranteed while the job exists, so a failure
+            // here is fatal for the start attempt instead of a silent
+            // downgrade to best-effort termination.
+            let job = match job_object::JobHandle::new() {
+                Some(job) => job,
+                None => {
+                    abort_spawn(child.as_mut());
+                    let _ = crate::broker::finish_run(conn, &id, "failed", None);
+                    return Err(start_error(
+                        &spec,
+                        &cwd,
+                        "failed to create the Windows Job Object that guarantees task cleanup",
+                    ));
+                }
+            };
+            let Some(handle) = child.as_raw_handle() else {
+                abort_spawn(child.as_mut());
+                let _ = crate::broker::finish_run(conn, &id, "failed", None);
+                return Err(start_error(
+                    &spec,
+                    &cwd,
+                    "the task process handle is unavailable",
+                ));
+            };
+            if !job.assign(handle) {
+                abort_spawn(child.as_mut());
+                let _ = crate::broker::finish_run(conn, &id, "failed", None);
+                return Err(start_error(
+                    &spec,
+                    &cwd,
+                    "failed to assign the task process to the cleanup Job Object",
+                ));
+            }
+            job
+        };
         {
             let mut inner = self.inner.lock().map_err(|_| Error::msg("broker lock"))?;
             inner.runs.push(LiveRun {
@@ -192,7 +260,10 @@ impl Broker {
                 project_id: spec.project_id.clone(),
                 kind: spec.kind.clone(),
                 child,
-                stdin,
+                writer: Some(writer),
+                master: Some(pair.master),
+                #[cfg(windows)]
+                job,
             });
         }
 
@@ -203,42 +274,18 @@ impl Broker {
         thread::spawn(move || {
             let on_chunk = Arc::new(on_chunk);
             let on_exit = on_exit;
-            let mut handles = Vec::new();
-            if let Some(stdout) = stdout {
-                let log_path = log_path_thread.clone();
-                let run_id = run_id.clone();
-                let on_chunk = on_chunk.clone();
-                let log_budget = log_budget.clone();
-                handles.push(thread::spawn(move || {
-                    pump(
-                        stdout,
-                        "stdout",
-                        &run_id,
-                        &log_path,
-                        on_chunk.as_ref(),
-                        &log_budget,
-                    );
-                }));
-            }
-            if let Some(stderr) = stderr {
-                let log_path = log_path_thread.clone();
-                let run_id = run_id.clone();
-                let on_chunk = on_chunk.clone();
-                let log_budget = log_budget.clone();
-                handles.push(thread::spawn(move || {
-                    pump(
-                        stderr,
-                        "stderr",
-                        &run_id,
-                        &log_path,
-                        on_chunk.as_ref(),
-                        &log_budget,
-                    );
-                }));
-            }
-            for handle in handles {
-                let _ = handle.join();
-            }
+            pump(
+                reader,
+                "pty",
+                &run_id,
+                &log_path_thread,
+                on_chunk.as_ref(),
+                &log_budget,
+                || {
+                    let reply = format!("{}[24;80R", char::from_u32(0x1b).unwrap());
+                    let _ = broker.write_stdin(&run_id, &reply);
+                },
+            );
             let code = broker.reap(&run_id).ok().flatten();
             on_exit(run_id, code);
         });
@@ -250,7 +297,7 @@ impl Broker {
         let Some(run) = inner.runs.iter_mut().find(|run| run.id == run_id) else {
             return Err(Error::msg("task is not running"));
         };
-        let Some(stdin) = run.stdin.as_mut() else {
+        let Some(stdin) = run.writer.as_mut() else {
             return Err(Error::msg("task stdin is not available"));
         };
         stdin
@@ -270,21 +317,40 @@ impl Broker {
                 .iter_mut()
                 .find(|run| run.id == run_id)
                 .map(|run| {
-                    run.stdin.take();
-                    run.child.id()
+                    run.writer.take();
+                    let _ = run.master.take();
+                    run.child.process_id().unwrap_or(0)
                 })
+                .unwrap_or(0)
         };
-        if let Some(pid) = child_pid {
+        if child_pid > 0 {
             // Do not run the Windows process manager while holding the Broker
             // mutex: a hung taskkill must not block log callbacks or other
             // task controls. Fall back to the direct handle only after the
             // bounded tree-termination attempt returns.
-            let tree_killed = terminate_process_tree(pid);
+            let tree_killed = terminate_process_tree(child_pid);
             let mut inner = self.inner.lock().map_err(|_| Error::msg("broker lock"))?;
             if let Some(run) = inner.runs.iter_mut().find(|run| run.id == run_id) {
-                if !tree_killed {
-                    terminate_child(&mut run.child);
+                #[cfg(windows)]
+                {
+                    // The Job Object is the authoritative cleanup guarantee:
+                    // it terminates every descendant that joined the run,
+                    // including grandchildren that taskkill tree-walks miss
+                    // because their parent exited or was reparented first.
+                    // Closing the handle during reap would also kill them,
+                    // but terminating here stops output immediately.
+                    run.job.terminate();
                 }
+                if !tree_killed {
+                    terminate_child(run.child.as_mut());
+                }
+            }
+        } else {
+            let mut inner = self.inner.lock().map_err(|_| Error::msg("broker lock"))?;
+            if let Some(run) = inner.runs.iter_mut().find(|run| run.id == run_id) {
+                #[cfg(windows)]
+                run.job.terminate();
+                terminate_child(run.child.as_mut());
             }
         }
         self.reap(run_id)?;
@@ -296,11 +362,37 @@ impl Broker {
         Ok(inner.runs.iter().map(|run| run.id.clone()).collect())
     }
 
+    pub fn resize(&self, run_id: &str, cols: u16, rows: u16) -> Result<()> {
+        if cols == 0 || rows == 0 {
+            return Err(Error::msg("terminal size must be greater than zero"));
+        }
+        let inner = self.inner.lock().map_err(|_| Error::msg("broker lock"))?;
+        let Some(run) = inner.runs.iter().find(|run| run.id == run_id) else {
+            return Err(Error::msg("task is not running"));
+        };
+        let Some(master) = run.master.as_ref() else {
+            return Err(Error::msg("task terminal is closing"));
+        };
+        master
+            .resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|err| Error::msg(format!("failed to resize task terminal: {err}")))
+    }
+
     fn reap(&self, run_id: &str) -> Result<Option<i32>> {
         let mut inner = self.inner.lock().map_err(|_| Error::msg("broker lock"))?;
         if let Some(index) = inner.runs.iter().position(|run| run.id == run_id) {
             let mut run = inner.runs.remove(index);
-            let code = run.child.wait().ok().and_then(|status| status.code());
+            run.writer.take();
+            let code = run
+                .child
+                .wait()
+                .ok()
+                .map(|status| status.exit_code() as i32);
             return Ok(code);
         }
         Ok(None)
@@ -337,7 +429,11 @@ fn resolve_task_command(
 
 fn task_search_path(cwd: &Path) -> OsString {
     let stop = crate::git::repository_root(cwd).unwrap_or_else(|| cwd.to_path_buf());
-    let mut entries = Vec::new();
+    // Keep the child PATH consistent with find_executable, which also
+    // searches the working directory first: script tokens are resolved by
+    // cmd.exe against this PATH, so a script sitting directly in the task
+    // directory must stay reachable after the swap.
+    let mut entries = vec![cwd.to_path_buf()];
     let mut current = Some(cwd);
     while let Some(directory) = current {
         entries.extend([
@@ -406,15 +502,85 @@ fn executable_candidates(directory: &Path, executable: &str) -> Vec<PathBuf> {
     }
 }
 
-fn terminate_child(child: &mut Child) {
-    #[cfg(windows)]
-    {
-        let _ = child.kill();
+/// Kernel-enforced process-tree cleanup for structured tasks on Windows.
+///
+/// taskkill /T walks parent PIDs and misses descendants whose parent exited
+/// or was reparented between enumeration and termination, which let dev
+/// servers keep streaming output after an explicit stop. A Job Object with
+/// JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE inherits membership to every descendant
+/// regardless of parentage, so terminating (or closing) the job reliably
+/// stops the whole run.
+#[cfg(windows)]
+mod job_object {
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+
+    /// Owned Job Object handle. The raw handle is not naturally Send, but
+    /// ownership only moves with the LiveRun it belongs to behind the broker
+    /// mutex, so moving it between threads is sound.
+    pub(super) struct JobHandle(HANDLE);
+
+    unsafe impl Send for JobHandle {}
+
+    impl JobHandle {
+        pub(super) fn new() -> Option<Self> {
+            unsafe {
+                let handle = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+                if handle.is_null() {
+                    return None;
+                }
+                let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+                info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                let configured = SetInformationJobObject(
+                    handle,
+                    JobObjectExtendedLimitInformation,
+                    &info as *const _ as *const core::ffi::c_void,
+                    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                );
+                if configured == 0 {
+                    CloseHandle(handle);
+                    return None;
+                }
+                Some(Self(handle))
+            }
+        }
+
+        pub(super) fn assign(&self, process: std::os::windows::io::RawHandle) -> bool {
+            unsafe { AssignProcessToJobObject(self.0, process as HANDLE) != 0 }
+        }
+
+        /// Kill every process currently in the job. Descendants that spawn
+        /// after the stop request cannot survive: the root is terminated in
+        /// the same critical section, and any straggler dies on Drop.
+        pub(super) fn terminate(&self) {
+            unsafe {
+                TerminateJobObject(self.0, 1);
+            }
+        }
     }
-    #[cfg(not(windows))]
-    {
-        let _ = child.kill();
+
+    impl Drop for JobHandle {
+        fn drop(&mut self) {
+            // KILL_ON_JOB_CLOSE makes this the final cleanup guarantee for
+            // descendants that survived a failed or partial termination.
+            unsafe { CloseHandle(self.0) };
+        }
     }
+}
+
+/// Kill a spawned-but-not-yet-tracked child and collect it, so a failed
+/// start cannot leak a live process behind the error.
+fn abort_spawn(child: &mut dyn portable_pty::Child) {
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+fn terminate_child(child: &mut dyn portable_pty::Child) {
+    let _ = child.kill();
 }
 
 /// Shell interpreters are intentionally not accepted as structured tasks.
@@ -461,6 +627,7 @@ fn terminate_process_tree(pid: u32) -> bool {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
+        crate::process::suppress_console_window(&mut command);
         let Ok(mut child) = command.spawn() else {
             return false;
         };
@@ -486,8 +653,38 @@ fn terminate_process_tree(pid: u32) -> bool {
     }
     #[cfg(not(windows))]
     {
-        let _ = pid;
-        false
+        // portable-pty starts the child in its own session, so the negative
+        // pid signals the whole process group. Ask politely first; a task
+        // that ignores SIGTERM must still die, so escalate to SIGKILL after
+        // a bounded grace period instead of leaving the stop request
+        // half-done.
+        let group = -(pid as i32);
+        let pid = pid as i32;
+        unsafe {
+            if libc::kill(group, libc::SIGTERM) != 0 && libc::kill(pid, libc::SIGTERM) != 0 {
+                // Nothing is left to signal; reap() reports the real status.
+                return true;
+            }
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            // kill(pid, 0) keeps succeeding for a zombie until the output
+            // pump reaps it, so this check converges as soon as the child
+            // is actually gone.
+            let alive = unsafe { libc::kill(pid, 0) == 0 };
+            if !alive {
+                return true;
+            }
+            if std::time::Instant::now() >= deadline {
+                break;
+            }
+            thread::sleep(std::time::Duration::from_millis(10));
+        }
+        unsafe {
+            let _ = libc::kill(group, libc::SIGKILL);
+            let _ = libc::kill(pid, libc::SIGKILL);
+        }
+        true
     }
 }
 
@@ -524,6 +721,16 @@ pub fn list_runs(conn: &Connection, project_id: &str) -> Result<Vec<TaskRun>> {
     )?;
     let rows = stmt
         .query_map(params![project_id], row_to_run)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+pub fn list_active_runs(conn: &Connection) -> Result<Vec<TaskRun>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, project_id, task_id, kind, executable, argv_json, cwd, shell_mode, status, exit_code, log_path, started_at, finished_at FROM task_runs WHERE status IN ('running', 'starting') ORDER BY datetime(started_at) ASC",
+    )?;
+    let rows = stmt
+        .query_map([], row_to_run)?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(rows)
 }
@@ -599,19 +806,17 @@ fn pump<T: std::io::Read>(
     log_path: &Path,
     on_chunk: &dyn Fn(LogChunk),
     budget: &AtomicU64,
+    mut on_cursor_query: impl FnMut(),
 ) {
     // Bound the amount of data retained for each captured stream. Without a
     // `take` wrapper a command which never emits a newline could make
     // `BufRead::lines` allocate until the process exits, even though the log
     // file itself is capped below.
-    let mut reader = BufReader::new(stream).take(MAX_LOG_BYTES);
-    let mut line = Vec::new();
-    loop {
-        line.clear();
-        let read = match reader.read_until(b'\n', &mut line) {
-            Ok(read) => read,
-            Err(_) => break,
-        };
+    // PTY output is a mixed byte stream of text, ANSI, and in-place progress
+    // updates, so keep the original bytes instead of waiting for newlines.
+    let mut reader = BufReader::new(stream);
+    let mut buffer = [0_u8; 4096];
+    while let Ok(read) = reader.read(&mut buffer) {
         if read == 0 {
             break;
         }
@@ -619,7 +824,13 @@ fn pump<T: std::io::Read>(
         if granted == 0 {
             continue;
         }
-        let bytes = &line[..granted];
+        let bytes = &buffer[..granted];
+        if bytes
+            .windows(4)
+            .any(|window| window == [0x1b, b'[', b'6', b'n'])
+        {
+            on_cursor_query();
+        }
         if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(log_path) {
             let _ = file.write_all(bytes);
         }
@@ -660,26 +871,86 @@ fn now() -> String {
 /// Build the command used for a structured task on Windows.
 ///
 /// Windows cannot execute a `.cmd`/`.bat` file through `CreateProcess` without
-/// involving `cmd.exe`.  Keep that exception in one place and make the command
-/// string deliberately boring: every token is quoted, delayed expansion is
-/// disabled, and values which `cmd.exe` cannot represent losslessly in a `/C`
-/// command line are rejected.  Native executables never pass through this
-/// path and continue to receive the original argv vector.
+/// involving `cmd.exe`.  Keep that exception in one place and make the
+/// `/C` payload deliberately boring: the script is addressed by a token that
+/// survives the payload line unquoted, delayed expansion is disabled, and
+/// values which `cmd.exe` cannot represent losslessly in a `/C` command
+/// line are rejected.  Native executables never pass through this path and
+/// continue to receive the original argv vector.
 #[cfg(windows)]
-fn windows_command(executable: &str, argv: &[String]) -> Result<Command> {
+fn pty_command(executable: &str, argv: &[String]) -> Result<CommandBuilder> {
     if !is_windows_script_launcher(executable) {
-        let mut command = Command::new(executable);
+        let mut command = CommandBuilder::new(executable);
         command.args(argv);
         return Ok(command);
     }
 
-    let command_line = encode_cmd_command_line(executable, argv)?;
-    let mut command = Command::new(windows_system_tool("cmd.exe"));
-    use std::os::windows::process::CommandExt;
+    let token = cmd_script_token(executable)?;
+    let mut command = CommandBuilder::new(windows_system_tool("cmd.exe"));
+    command.arg("/D");
+    command.arg("/V:OFF");
+    command.arg("/S");
+    command.arg("/C");
+    // portable-pty only quotes values containing whitespace. The token is
+    // whitespace-free, so it reaches the payload line verbatim, where /S
+    // cannot strip a first quote that does not exist.
+    command.arg(&token);
+    for argument in argv {
+        validate_cmd_value(argument)?;
+        command.arg(argument);
+    }
+    Ok(command)
+}
 
-    // `raw_arg` is intentional here.  It lets us pass the already validated
-    // `/C` string without Rust adding another layer of Windows quoting.
-    command.raw_arg(format!("/D /V:OFF /S /C {command_line}"));
+/// Pick the payload token that addresses a Windows script.
+///
+/// `cmd.exe /S /C` strips the first and last quote of the payload, so a
+/// quoted script path breaks (and can be turned into a second command)
+/// whenever quoted arguments follow. Scripts are therefore addressed by a
+/// token that stays unquoted: the full path when it is payload-safe, or the
+/// bare file name which `cmd.exe` resolves against the task working
+/// directory and PATH.
+#[cfg(windows)]
+fn cmd_script_token(executable: &str) -> Result<String> {
+    let path = Path::new(executable);
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(str::to_string);
+    if is_cmd_payload_token(executable) {
+        return Ok(executable.to_string());
+    }
+    if let Some(name) = file_name.as_deref() {
+        if is_cmd_payload_token(name) {
+            return Ok(name.to_string());
+        }
+    }
+    Err(Error::msg(
+        "the script path cannot be expressed safely in a cmd.exe command line; rename the script or move the project to a path without spaces or cmd.exe metacharacters",
+    ))
+}
+
+/// True when the value can be placed on the `/C` payload line without
+/// quoting: no whitespace (which would trigger portable-pty quoting), no
+/// quotes, no percent expansion, no control characters, and none of the
+/// characters cmd.exe treats as separators or grouping even outside quotes.
+#[cfg(windows)]
+fn is_cmd_payload_token(value: &str) -> bool {
+    !value.is_empty()
+        && value.chars().all(|character| {
+            !character.is_whitespace()
+                && !character.is_control()
+                && !matches!(
+                    character,
+                    '"' | '%' | '&' | '|' | '<' | '>' | '^' | '(' | ')' | ',' | ';' | '='
+                )
+        })
+}
+
+#[cfg(not(windows))]
+fn pty_command(executable: &str, argv: &[String]) -> Result<CommandBuilder> {
+    let mut command = CommandBuilder::new(executable);
+    command.args(argv);
     Ok(command)
 }
 
@@ -702,39 +973,23 @@ fn is_windows_script_launcher(executable: &str) -> bool {
     )
 }
 
-/// Encode a command line which will be consumed by `cmd.exe /C`.
+/// Validate a value destined for a Windows script argument vector.
 ///
 /// `cmd.exe` has no lossless general-purpose quoting form for a percent sign
 /// in a command string: it performs percent expansion before it parses quoted
 /// arguments.  Rejecting `%` and embedded quotes is therefore safer than
-/// pretending that a caret or an extra quote protects them.  The remaining
-/// command metacharacters are enclosed in quotes, and `!` is safe because the
-/// caller always enables `/V:OFF`.
-fn encode_cmd_command_line(executable: &str, argv: &[String]) -> Result<String> {
-    let mut values = Vec::with_capacity(argv.len() + 1);
-    values.push(executable);
-    values.extend(argv.iter().map(String::as_str));
-
-    let mut encoded = values
-        .into_iter()
-        .map(encode_cmd_value)
-        .collect::<Result<Vec<_>>>()?
-        .join(" ");
-    // `/S /C` strips the first and last quote from the command string.  The
-    // extra pair preserves the quotes around the executable and each argv
-    // value, including when the executable path contains spaces.
-    encoded.insert(0, '"');
-    encoded.push('"');
-    Ok(encoded)
-}
-
-fn encode_cmd_value(value: &str) -> Result<String> {
-    if value
-        .chars()
-        .any(|character| matches!(character, '\0' | '\r' | '\n'))
-    {
+/// pretending that a caret or an extra quote protects them.  portable-pty
+/// quotes values containing whitespace, and cmd.exe keeps everything except
+/// `%` and quotes literal inside those quotes.  Values without whitespace
+/// reach the `/C` payload verbatim, where separators, redirection, escapes,
+/// and batch-parameter delimiters must not appear.  `!` stays literal
+/// because the caller always enables `/V:OFF`, and parentheses are literal
+/// in argument position.
+#[cfg(any(windows, test))]
+fn validate_cmd_value(value: &str) -> Result<()> {
+    if value.chars().any(|character| character.is_control()) {
         return Err(Error::msg(
-            "command values cannot contain NUL or line breaks",
+            "command values cannot contain control characters or line breaks",
         ));
     }
     if value.contains('%') {
@@ -747,14 +1002,47 @@ fn encode_cmd_value(value: &str) -> Result<String> {
             "command values containing double quotes cannot be passed to a Windows script safely",
         ));
     }
-    Ok(format!("\"{value}\""))
+    // portable-pty quotes values containing space, tab, newline, vertical
+    // tab, or a double quote.  Quotes and control characters are rejected
+    // above, so a plain space or tab is the only remaining quoting trigger,
+    // and cmd.exe keeps every other character literal inside those quotes.
+    let quoted = value.contains(' ') || value.contains('\t');
+    if !quoted
+        && value
+            .chars()
+            .any(|character| matches!(character, '&' | '|' | '<' | '>' | '^' | ',' | ';' | '='))
+    {
+        return Err(Error::msg(
+            "command values without whitespace cannot contain the cmd.exe metacharacters & | < > ^ , ; =",
+        ));
+    }
+    Ok(())
+}
+
+/// Mirror the runtime command construction for string-level tests: a
+/// payload-safe script token followed by portable-pty style quoting for
+/// values with whitespace.
+#[cfg(test)]
+fn encode_cmd_command_line(executable: &str, argv: &[String]) -> Result<String> {
+    let mut values = vec![cmd_script_token(executable)?];
+    for argument in argv {
+        validate_cmd_value(argument)?;
+        values.push(
+            if argument.is_empty() || argument.chars().any(|character| character.is_whitespace()) {
+                format!("\"{argument}\"")
+            } else {
+                argument.to_string()
+            },
+        );
+    }
+    Ok(values.join(" "))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        display_command, encode_cmd_command_line, encode_cmd_value, resolve_task_command,
-        start_error,
+        cmd_script_token, display_command, encode_cmd_command_line, resolve_task_command,
+        start_error, validate_cmd_value,
     };
     use crate::models::TaskSpec;
     use std::path::Path;
@@ -799,7 +1087,11 @@ mod tests {
         #[cfg(not(windows))]
         assert_eq!(std::path::PathBuf::from(resolved), tool);
         assert_eq!(argv, vec!["hello world"]);
-        assert_eq!(std::env::split_paths(&search_path).next(), Some(bin));
+        // The working directory itself comes first, then the project tool
+        // directories, before the inherited PATH.
+        let directories = std::env::split_paths(&search_path).collect::<Vec<_>>();
+        assert_eq!(directories.first(), Some(&temp.path().to_path_buf()));
+        assert_eq!(directories.get(1), Some(&bin));
     }
 
     #[test]
@@ -812,33 +1104,86 @@ mod tests {
     }
 
     #[test]
-    fn quotes_windows_script_tokens_with_shell_metacharacters() {
+    fn windows_script_tokens_prefer_full_paths_and_fall_back_to_basenames() {
+        assert_eq!(
+            cmd_script_token(r"C:\tools\npm.cmd").unwrap(),
+            r"C:\tools\npm.cmd"
+        );
+        // Whitespace or a parenthesis in the command token breaks or splits
+        // the /C payload, so cmd.exe gets the bare file name, which it
+        // resolves against the task working directory and PATH.
+        assert_eq!(cmd_script_token(r"C:\My Tools\npm.cmd").unwrap(), "npm.cmd");
+        assert_eq!(
+            cmd_script_token(r"C:\tools(x86)\npm.cmd").unwrap(),
+            "npm.cmd"
+        );
+        // Neither form is payload-safe: fail loudly instead of launching
+        // something unintended.
+        assert!(cmd_script_token(r"C:\My Tools\my npm.cmd").is_err());
+    }
+
+    #[test]
+    fn encodes_windows_script_commands_like_the_pty_payload() {
         let command = encode_cmd_command_line(
-            r"tools\build&release.cmd",
-            &[
-                "--label=nightly | smoke".into(),
-                "(preview)<draft>!^".into(),
-            ],
+            r"C:\tools\build.cmd",
+            &["--label=nightly | smoke".into(), "(preview) draft".into()],
         )
         .unwrap();
 
         assert_eq!(
             command,
-            r#"""tools\build&release.cmd" "--label=nightly | smoke" "(preview)<draft>!^"""#
+            r#"C:\tools\build.cmd "--label=nightly | smoke" "(preview) draft""#
+        );
+        assert_eq!(
+            encode_cmd_command_line(r"C:\tools\build.cmd", &["".into()]).unwrap(),
+            r#"C:\tools\build.cmd """#
         );
     }
 
     #[test]
-    fn rejects_control_percent_and_quote_values() {
+    fn windows_script_args_allow_quoted_metacharacters_and_reject_raw_ones() {
+        // Values with whitespace are quoted by portable-pty; cmd.exe keeps
+        // everything but % and double quotes literal inside those quotes.
+        for value in ["--label=nightly | smoke", "(preview) <draft> !^"] {
+            assert!(
+                validate_cmd_value(value).is_ok(),
+                "value should be accepted: {value:?}"
+            );
+        }
+        // Without whitespace the value reaches the /C payload verbatim.
+        // '!' and parentheses are literal under /V:OFF and stay allowed;
+        // separators, redirection, escapes, and parameter delimiters are not.
+        for value in ["hi!bye", "(install)", "hello"] {
+            assert!(
+                validate_cmd_value(value).is_ok(),
+                "value should be accepted: {value:?}"
+            );
+        }
+        {
+            let value = "a=b,c;d";
+            assert!(
+                validate_cmd_value(value).is_err(),
+                "value should be rejected: {value:?}"
+            );
+        }
         for value in [
+            "a&b",
+            "a|b",
+            "a<b",
+            "a>b",
+            "a^b",
+            "a,b",
+            "a;b",
+            "a=b",
+            "100%",
+            "quote\"value",
             "line\nfeed",
             "line\rfeed",
             "nul\0byte",
-            "100%",
-            "quote\"value",
+            "a\tb",
         ] {
             assert!(
-                encode_cmd_value(value).is_err(),
+                validate_cmd_value(value).is_err(),
                 "value should be rejected: {value:?}"
             );
         }

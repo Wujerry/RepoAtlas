@@ -1,36 +1,35 @@
-import { ArrowDown, ArrowUp, CaretDown, CaretUp, Copy, Play, Plus, Square, Trash, X } from "@phosphor-icons/react";
+import { ArrowDown, ArrowUp, CaretDown, CaretUp, Copy, Moon, Play, Plus, Square, Sun, Trash, X } from "@phosphor-icons/react";
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 import type { MessageKey } from "../i18n";
-import { parseAnsi } from "../lib/ansi";
 import { formatTime } from "../lib/format";
 import type { ProjectDetail, TaskRun, ToastTone } from "../types";
 import { Button } from "./ui/button";
 import { ConfirmDialog } from "./ui/confirm";
 import { EmptyState, Skeleton } from "./ui/feedback";
 import { formatCommand, InlineLoadError, statusKey } from "./DashboardShared";
+import { TaskTerminal } from "./TaskTerminal";
 
-export function TaskWorkspace({ tasks, runs, loading, error, running, activeRunId, log, t, notify, onRetry, onSaveTasks, onRun, onStop, onClearLog, onHistory, onSendInput }: { tasks: ProjectDetail["tasks"]; runs: TaskRun[]; loading: boolean; error?: string; running?: TaskRun; activeRunId?: string; log: string; t: (key: MessageKey) => string; notify: (tone: ToastTone, title: string, detail?: string) => void; onRetry?: () => void; onSaveTasks: (tasks: ProjectDetail["tasks"]) => Promise<void>; onRun: (id: string) => void; onStop: () => void; onClearLog: () => void; onHistory: (run: TaskRun) => void; onSendInput?: (runId: string, text: string) => void | Promise<void>; }) {
+export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t, notify, onRetry, onSaveTasks, onRun, onStopRun, onClearLog, onHistory }: { tasks: ProjectDetail["tasks"]; runs: TaskRun[]; loading: boolean; error?: string; activeRunId?: string; log: string; t: (key: MessageKey) => string; notify: (tone: ToastTone, title: string, detail?: string) => void; onRetry?: () => void; onSaveTasks: (tasks: ProjectDetail["tasks"]) => Promise<void>; onRun: (id: string) => void; onStopRun: (runId: string) => void; onClearLog: () => void; onHistory: (run: TaskRun) => void; }) {
   type TaskDraft = { name: string; description: string; kind: string; executable: string; argv: string[]; cwd: string };
   const [draft, setDraft] = useState<TaskDraft>({ name: "", description: "", kind: "run", executable: "", argv: [], cwd: "" });
   const [editor, setEditor] = useState<{ mode: "new" } | { mode: "edit"; taskId: string } | null>(null);
   const [savingTask, setSavingTask] = useState(false);
   const [consoleOpen, setConsoleOpen] = useState(false);
-  const [inputDraft, setInputDraft] = useState("");
-  const [sendingInput, setSendingInput] = useState(false);
   const [pendingRemoval, setPendingRemoval] = useState<ProjectDetail["tasks"][number]>();
   const [removingTask, setRemovingTask] = useState(false);
+  const [consoleTheme, setConsoleTheme] = useState<"dark" | "light">(() => (document.documentElement.dataset.theme === "light" ? "light" : "dark"));
   const logPaneRef = useRef<HTMLPreElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
   const editorRef = useRef<HTMLFormElement>(null);
   const editorNameRef = useRef<HTMLInputElement>(null);
   const editorReturnFocusRef = useRef<HTMLButtonElement | null>(null);
   const activeRun = runs.find((run) => run.id === activeRunId);
-  const consoleTitle = running?.kind ?? activeRun?.kind ?? t("taskConsole");
+  const runningRuns = runs.filter((run) => run.status === "running");
+  const activeRunning = runningRuns.find((run) => run.id === activeRunId) ?? runningRuns[0];
+  const consoleTitle = activeRunning?.kind ?? activeRun?.kind ?? t("taskConsole");
   useEffect(() => {
-    if (!running) return;
+    if (!activeRunning) return;
     setConsoleOpen(true);
-    window.setTimeout(() => inputRef.current?.focus(), 0);
-  }, [running?.id]);
+  }, [activeRunning?.id]);
   useEffect(() => {
     const pane = logPaneRef.current;
     if (!pane || !consoleOpen) return;
@@ -113,22 +112,6 @@ export function TaskWorkspace({ tasks, runs, loading, error, running, activeRunI
       notify("success", t("outputCopied"));
     } catch (error) { notify("error", t("copyFailed"), String(error)); }
   }
-  async function sendInput() {
-    const value = inputDraft;
-    if (!running || !onSendInput || sendingInput) return;
-    setSendingInput(true);
-    try {
-      const payload = value.endsWith("\n") ? value : `${value}\n`;
-      await onSendInput(running.id, payload);
-      setInputDraft("");
-    } catch (error) {
-      notify("error", t("inputFailed"), String(error));
-    } finally {
-      setSendingInput(false);
-      inputRef.current?.focus();
-    }
-  }
-
   function renderTaskEditor(inline = false) {
     const editingTask = editor?.mode === "edit" ? tasks.find((task) => task.id === editor.taskId) : undefined;
     return (
@@ -186,7 +169,7 @@ export function TaskWorkspace({ tasks, runs, loading, error, running, activeRunI
               {tasks.map((task) => {
                 const isEditing = editor?.mode === "edit" && editor.taskId === task.id;
                 return (
-                <article className={"task-card" + (running?.taskId === task.id ? " is-running" : "") + (isEditing ? " is-editing" : "")} key={task.id}>
+                <article className={"task-card" + (runningRuns.some((run) => run.taskId === task.id) ? " is-running" : "") + (isEditing ? " is-editing" : "")} key={task.id}>
                   {isEditing ? renderTaskEditor(true) : <>
                     <span className="task-icon"><Play weight="fill" /></span>
                     <div className="task-card-copy">
@@ -200,7 +183,7 @@ export function TaskWorkspace({ tasks, runs, loading, error, running, activeRunI
                     <div className="task-card-actions">
                       <Button variant="quiet" data-task-edit aria-expanded={false} aria-controls={`task-editor-${task.id}`} disabled={Boolean(editor) || savingTask} onClick={(event) => openTaskEditor(task, event)}>{t("edit")}</Button>
                       <Button variant="danger" disabled={removingTask || Boolean(editor) || savingTask} onClick={() => setPendingRemoval(task)}>{t("remove")}</Button>
-                      <Button variant="primary" disabled={Boolean(running) || Boolean(editor) || savingTask} onClick={() => onRun(task.id)}><Play weight="fill" />{t("run")}</Button>
+                      <Button variant="primary" disabled={runningRuns.some((run) => run.kind === task.kind) || Boolean(editor) || savingTask} onClick={() => onRun(task.id)}><Play weight="fill" />{t("run")}</Button>
                     </div>
                   </>}
                 </article>
@@ -228,33 +211,28 @@ export function TaskWorkspace({ tasks, runs, loading, error, running, activeRunI
         <div className="task-console-bar">
           <button className="task-console-toggle" type="button" aria-expanded={consoleOpen} aria-label={consoleOpen ? t("collapseOutput") : t("expandOutput")} onClick={() => setConsoleOpen((open) => !open)}>
             {consoleOpen ? <CaretDown aria-hidden="true" /> : <CaretUp aria-hidden="true" />}
-            <span className={"run-dot run-" + (running ? "running" : (activeRun?.status ?? "idle"))} />
+            <span className={"run-dot run-" + (activeRunning ? "running" : (activeRun?.status ?? "idle"))} />
             <strong>{consoleTitle}</strong>
-            <span className="muted-copy">{running ? t("live") : t("output")}</span>
+            <span className="muted-copy">{activeRunning ? t("live") : t("output")}</span>
           </button>
           <div className="task-console-actions">
-            {running && <Button variant="danger" onClick={onStop}><Square weight="fill" />{t("stop")}</Button>}
+            {runningRuns.map((run) => (
+              <button className={"task-run-chip" + (activeRunning?.id === run.id ? " active" : "")} key={run.id} type="button" title={formatCommand(run.executable, run.argv)} onClick={() => { setConsoleOpen(true); onHistory(run); }}>
+                <span className={"run-dot run-running"} />
+                <strong>{run.kind}</strong>
+              </button>
+            ))}
+            {activeRunning && <Button variant="danger" onClick={() => onStopRun(activeRunning.id)}><Square weight="fill" />{t("stop")}</Button>}
+            <Button variant="quiet" size="icon" aria-label={consoleTheme === "dark" ? t("consoleLightTheme") : t("consoleDarkTheme")} title={consoleTheme === "dark" ? t("consoleLightTheme") : t("consoleDarkTheme")} onClick={() => setConsoleTheme((theme) => (theme === "dark" ? "light" : "dark"))}>
+              {consoleTheme === "dark" ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
+            </Button>
             <Button variant="quiet" disabled={!log} onClick={() => { onClearLog(); notify("info", t("outputCleared")); }}><Trash />{t("clearOutput")}</Button>
             <Button variant="quiet" disabled={!log} onClick={() => void copyOutput()}><Copy />{t("copyOutput")}</Button>
           </div>
         </div>
         {consoleOpen && (
           <div className="task-console-body">
-            <pre ref={logPaneRef} className="log-pane">{log ? parseAnsi(log).map((span, index) => <span className={span.className} key={`${index}-${span.text.length}`}>{span.text}</span>) : t("logEmpty")}</pre>
-            <form className="task-console-input" onSubmit={(event) => { event.preventDefault(); void sendInput(); }}>
-              <label className="sr-only" htmlFor="task-console-input">{t("taskInput")}</label>
-              <input
-                id="task-console-input"
-                ref={inputRef}
-                value={inputDraft}
-                onChange={(event) => setInputDraft(event.target.value)}
-                placeholder={running ? t("taskInputHint") : t("logEmpty")}
-                disabled={!running || sendingInput}
-                autoComplete="off"
-                spellCheck={false}
-              />
-              <Button type="submit" variant="primary" disabled={!running || sendingInput} loading={sendingInput}>{t("sendInput")}</Button>
-            </form>
+            {activeRun ? <TaskTerminal run={activeRun} log={log} interactive={Boolean(activeRunning && activeRunning.id === activeRun.id)} theme={consoleTheme} /> : <pre ref={logPaneRef} className={`log-pane log-pane--${consoleTheme}`}>{t("logEmpty")}</pre>}
           </div>
         )}
       </section>

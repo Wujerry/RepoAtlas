@@ -76,6 +76,7 @@ export function OverviewWorkspace(props: {
   const attentionCount = git?.snapshot.dirty ? git.files.length : 0;
   const branchName = git?.snapshot.branch ?? (project.vcsKind === "git" ? t("detachedHead") : project.vcsKind);
   const startHere = detail.startHere?.length ? detail.startHere : quickTasks.map((task) => ({ taskId: task.id, kind: task.kind, name: task.name, source: t("inferredTask"), inferred: task.inferred }));
+  const recentEvents = (detail.recentEvents ?? []).filter((event) => !(event.kind === "open" && !event.detail));
   return <div className="overview-layout">
     <section id="overview-status" aria-labelledby="overview-status-title" className="content-card continue-card">
       <div className="section-heading overview-card-heading"><div><p className="eyebrow">{t("workspaceState")}</p><h2 id="overview-status-title">{t("continueWork")}</h2></div><span className={`overview-health ${git?.snapshot.dirty ? "is-warning" : "is-ok"}`}>{git?.snapshot.dirty ? <WarningCircle weight="fill" /> : <CheckCircle weight="fill" />}{git?.snapshot.dirty ? t("dirty") : project.vcsKind === "git" ? t("clean") : project.vcsKind}</span></div>
@@ -95,8 +96,8 @@ export function OverviewWorkspace(props: {
         {startHere.length === 0 ? <p className="muted-copy">{t("noQuickTasks")}</p> : <div className="start-here-grid">{startHere.map((task) => <button className="start-here-action" key={task.taskId} onClick={() => onRunTask(task.taskId)}><span className="start-here-icon"><Play weight="fill" /></span><span className="start-here-copy"><strong>{task.name}</strong><em>{task.source}</em></span><span className="start-here-kind">{task.kind}</span></button>)}</div>}
       </div>
       <div className="activity-list overview-subsection">
-        <div className="overview-subsection-heading"><span>{t("recentActivity")}</span><small>{String((detail.recentEvents ?? []).length).padStart(2, "0")}</small></div>
-        {(detail.recentEvents ?? []).length === 0 ? <p className="muted-copy">{t("noRecentActivity")}</p> : <div className="activity-timeline">{(detail.recentEvents ?? []).map((event) => <div key={event.id}><i aria-hidden="true" /><span><strong>{event.title}</strong>{event.detail && <em>{event.detail}</em>}</span><time>{formatTime(event.createdAt)}</time></div>)}</div>}
+        <div className="overview-subsection-heading"><span>{t("recentActivity")}</span><small>{String(recentEvents.length).padStart(2, "0")}</small></div>
+        {recentEvents.length === 0 ? <p className="muted-copy">{t("noRecentActivity")}</p> : <div className="activity-timeline">{recentEvents.map((event) => <div key={event.id}><i aria-hidden="true" /><span><strong>{event.title}</strong>{event.detail && <em>{event.detail}</em>}</span><time>{formatTime(event.createdAt)}</time></div>)}</div>}
       </div>
       {detail.lineage?.checkouts?.length ? <div className="lineage-row"><span>{t("checkoutLineage")}</span><div>{detail.lineage.checkouts.map((checkout) => <button type="button" key={checkout.projectId} className="file-chip" onClick={() => onOpenProject?.(checkout.projectId)}>{checkout.displayName}</button>)}</div></div> : null}
     </section>

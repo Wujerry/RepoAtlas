@@ -392,5 +392,27 @@ fn migrate(conn: &Connection) -> Result<()> {
             params![],
         )?;
     }
+    let applied10: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM schema_migrations WHERE version = 10",
+        [],
+        |row| row.get(0),
+    )?;
+    if applied10 == 0 {
+        let exists: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('provider_profiles') WHERE name = 'credential_blob'",
+            [],
+            |row| row.get(0),
+        )?;
+        if exists == 0 {
+            conn.execute(
+                "ALTER TABLE provider_profiles ADD COLUMN credential_blob BLOB",
+                [],
+            )?;
+        }
+        conn.execute(
+            "INSERT INTO schema_migrations (version, applied_at) VALUES (10, datetime('now'))",
+            params![],
+        )?;
+    }
     Ok(())
 }

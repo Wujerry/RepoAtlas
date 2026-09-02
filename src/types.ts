@@ -117,6 +117,12 @@ export interface GitCommandResult {
   stderr: string;
 }
 
+export interface TaskPersistenceFailure {
+  runId: string;
+  error: string;
+  run?: TaskRun | null;
+}
+
 export interface TaskRun {
   id: string;
   projectId: string;
@@ -332,6 +338,38 @@ export interface AppSettings {
   consoleFont?: string;
 }
 
+export interface ExternalTool {
+  id: string;
+  kind: "ide" | "terminal" | "agent" | string;
+  name: string;
+}
+
+export interface ExternalTools {
+  agents: ExternalTool[];
+  ides: ExternalTool[];
+  terminals: ExternalTool[];
+}
+
+export type UpdateStatus = "idle" | "checking" | "available" | "downloading" | "ready" | "error";
+
+export type UpdateErrorStage = "check" | "download" | "install" | "restart";
+
+export interface UpdateState {
+  status: UpdateStatus;
+  currentVersion: string;
+  version?: string;
+  notes?: string;
+  date?: string;
+  downloadedBytes: number;
+  contentLength?: number;
+  checkedAt?: string;
+  error?: string;
+  errorStage?: UpdateErrorStage;
+  restartRequired: boolean;
+  installed?: boolean;
+  deferred?: boolean;
+}
+
 export interface Bootstrap {
   settings: AppSettings;
   scanRoots: ScanRoot[];
@@ -349,6 +387,7 @@ export interface McpSetupInfo {
   platform: string;
   binaryName: string;
   binaryPath: string | null;
+  binaryOrigin?: "installed" | "development" | null;
   workspacePath: string | null;
 }
 
@@ -358,7 +397,7 @@ export interface ProviderProfile {
   protocol: string;
   baseUrl: string | null;
   model: string;
-  credentialRef: string;
+  hasCredential: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -377,7 +416,7 @@ export interface ProviderUpsert {
   protocol: string;
   baseUrl?: string | null;
   model: string;
-  credentialRef: string;
+  apiKey?: string;
 }
 
 export interface AiMemoryItem {

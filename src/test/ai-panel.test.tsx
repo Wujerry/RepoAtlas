@@ -53,7 +53,7 @@ const provider: ProviderProfile = {
   protocol: "ollama",
   baseUrl: "http://localhost:11434",
   model: "llama3.2",
-  credentialRef: "",
+  hasCredential: true,
   createdAt: "2026-08-21T00:00:00Z",
   updatedAt: "2026-08-21T00:00:00Z",
 };
@@ -104,10 +104,10 @@ describe("AiPanel", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("AI knowledge unavailable");
     expect(alert).toHaveTextContent("database unavailable");
-    expect(screen.queryByText("No providers configured")).not.toBeInTheDocument();
+    expect(screen.queryByText("AI is not set up yet")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /Retry/ }));
-    expect(await screen.findByText("No providers configured")).toBeInTheDocument();
+    expect(await screen.findByText("AI is not set up yet")).toBeInTheDocument();
     expect(listProviderProfiles).toHaveBeenCalledTimes(2);
   });
 
@@ -115,7 +115,7 @@ describe("AiPanel", () => {
     const onOpenSettings = vi.fn();
     renderPanel([], [], onOpenSettings);
 
-    await screen.findByText("No providers configured");
+    await screen.findByText("AI is not set up yet");
     fireEvent.click(screen.getByRole("button", { name: /Open AI settings/ }));
 
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
@@ -124,7 +124,7 @@ describe("AiPanel", () => {
   it("shows the exact analysis plan before sending project evidence", async () => {
     renderPanel([provider]);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Generate summary" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Write briefing" }));
     const dialog = await screen.findByRole("alertdialog");
 
     expect(dialog).toHaveTextContent("README.md");
@@ -132,7 +132,7 @@ describe("AiPanel", () => {
     expect(dialog).toHaveTextContent("Suspected secrets redacted: 1");
     expect(summarizeProject).not.toHaveBeenCalled();
 
-    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm and send" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Send" }));
     await waitFor(() => expect(summarizeProject).toHaveBeenCalledWith("project-1", provider.id, ""));
   });
 
@@ -145,7 +145,7 @@ describe("AiPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
 
     const dialog = await screen.findByRole("alertdialog");
-    expect(dialog).toHaveTextContent("Remove AI memory");
+    expect(dialog).toHaveTextContent("Remove this note");
     expect(deleteMemory).not.toHaveBeenCalled();
 
     const confirm = within(dialog).getByRole("button", { name: "Remove" });
@@ -169,7 +169,7 @@ describe("AiPanel", () => {
     };
     renderPanel([provider], [], undefined, [historical]);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Evidence snapshot" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Files used that time" }));
     expect(await screen.findByRole("alertdialog")).toHaveTextContent("package.json#scripts.dev");
   });
 });

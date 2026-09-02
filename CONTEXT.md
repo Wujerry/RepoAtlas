@@ -89,8 +89,8 @@ A reviewable selection of project evidence proposed for an AI analysis request.
 _Avoid_: Prompt, context dump
 
 **Provider Profile**:
-A reusable connection to one AI service, including its protocol, endpoint, credential reference, and available models.
-_Avoid_: Model, API key
+A reusable connection to one AI service, including its protocol, endpoint, encrypted API key, and available models.
+_Avoid_: Model, environment variable
 
 **Provider Preset**:
 A maintained template that supplies known defaults for creating a provider profile without owning the resulting profile.

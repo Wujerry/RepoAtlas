@@ -5,4 +5,8 @@ members = ["crates/repoatlas-core", "crates/repoatlas-mcp", "src-tauri"]
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-license = "UNLICENSED"
+authors = ["wujer"]
+license = "MIT"
+repository = "https://github.com/wujer/RepoAtlas"
+homepage = "https://github.com/wujer/RepoAtlas"
+readme = "README.md"

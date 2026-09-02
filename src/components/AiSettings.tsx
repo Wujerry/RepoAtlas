@@ -23,7 +23,7 @@ type AiSettingsProps = {
 
 const DEFAULT_PROTOCOL = "openai-compatible";
 const PROTOCOLS = [DEFAULT_PROTOCOL, "openai-chat", "anthropic", "gemini", "ollama"];
-const ENVIRONMENT_VARIABLE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
 
 function errorMessage(error: unknown, fallback: string) {
   if (error instanceof Error && error.message) return error.message;
@@ -49,7 +49,7 @@ export function AiSettings({ t, notify }: AiSettingsProps) {
   const [protocol, setProtocol] = useState(DEFAULT_PROTOCOL);
   const [baseUrl, setBaseUrl] = useState("");
   const [model, setModel] = useState("");
-  const [credentialRef, setCredentialRef] = useState("");
+  const [apiKey, setApiKey] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ProviderProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -100,7 +100,7 @@ export function AiSettings({ t, notify }: AiSettingsProps) {
     setProtocol(DEFAULT_PROTOCOL);
     setBaseUrl("");
     setModel("");
-    setCredentialRef("");
+    setApiKey("");
     setSubmitted(false);
   }
 
@@ -118,7 +118,7 @@ export function AiSettings({ t, notify }: AiSettingsProps) {
     setProtocol(preset.protocol);
     setBaseUrl(preset.baseUrl ?? "");
     setModel(preset.defaultModel);
-    setCredentialRef(preset.credentialRef);
+    setApiKey("");
     setSubmitted(false);
   }
 
@@ -130,20 +130,23 @@ export function AiSettings({ t, notify }: AiSettingsProps) {
     setProtocol(profile.protocol);
     setBaseUrl(profile.baseUrl ?? "");
     setModel(profile.model);
-    setCredentialRef(profile.credentialRef);
+    setApiKey("");
     setSubmitted(false);
   }
 
   function validate() {
     const localProvider = isLocalProvider(name, protocol, baseUrl);
-    const credential = credentialRef.trim();
-    if (!name.trim() || !protocol.trim() || !model.trim() || (!localProvider && !credential)) {
+    const credential = apiKey.trim();
+    const canKeepStoredKey = Boolean(
+      editingId && profiles.some((profile) => profile.id === editingId && profile.hasCredential),
+    );
+    if (
+      !name.trim() ||
+      !protocol.trim() ||
+      !model.trim() ||
+      (!localProvider && !credential && !canKeepStoredKey)
+    ) {
       setError(t("providerRequiredError"));
-      setErrorDetail(null);
-      return false;
-    }
-    if (credential && !ENVIRONMENT_VARIABLE.test(credential)) {
-      setError(t("credentialInvalidError"));
       setErrorDetail(null);
       return false;
     }
@@ -164,7 +167,7 @@ export function AiSettings({ t, notify }: AiSettingsProps) {
       protocol: protocol.trim(),
       baseUrl: baseUrl.trim() || null,
       model: model.trim(),
-      credentialRef: credentialRef.trim(),
+      apiKey: apiKey.trim(),
     };
 
     setSaving(true);
@@ -206,7 +209,7 @@ export function AiSettings({ t, notify }: AiSettingsProps) {
   const nameInvalid = submitted && !name.trim();
   const protocolInvalid = submitted && !protocol.trim();
   const modelInvalid = submitted && !model.trim();
-  const credentialInvalid = submitted && ((!localProvider && !credentialRef.trim()) || (Boolean(credentialRef.trim()) && !ENVIRONMENT_VARIABLE.test(credentialRef.trim())));
+  const credentialInvalid = submitted && !localProvider && !apiKey.trim() && !(editingId && profiles.some((profile) => profile.id === editingId && profile.hasCredential));
   const formDisabled = loading || saving || Boolean(deletingId);
 
   return (
@@ -350,24 +353,24 @@ export function AiSettings({ t, notify }: AiSettingsProps) {
               </div>
 
               <div className="field-group field-group-wide">
-                <label className="field-label" htmlFor="provider-credential-ref">
-                  {t("credentialEnv")} {localProvider ? <span className="field-optional">({t("optional")})</span> : <span className="field-required" aria-hidden="true">*</span>}
+                <label className="field-label" htmlFor="provider-api-key">
+                  {t("apiKey")} {localProvider ? <span className="field-optional">({t("optional")})</span> : <span className="field-required" aria-hidden="true">*</span>}
                 </label>
                 <input
-                  id="provider-credential-ref"
+                  id="provider-api-key"
                   className="field-control"
-                  value={credentialRef}
+                  value={apiKey}
                   type="password"
-                  required={!localProvider}
+                  required={!localProvider && !(editingId && profiles.some((profile) => profile.id === editingId && profile.hasCredential))}
                   disabled={formDisabled}
                   aria-invalid={credentialInvalid}
-                  autoCapitalize="characters"
+                  autoCapitalize="none"
                   autoComplete="off"
                   spellCheck={false}
-                  placeholder={localProvider ? t("optional") : "DEEPSEEK_API_KEY"}
-                  onChange={(event) => setCredentialRef(event.target.value)}
+                  placeholder={localProvider ? t("optional") : (editingId ? t("apiKeyKeepHint") : t("apiKeyPlaceholder"))}
+                  onChange={(event) => setApiKey(event.target.value)}
                 />
-                <span className="field-hint">{localProvider ? t("localProviderNoKey") : t("credentialHint")}</span>
+                <span className="field-hint">{localProvider ? t("localProviderNoKey") : (editingId && profiles.some((profile) => profile.id === editingId && profile.hasCredential) ? t("apiKeyStoredHint") : t("apiKeySaveHint"))}</span>
               </div>
             </div>
 
@@ -402,7 +405,7 @@ export function AiSettings({ t, notify }: AiSettingsProps) {
                     <li key={profile.id} className="settings-profile-row">
                       <div className="settings-profile-copy">
                         <span className="settings-profile-name">{profile.name}</span>
-                        <span className="settings-profile-meta">{profile.protocol} · {profile.model} · {profile.credentialRef.trim() || (isLocalProvider(profile.name, profile.protocol, profile.baseUrl ?? "") ? t("noApiKey") : t("noCredentialReference"))}</span>
+                        <span className="settings-profile-meta">{profile.protocol} · {profile.model} · {profile.hasCredential || isLocalProvider(profile.name, profile.protocol, profile.baseUrl ?? "") ? t("apiKeySaved") : t("noApiKey")}</span>
                       </div>
                       <div className="settings-profile-actions">
                         <Button type="button" disabled={formDisabled} onClick={() => editProfile(profile)}>
