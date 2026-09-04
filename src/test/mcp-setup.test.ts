@@ -57,6 +57,9 @@ describe("MCP setup copy", () => {
     expect(instruction).toContain("不需要等我确认");
     expect(instruction).toContain("update_project");
     expect(instruction).toContain("set_project_icon");
+    expect(instruction).toContain("不要用 update_project 的 tasks 参数整体覆盖已有任务");
+    expect(instruction).toContain("在项目目录内查找真实存在的图标文件");
+    expect(instruction).toContain("找不到就跳过");
     expect(instruction).toContain("不要调用 run_task");
   });
 
@@ -76,6 +79,9 @@ describe("MCP setup copy", () => {
     expect(instruction).toContain("in the language I am using with you");
     expect(instruction).toContain("without waiting for my confirmation");
     expect(instruction).toContain("update_project");
+    expect(instruction).toContain("do not use the tasks parameter of update_project");
+    expect(instruction).toContain("search the project directory for a real icon file");
+    expect(instruction).toContain("skip when none is found");
     expect(instruction).toContain("Do not call run_task");
   });
 

@@ -197,10 +197,24 @@ fn is_cargo_target_artifact(path: &std::path::Path) -> bool {
     })
 }
 
+// Windows verbatim paths such as \\?\C:\... leak from current_exe() and
+// Tauri's resource dir. Some MCP clients cannot launch such a command, so
+// strip the prefix before exposing paths in setup copy.
+fn strip_verbatim_prefix(path: &std::path::Path) -> std::path::PathBuf {
+    let text = path.as_os_str().to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return std::path::PathBuf::from(format!(r"\\{rest}"));
+    }
+    if let Some(rest) = text.strip_prefix(r"\\?\") {
+        return std::path::PathBuf::from(rest);
+    }
+    path.to_path_buf()
+}
+
 #[cfg(test)]
 mod mcp_setup_tests {
-    use super::is_cargo_target_artifact;
-    use std::path::Path;
+    use super::{is_cargo_target_artifact, strip_verbatim_prefix};
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn classifies_cargo_target_artifacts_as_development() {
@@ -225,6 +239,34 @@ mod mcp_setup_tests {
             .join("repoatlas-mcp.exe");
         assert!(!is_cargo_target_artifact(&installed));
         assert!(!is_cargo_target_artifact(&resource_binary));
+    }
+
+    #[test]
+    fn strips_verbatim_drive_prefix_from_windows_paths() {
+        let verbatim = PathBuf::from(
+            r"\\?\C:\Users\wujer\AppData\Local\RepoAtlas\resources\repoatlas-mcp\repoatlas-mcp.exe",
+        );
+        assert_eq!(
+            strip_verbatim_prefix(&verbatim),
+            PathBuf::from(
+                r"C:\Users\wujer\AppData\Local\RepoAtlas\resources\repoatlas-mcp\repoatlas-mcp.exe"
+            )
+        );
+    }
+
+    #[test]
+    fn converts_verbatim_unc_paths_to_unc_paths() {
+        let verbatim = PathBuf::from(r"\\?\UNC\server\share\repoatlas-mcp.exe");
+        assert_eq!(
+            strip_verbatim_prefix(&verbatim),
+            PathBuf::from(r"\\server\share\repoatlas-mcp.exe")
+        );
+    }
+
+    #[test]
+    fn keeps_ordinary_paths_unchanged() {
+        let ordinary = PathBuf::from(r"F:\code\rich\RepoAtlas");
+        assert_eq!(strip_verbatim_prefix(&ordinary), ordinary);
     }
 }
 
@@ -529,13 +571,18 @@ fn mcp_setup_info(app: AppHandle) -> Result<McpSetupInfo, String> {
             "installed"
         }
     });
+    let db = db_path(&app)?;
     Ok(McpSetupInfo {
-        db_path: db_path(&app)?.to_string_lossy().into_owned(),
+        db_path: strip_verbatim_prefix(&db).to_string_lossy().into_owned(),
         platform: std::env::consts::OS.to_string(),
         binary_name,
-        binary_path: binary_path.map(|path| path.to_string_lossy().into_owned()),
+        binary_path: binary_path
+            .as_ref()
+            .map(|path| strip_verbatim_prefix(path).to_string_lossy().into_owned()),
         binary_origin: binary_origin.map(str::to_string),
-        workspace_path: workspace.map(|path| path.to_string_lossy().into_owned()),
+        workspace_path: workspace
+            .as_ref()
+            .map(|path| strip_verbatim_prefix(path).to_string_lossy().into_owned()),
     })
 }
 

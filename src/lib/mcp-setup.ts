@@ -62,7 +62,7 @@ ${config}
 4. 先询问我需要扫描哪些目录，得到我的明确确认后再继续；不要自行猜测或挑选目录。
 5. 对我确认的每个目录，先调用 add_scan_root 授权，再显式调用 scan_root 执行发现。扫描只读取目录内容，用于登记项目。
 6. 扫描完成后向我总结发现的项目。每个项目优先给出项目描述和发现的任务（这两项最重要），再给名称、路径与语言、框架、VCS 等分类。项目描述和任务描述都必须使用与我交流的语言书写。描述必须来自项目内的真实依据（如 README、package.json、Cargo.toml），拿不准的内容不要编造。
-7. 总结之后不需要等我确认，直接通过 MCP 写入：用 update_project 写入 description 和 tasks，用 set_project_icon 设置明确的项目图标，用 add_task/update_task 维护任务。只写入有把握的结构化任务，shell 模式任务一律不写；没有把握的字段保持原样。
+7. 总结之后不需要等我确认，直接通过 MCP 写入：用 update_project 写入 description；任务用 add_task 新增、update_task 修改，不要用 update_project 的 tasks 参数整体覆盖已有任务（仅登记全新项目或经我同意时才整体替换）。图标：在项目目录内查找真实存在的图标文件（README 或网页引用的 logo、icon.png、logo.png、favicon.ico 等，仅限 PNG/JPEG/WebP/ICO），确认文件存在后调用 set_project_icon 设置；找不到就跳过，不要编造路径，也不要引用项目目录之外的文件。只写入有把握的结构化任务，shell 模式任务一律不写；没有把握的字段保持原样。
 8. 不要调用 run_task，也不要执行 Git 写入、Shell Mode、外部 AI 请求或文件系统删除。
 
 以后要批量发现项目，直接说“扫描某个目录”；只想登记当前打开的一个项目时，也可以让 Agent 调用 register_project 登记该工作区根目录。`;
@@ -83,7 +83,7 @@ ${config}
 4. Ask me which directories should be scanned, and wait for my explicit confirmation before continuing; do not guess or pick directories on your own.
 5. For each directory I confirm, call add_scan_root to authorize it, then explicitly call scan_root to run discovery. Scanning only reads directory contents to register projects.
 6. After scanning, summarize the discovered projects for me. For each project, lead with the project description and the tasks you discovered (these two matter most), then names, paths, and classifications such as language, framework, and VCS. Write the project description and every task summary in the language I am using with you. Descriptions must come from real evidence inside the project (README, package.json, Cargo.toml, and similar); never invent what you cannot support.
-7. After summarizing, write through MCP immediately without waiting for my confirmation: use update_project for description and tasks, set_project_icon for a clear icon, and add_task/update_task to maintain tasks. Only write structured tasks you are confident about, never shell-mode tasks, and leave fields you cannot support unchanged.
+7. After summarizing, write through MCP immediately without waiting for my confirmation: use update_project for the description; add tasks with add_task and revise them with update_task, and do not use the tasks parameter of update_project to replace an existing task list wholesale (only for a brand-new project or with my explicit approval). Icons: search the project directory for a real icon file (a logo referenced by the README or web pages, or icon.png, logo.png, favicon.ico, and similar; PNG/JPEG/WebP/ICO only), confirm it exists, then call set_project_icon; skip when none is found — never invent a path or reference files outside the project directory. Only write structured tasks you are confident about, never shell-mode tasks, and leave fields you cannot support unchanged.
 8. Do not call run_task, and do not perform Git writes, Shell Mode, external AI requests, or filesystem deletion.
 
 For bulk discovery later, just say "scan this directory". To register only the currently open project, ask the agent to call register_project on that workspace root.`;
