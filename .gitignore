@@ -43,6 +43,9 @@ src-tauri/resources/
 
 # Local tooling artifacts
 .playwright-mcp/
+.playwright-cli/
+.omx/
+output/
 .tmp-brand/
 buildlog.txt
 build.log

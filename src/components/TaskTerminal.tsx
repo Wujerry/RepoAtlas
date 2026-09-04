@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { setInputOwner } from "../lib/task-runs";
 import type { TaskRun } from "../types";
+import "@xterm/xterm/css/xterm.css";
 
 type XtermSession = {
-  term: { open: (host: HTMLElement) => void; write: (data: string) => void; reset: () => void; dispose: () => void; focus: () => void; cols: number; rows: number; onData: (cb: (data: string) => void) => { dispose: () => void }; options: { theme?: unknown; fontFamily?: string } };
+  term: { open: (host: HTMLElement) => void; write: (data: string, callback?: () => void) => void; reset: () => void; dispose: () => void; focus: () => void; cols: number; rows: number; onData: (cb: (data: string) => void) => { dispose: () => void }; options: { theme?: unknown; fontFamily?: string } };
   fit: { fit: () => void };
   written: number;
 };
@@ -15,14 +16,20 @@ function themeFor(mode: "dark" | "light") {
     : { background: "#090909", foreground: "#d4d4d4", cursor: "#ffa31a" };
 }
 
-function writeLog(session: { term: { write: (data: string) => void; reset: () => void }; written: number }, log: string) {
+function writeLog(
+  session: { term: { write: (data: string, callback?: () => void) => void; reset: () => void }; written: number },
+  log: string,
+  onWritten?: () => void,
+) {
   if (log.length < session.written) {
     session.term.reset();
     session.written = 0;
   }
   if (log.length > session.written) {
-    session.term.write(log.slice(session.written));
+    session.term.write(log.slice(session.written), onWritten);
     session.written = log.length;
+  } else {
+    onWritten?.();
   }
 }
 
@@ -61,8 +68,11 @@ export function TaskTerminal({
     let observer: ResizeObserver | undefined;
     let fontObserver: MutationObserver | undefined;
     let frame = 0;
+    let revealFrame = 0;
     let disposable: { dispose: () => void } | undefined;
-    void Promise.all([import("@xterm/xterm"), import("@xterm/addon-fit"), import("@xterm/xterm/css/xterm.css")]).then(([{ Terminal }, { FitAddon }]) => {
+    host.classList.remove("is-ready");
+    host.setAttribute("aria-busy", "true");
+    void Promise.all([import("@xterm/xterm"), import("@xterm/addon-fit")]).then(([{ Terminal }, { FitAddon }]) => {
       if (cancelled || !host.isConnected) return;
       const term = new Terminal({
         convertEol: true,
@@ -77,7 +87,13 @@ export function TaskTerminal({
       const session = { term, fit, written: 0 };
       sessionRef.current = session;
       term.open(host);
-      writeLog(session, logRef.current);
+      let contentReady = false;
+      let geometryReady = false;
+      const reveal = () => {
+        if (!contentReady || !geometryReady || cancelled || !host.isConnected) return;
+        host.classList.add("is-ready");
+        host.setAttribute("aria-busy", "false");
+      };
 
       const resize = () => {
         if (!host.isConnected || host.clientWidth < 8 || host.clientHeight < 8) return;
@@ -86,6 +102,10 @@ export function TaskTerminal({
           void api.resizeTaskRun(run.id, term.cols, term.rows).catch(() => undefined);
         }
       };
+      writeLog(session, logRef.current, () => {
+        contentReady = true;
+        reveal();
+      });
       const applyFont = () => {
         term.options.fontFamily = resolveConsoleFont(host);
         resize();
@@ -94,7 +114,13 @@ export function TaskTerminal({
       observer.observe(host);
       fontObserver = new MutationObserver(applyFont);
       fontObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["style"] });
-      frame = window.requestAnimationFrame(resize);
+      frame = window.requestAnimationFrame(() => {
+        resize();
+        revealFrame = window.requestAnimationFrame(() => {
+          geometryReady = true;
+          reveal();
+        });
+      });
       disposable = interactive
         ? term.onData((data) => {
             setInputOwner(run.id);
@@ -109,6 +135,7 @@ export function TaskTerminal({
     return () => {
       cancelled = true;
       window.cancelAnimationFrame(frame);
+      window.cancelAnimationFrame(revealFrame);
       observer?.disconnect();
       fontObserver?.disconnect();
       disposable?.dispose();
@@ -127,5 +154,5 @@ export function TaskTerminal({
   if (!canMountXterm) {
     return <pre className={"log-pane log-pane--" + theme}>{log}</pre>;
   }
-  return <div ref={hostRef} className={"task-xterm task-xterm--" + theme} />;
+  return <div ref={hostRef} className={"task-xterm task-xterm--" + theme} aria-busy="true" />;
 }

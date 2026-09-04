@@ -1,4 +1,3 @@
-pub mod ai;
 pub mod broker;
 pub mod core;
 pub mod db;
@@ -11,11 +10,11 @@ pub mod launch;
 pub mod models;
 pub mod paths;
 mod process;
+pub mod project_files;
 pub mod scan;
-pub mod secrets;
 
 pub use crate::core::Core;
-pub use broker::Broker;
+pub use broker::{Broker, TaskRuntimeRequest};
 pub use detect::detect;
 pub use error::{Error, Result};
 pub use launch::{ExternalTool, ExternalTools};

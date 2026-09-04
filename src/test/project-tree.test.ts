@@ -117,4 +117,14 @@ describe("project tree", () => {
     ], "recent-opened");
     expect(roots[0]?.children[0]?.projects.map((item) => item.id)).toEqual(["alpha", "zulu"]);
   });
+  it("builds a five-thousand-folder tree without quadratic child-map rebuilding", () => {
+    const projects = Array.from({ length: 5_000 }, (_, index) => (
+      project(`project-${index}`, `F:\\code\\group-${index}\\project-${index}`)
+    ));
+    const started = performance.now();
+    const roots = buildProjectTree(projects);
+    const elapsed = performance.now() - started;
+    expect(roots[0]?.projectCount).toBe(5_000);
+    expect(elapsed).toBeLessThan(750);
+  });
 });

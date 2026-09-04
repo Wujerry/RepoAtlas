@@ -9,15 +9,14 @@ import {
   type Variants,
 } from "framer-motion";
 import {
-  FolderOpen,
-  GitBranch,
-  Graph,
-  Notebook,
+  BellRinging,
+  Files,
   PlugsConnected,
+  SquaresFour,
   TerminalWindow,
 } from "@phosphor-icons/react";
 import { copy, type Copy, type Locale } from "./copy";
-import { heroShots, markUrl, tasksShotUrl } from "./assets";
+import { heroShots, markUrl, tasksShots } from "./assets";
 
 const EASE: [number, number, number, number] = [0.16, 1, 0.3, 1];
 
@@ -26,7 +25,7 @@ const SOURCE = "https://github.com/wujer/RepoAtlas";
 const CONTRIBUTING = "https://github.com/wujer/RepoAtlas/blob/main/CONTRIBUTING.md";
 const SECURITY = "https://github.com/wujer/RepoAtlas/security/policy";
 
-const libraryIcons = [FolderOpen, Graph, GitBranch, Notebook, PlugsConnected];
+const libraryIcons = [PlugsConnected, SquaresFour, Files, BellRinging, TerminalWindow];
 
 const heroStack: Variants = {
   hidden: {},
@@ -196,8 +195,8 @@ function Hero({ t, locale }: { t: Copy; locale: Locale }) {
               <img
                 src={heroShot}
                 alt={t.heroImageAlt}
-                width={1600}
-                height={1000}
+                width={3174}
+                height={1985}
                 className="block aspect-[16/10] w-full object-cover object-top"
               />
               {!reduce && (
@@ -244,7 +243,7 @@ function Marquee({ t }: { t: Copy }) {
   );
 }
 
-function Tasks({ t }: { t: Copy }) {
+function Tasks({ t, locale }: { t: Copy; locale: Locale }) {
   return (
     <section id="tasks" className="border-t border-line">
       <div className="mx-auto w-full max-w-[1400px] px-5 py-20 md:px-8 md:py-28">
@@ -272,10 +271,10 @@ function Tasks({ t }: { t: Copy }) {
             <TiltCard>
               <figure className="hero-shot overflow-hidden rounded-[16px] border border-line bg-panel">
                 <img
-                  src={tasksShotUrl}
+                  src={tasksShots[locale]}
                   alt={t.tasksImageAlt}
-                  width={1600}
-                  height={1000}
+                  width={3174}
+                  height={1985}
                   loading="lazy"
                   className="block aspect-[16/10] w-full object-cover object-top"
                 />
@@ -417,7 +416,7 @@ export function LandingPage({ locale }: { locale: Locale }) {
       <main id="main">
         <Hero t={t} locale={locale} />
         <Marquee t={t} />
-        <Tasks t={t} />
+        <Tasks t={t} locale={locale} />
         <Library t={t} />
         <Safety t={t} />
 

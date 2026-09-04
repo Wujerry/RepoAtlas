@@ -1,19 +1,7 @@
-import { openUrl } from "@tauri-apps/plugin-opener";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import type { MessageKey } from "../i18n";
 import type { ProjectDetail } from "../types";
 import { Button } from "./ui/button";
-
-export function MarkdownDocument({ content }: { content: string }) {
-  return <article className="readme-document"><ReactMarkdown remarkPlugins={[remarkGfm]} components={{
-    a: ({ href, children }) => {
-      const external = Boolean(href && /^https?:\/\//i.test(href));
-      return <a href={href} onClick={external ? (event) => { event.preventDefault(); void openUrl(href!); } : undefined}>{children}</a>;
-    },
-    img: ({ alt }) => <span className="readme-image-placeholder">{alt || "Image"}</span>,
-  }}>{content}</ReactMarkdown></article>;
-}
+export { MarkdownDocument } from "./MarkdownDocument";
 
 export function InlineLoadError({ title, detail, retryLabel, onRetry }: { title: string; detail?: string; retryLabel: string; onRetry?: () => void }) {
   return <div className="inline-load-error" role="alert"><div><strong>{title}</strong>{detail && <code>{detail}</code>}</div>{onRetry && <Button onClick={onRetry}>{retryLabel}</Button>}</div>;

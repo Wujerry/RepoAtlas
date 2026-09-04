@@ -57,6 +57,7 @@ fn migrate(conn: &Connection) -> Result<()> {
             frameworks_json TEXT NOT NULL DEFAULT '[]',
             package_managers_json TEXT NOT NULL DEFAULT '[]',
             facts_json TEXT NOT NULL DEFAULT '[]',
+            lineage_key TEXT,
             tasks_json TEXT NOT NULL DEFAULT '[]',
             dependencies_json TEXT,
             git_json TEXT,
@@ -412,6 +413,196 @@ fn migrate(conn: &Connection) -> Result<()> {
         conn.execute(
             "INSERT INTO schema_migrations (version, applied_at) VALUES (10, datetime('now'))",
             params![],
+        )?;
+    }
+    let applied11: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM schema_migrations WHERE version = 11",
+        [],
+        |row| row.get(0),
+    )?;
+    if applied11 == 0 {
+        conn.execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS project_collections (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                description TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS project_collection_members (
+                collection_id TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (collection_id, project_id),
+                FOREIGN KEY(collection_id) REFERENCES project_collections(id) ON DELETE CASCADE,
+                FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_collection_members_project
+                ON project_collection_members(project_id);
+
+            CREATE TABLE IF NOT EXISTS attention_acknowledgements (
+                item_id TEXT NOT NULL,
+                source_version TEXT NOT NULL,
+                acknowledged_at TEXT NOT NULL,
+                PRIMARY KEY (item_id, source_version)
+            );
+
+            CREATE TABLE IF NOT EXISTS environment_observations (
+                project_id TEXT PRIMARY KEY,
+                inspection_json TEXT NOT NULL,
+                observed_at TEXT NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+            );
+            "#,
+        )?;
+        for (table, column, definition) in [
+            ("task_runs", "peak_cpu_percent", "REAL"),
+            ("task_runs", "peak_memory_bytes", "INTEGER"),
+            (
+                "task_runs",
+                "observed_ports_json",
+                "TEXT NOT NULL DEFAULT '[]'",
+            ),
+            ("ai_summaries", "evidence_fingerprint", "TEXT"),
+        ] {
+            let exists: i64 = conn.query_row(
+                &format!("SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = ?1"),
+                [column],
+                |row| row.get(0),
+            )?;
+            if exists == 0 {
+                conn.execute(
+                    &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
+                    [],
+                )?;
+            }
+        }
+        conn.execute(
+            "INSERT INTO schema_migrations (version, applied_at) VALUES (11, datetime('now'))",
+            params![],
+        )?;
+    }
+    let applied12: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM schema_migrations WHERE version = 12",
+        [],
+        |row| row.get(0),
+    )?;
+    if applied12 == 0 {
+        let exists: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('environment_observations') WHERE name = 'condition_version'",
+            [],
+            |row| row.get(0),
+        )?;
+        if exists == 0 {
+            conn.execute(
+                "ALTER TABLE environment_observations ADD COLUMN condition_version TEXT NOT NULL DEFAULT ''",
+                [],
+            )?;
+        }
+        conn.execute(
+            "UPDATE environment_observations SET condition_version = observed_at WHERE condition_version = ''",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO schema_migrations (version, applied_at) VALUES (12, datetime('now'))",
+            [],
+        )?;
+    }
+    let applied13: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM schema_migrations WHERE version = 13",
+        [],
+        |row| row.get(0),
+    )?;
+    if applied13 == 0 {
+        for (column, definition) in [
+            ("expected_ports_json", "TEXT NOT NULL DEFAULT '[]'"),
+            ("dev_url_path", "TEXT"),
+            ("dev_url_scheme", "TEXT"),
+        ] {
+            let exists: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('pending_approvals') WHERE name = ?1",
+                [column],
+                |row| row.get(0),
+            )?;
+            if exists == 0 {
+                conn.execute(
+                    &format!("ALTER TABLE pending_approvals ADD COLUMN {column} {definition}"),
+                    [],
+                )?;
+            }
+        }
+        conn.execute(
+            "INSERT INTO schema_migrations (version, applied_at) VALUES (13, datetime('now'))",
+            [],
+        )?;
+    }
+    let applied14: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM schema_migrations WHERE version = 14",
+        [],
+        |row| row.get(0),
+    )?;
+    if applied14 == 0 {
+        conn.execute_batch(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_task_runs_project_started
+                ON task_runs(project_id, started_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_task_runs_status_started
+                ON task_runs(status, started_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_projects_availability_updated
+                ON projects(availability, updated_at DESC);
+            "#,
+        )?;
+        conn.execute(
+            "INSERT INTO schema_migrations (version, applied_at) VALUES (14, datetime('now'))",
+            [],
+        )?;
+    }
+    let applied15: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM schema_migrations WHERE version = 15",
+        [],
+        |row| row.get(0),
+    )?;
+    if applied15 == 0 {
+        let exists: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('projects') WHERE name = 'lineage_key'",
+            [],
+            |row| row.get(0),
+        )?;
+        if exists == 0 {
+            conn.execute("ALTER TABLE projects ADD COLUMN lineage_key TEXT", [])?;
+        }
+        let rows = {
+            let mut stmt = conn.prepare("SELECT id, facts_json FROM projects")?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            rows
+        };
+        for (id, facts_json) in rows {
+            let lineage_key = serde_json::from_str::<Vec<crate::models::DetectedFact>>(&facts_json)
+                .ok()
+                .and_then(|facts| {
+                    facts
+                        .into_iter()
+                        .find(|fact| fact.kind == "lineage")
+                        .and_then(|fact| crate::git::normalize_remote_url(&fact.value))
+                });
+            if let Some(lineage_key) = lineage_key {
+                conn.execute(
+                    "UPDATE projects SET lineage_key = ?1 WHERE id = ?2",
+                    params![lineage_key, id],
+                )?;
+            }
+        }
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_projects_lineage_key ON projects(lineage_key);",
+        )?;
+        conn.execute(
+            "INSERT INTO schema_migrations (version, applied_at) VALUES (15, datetime('now'))",
+            [],
         )?;
     }
     Ok(())

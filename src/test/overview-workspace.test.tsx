@@ -110,7 +110,6 @@ describe("overview workspace", () => {
         onOpenTerminal={vi.fn()}
         onOpenIde={vi.fn()}
         onOpenAgent={vi.fn()}
-        onOpenSettings={vi.fn()}
         onDescription={vi.fn()}
         onNotes={vi.fn()}
         onTags={vi.fn()}
@@ -118,8 +117,22 @@ describe("overview workspace", () => {
     );
 
     expect(document.querySelector(".overview-nav")).toBeNull();
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      t("overview"),
+      t("files"),
+      t("git"),
+      t("tasks"),
+    ]);
+    const basics = screen.getByLabelText(t("projectBasics"));
+    expect(basics).toHaveTextContent(`${t("projectStatus")}${t("ready")}`);
+    expect(basics).toHaveTextContent("Gitmain");
+    expect(basics).toHaveTextContent("TypeScript");
+    expect(basics).toHaveTextContent(`${t("projectTaskCount")}1`);
     const switcher = document.querySelector(".overview-switcher button");
     expect(switcher).not.toBeNull();
+    const overviewContent = document.querySelector("#project-panel-overview > .workspace-content");
+    expect(overviewContent).not.toBeNull();
+    expect(overviewContent).not.toHaveAttribute("style");
     await waitFor(() => expect(inspectProjectEnvironment).toHaveBeenCalledWith("atlas"));
     expect(document.querySelector(".overview-switcher button")).toHaveTextContent("01");
     expect(document.querySelector(".overview-switcher button")).toHaveTextContent("06");

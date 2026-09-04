@@ -48,3 +48,7 @@ export function AppSkeleton() {
     </main>
   );
 }
+
+export function WorkspaceSkeleton() {
+  return <div className="workspace-skeleton"><AppSkeleton /></div>;
+}

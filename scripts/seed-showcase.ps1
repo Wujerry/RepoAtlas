@@ -74,6 +74,28 @@ function Write-Utf8File {
     [System.IO.File]::WriteAllText($target, $Content, [System.Text.UTF8Encoding]::new($false))
 }
 
+function Copy-ShowcaseAsset {
+    param(
+        [Parameter(Mandatory)][string]$SourceRelativePath,
+        [Parameter(Mandatory)][string]$TargetRelativePath
+    )
+
+    $source = [System.IO.Path]::GetFullPath((Join-Path $script:repoRoot $SourceRelativePath))
+    $target = [System.IO.Path]::GetFullPath((Join-Path $script:showcaseRoot $TargetRelativePath))
+    if (-not $source.StartsWith("$script:repoRoot\", [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to read a showcase asset outside the repository: $SourceRelativePath"
+    }
+    if (-not $target.StartsWith("$script:showcaseRoot\", [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to write a showcase asset outside the showcase root: $TargetRelativePath"
+    }
+    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+        throw "Showcase asset is missing: $source"
+    }
+    $parent = Split-Path -Parent $target
+    New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    Copy-Item -LiteralPath $source -Destination $target -Force
+}
+
 function Invoke-LocalGit {
     param(
         [Parameter(Mandatory)][string]$Path,
@@ -165,6 +187,11 @@ function Remove-MarkedFixture {
 }
 
 function Write-ShowcaseFixtures {
+    Copy-ShowcaseAsset -SourceRelativePath 'assets/showcase-icons/atlas-dashboard.png' -TargetRelativePath 'atlas-dashboard/icon.png'
+    Copy-ShowcaseAsset -SourceRelativePath 'assets/showcase-icons/signal-console.png' -TargetRelativePath 'signal-console/icon.png'
+    Copy-ShowcaseAsset -SourceRelativePath 'assets/showcase-icons/insight-notebooks.png' -TargetRelativePath 'insight-notebooks/icon.png'
+    Copy-ShowcaseAsset -SourceRelativePath 'assets/showcase-icons/harbor-api.png' -TargetRelativePath 'harbor-api/icon.png'
+
     Write-Utf8File -RelativePath 'atlas-dashboard/package.json' -Content @'
 {
   "name": "atlas-dashboard",

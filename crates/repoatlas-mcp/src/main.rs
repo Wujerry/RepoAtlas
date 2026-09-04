@@ -1,10 +1,16 @@
 use repoatlas_core::{
-    Broker, Core, Error as CoreError, ProjectPatch, ProjectQuery, TaskDefinition, TaskSpec,
+    Broker, CollectionUpsert, Core, Error as CoreError, ProjectPatch, ProjectQuery, TaskDefinition,
+    TaskSpec,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    mpsc, Arc, Mutex,
+};
 
 mod args;
 mod schema;
@@ -103,38 +109,125 @@ fn main() -> io::Result<()> {
         None => Core::open_in_memory().expect("open in-memory core"),
     };
     let broker = Broker::new(log_dir).expect("open broker");
-    // Wrap in a reader over stdin (UTF-8, newline-delimited JSON).
+    struct WorkItem {
+        line: String,
+        request_key: Option<String>,
+        cancel: Arc<AtomicBool>,
+    }
+
+    let active = Arc::new(Mutex::new(HashMap::<String, Arc<AtomicBool>>::new()));
+    let (work_tx, work_rx) = mpsc::channel::<WorkItem>();
+    let (response_tx, response_rx) = mpsc::channel::<String>();
+    let worker_active = active.clone();
+    let worker = std::thread::spawn(move || {
+        let mut protocol_state = ProtocolState::default();
+        for work in work_rx {
+            if let Some(response) = handle_line_with_cancel(
+                &core,
+                &broker,
+                finish_db.as_ref(),
+                &work.line,
+                &mut protocol_state,
+                work.cancel.as_ref(),
+            ) {
+                let _ = response_tx.send(response);
+            }
+            if let Some(key) = work.request_key {
+                if let Ok(mut active) = worker_active.lock() {
+                    active.remove(&key);
+                }
+            }
+        }
+    });
+    let writer = std::thread::spawn(move || {
+        let stdout = io::stdout();
+        let mut out = stdout.lock();
+        for response in response_rx {
+            let _ = writeln!(out, "{response}");
+            let _ = out.flush();
+        }
+    });
+
+    // Keep stdin responsive while the single database worker performs a long
+    // operation. Requests remain ordered, but cancellation notifications can
+    // interrupt the active scan instead of waiting behind it.
     let stdin = io::stdin();
-    let stdout = io::stdout();
-    let mut out = stdout.lock();
     let mut reader = stdin.lock();
-    let mut protocol_state = ProtocolState::default();
 
     loop {
         let mut line = String::new();
         if reader.read_line(&mut line)? == 0 {
             break;
         }
-        if let Some(response) = handle_line(
-            &core,
-            &broker,
-            finish_db.as_ref(),
-            &line,
-            &mut protocol_state,
-        ) {
-            let _ = writeln!(out, "{response}");
-            let _ = out.flush();
+        let parsed = serde_json::from_str::<Value>(line.trim()).ok();
+        if parsed
+            .as_ref()
+            .and_then(|value| value.get("method"))
+            .and_then(Value::as_str)
+            == Some("notifications/cancelled")
+        {
+            if let Some(key) = parsed
+                .as_ref()
+                .and_then(|value| value.get("params"))
+                .and_then(|params| params.get("requestId"))
+                .map(Value::to_string)
+            {
+                if let Some(cancel) = active
+                    .lock()
+                    .ok()
+                    .and_then(|items| items.get(&key).cloned())
+                {
+                    cancel.store(true, Ordering::Relaxed);
+                }
+            }
+            continue;
+        }
+        let request_key = parsed
+            .as_ref()
+            .and_then(|value| value.get("id"))
+            .map(Value::to_string);
+        let cancel = Arc::new(AtomicBool::new(false));
+        if let Some(key) = request_key.as_ref() {
+            if let Ok(mut active) = active.lock() {
+                active.insert(key.clone(), cancel.clone());
+            }
+        }
+        if work_tx
+            .send(WorkItem {
+                line,
+                request_key,
+                cancel,
+            })
+            .is_err()
+        {
+            break;
         }
     }
+    drop(work_tx);
+    let _ = worker.join();
+    let _ = writer.join();
     Ok(())
 }
 
+#[cfg(test)]
 fn handle_line<S: ProtocolStateAccess>(
     core: &Core,
     broker: &Broker,
     db_path: Option<&PathBuf>,
     line: &str,
     initialized_state: &mut S,
+) -> Option<String> {
+    let cancel = AtomicBool::new(false);
+    handle_line_with_cancel(core, broker, db_path, line, initialized_state, &cancel)
+}
+
+fn handle_line_with_cancel<S: ProtocolStateAccess>(
+    core: &Core,
+    broker: &Broker,
+    db_path: Option<&PathBuf>,
+    line: &str,
+    initialized_state: &mut S,
+    cancel: &AtomicBool,
 ) -> Option<String> {
     if line.trim().is_empty() {
         return None;
@@ -176,7 +269,9 @@ fn handle_line<S: ProtocolStateAccess>(
         return Some(error_response(id, -32600, "Server not initialized"));
     }
 
-    Some(dispatch(core, broker, db_path, &request))
+    Some(dispatch_with_cancel(
+        core, broker, db_path, &request, cancel,
+    ))
 }
 
 fn parse_request(line: &str) -> Result<ParsedRequest, EnvelopeError> {
@@ -234,13 +329,25 @@ fn parse_request(line: &str) -> Result<ParsedRequest, EnvelopeError> {
     })
 }
 
+#[cfg(test)]
 fn dispatch(
     core: &Core,
     broker: &Broker,
     db_path: Option<&PathBuf>,
     request: &RpcRequest,
 ) -> String {
-    dispatch_request(core, broker, db_path, request)
+    let cancel = AtomicBool::new(false);
+    dispatch_with_cancel(core, broker, db_path, request, &cancel)
+}
+
+fn dispatch_with_cancel(
+    core: &Core,
+    broker: &Broker,
+    db_path: Option<&PathBuf>,
+    request: &RpcRequest,
+    cancel: &AtomicBool,
+) -> String {
+    dispatch_request(core, broker, db_path, request, cancel)
 }
 
 fn dispatch_request(
@@ -248,12 +355,13 @@ fn dispatch_request(
     broker: &Broker,
     db_path: Option<&PathBuf>,
     request: &RpcRequest,
+    cancel: &AtomicBool,
 ) -> String {
     let id = request.id.clone().unwrap_or(Value::Null);
     match request.method.as_str() {
         "initialize" => result_response(id, initialize_result(&request.params)),
         "tools/list" => result_response(id, json!({ "tools": tool_schemas() })),
-        "tools/call" => match route(core, broker, db_path, &request.params) {
+        "tools/call" => match route(core, broker, db_path, &request.params, cancel) {
             Ok(result) => result_response(id, result),
             Err(RouteError::InvalidParams) => error_response(id, -32602, "Invalid params"),
             Err(RouteError::Tool(error)) => result_response(id, tool_error_result(error)),
@@ -291,6 +399,7 @@ fn route(
     broker: &Broker,
     db_path: Option<&PathBuf>,
     p: &Value,
+    cancel: &AtomicBool,
 ) -> Result<Value, RouteError> {
     let Some(params) = p.as_object() else {
         return Err(RouteError::InvalidParams);
@@ -305,17 +414,30 @@ fn route(
     if !args.is_object() {
         return Err(RouteError::InvalidParams);
     }
-    call(core, broker, db_path, name, &args)
+    call_with_cancel(core, broker, db_path, name, &args, cancel)
         .map(|result| json!({ "content": [ { "type": "text", "text": result } ] }))
         .map_err(RouteError::Tool)
 }
 
+#[cfg(test)]
 fn call(
+    core: &Core,
+    broker: &Broker,
+    db_path: Option<&PathBuf>,
+    name: &str,
+    args: &Value,
+) -> Result<String, String> {
+    let cancel = AtomicBool::new(false);
+    call_with_cancel(core, broker, db_path, name, args, &cancel)
+}
+
+fn call_with_cancel(
     core: &Core,
     _broker: &Broker,
     _db_path: Option<&PathBuf>,
     name: &str,
     args: &Value,
+    cancel: &AtomicBool,
 ) -> Result<String, String> {
     match name {
         "list_projects" => {
@@ -332,9 +454,56 @@ fn call(
                     section: section.clone(),
                     search,
                     include_archived: Some(section.as_deref() == Some("archived")),
+                    collection_id: optional_string(args, "collectionId")?,
+                    limit: Some(500),
                 })
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::to_string_pretty(&projects).unwrap())
+        }
+        "list_collections" => Ok(serde_json::to_string_pretty(
+            &core.list_collections().map_err(|error| error.to_string())?,
+        )
+        .unwrap()),
+        "create_collection" => {
+            let collection = core
+                .create_collection_with_origin(
+                    CollectionUpsert {
+                        name: required_string(args, "name")?.to_string(),
+                        description: optional_nullable_string(args, "description")?,
+                    },
+                    "mcp",
+                )
+                .map_err(|error| error.to_string())?;
+            Ok(serde_json::to_string_pretty(&collection).unwrap())
+        }
+        "update_collection" => {
+            let id = required_string(args, "id")?;
+            let collection = core
+                .update_collection_with_origin(
+                    id,
+                    CollectionUpsert {
+                        name: required_string(args, "name")?.to_string(),
+                        description: optional_nullable_string(args, "description")?,
+                    },
+                    "mcp",
+                )
+                .map_err(|error| error.to_string())?;
+            Ok(serde_json::to_string_pretty(&collection).unwrap())
+        }
+        "delete_collection" => {
+            let id = required_string(args, "id")?;
+            core.delete_collection_with_origin(id, "mcp")
+                .map_err(|error| error.to_string())?;
+            Ok(json!({ "deleted": true, "id": id, "filesystemDeleted": false }).to_string())
+        }
+        "set_collection_members" => {
+            let id = required_string(args, "id")?;
+            let project_ids = string_array(args, "projectIds")?
+                .ok_or_else(|| "missing required array argument: projectIds".to_string())?;
+            let collection = core
+                .set_collection_members_with_origin(id, &project_ids, "mcp")
+                .map_err(|error| error.to_string())?;
+            Ok(serde_json::to_string_pretty(&collection).unwrap())
         }
         "search_projects" => {
             let query = required_string(args, "query")?;
@@ -345,6 +514,13 @@ fn call(
             let id = required_string(args, "id")?;
             let detail = core.get_project(id).map_err(|e| e.to_string())?;
             Ok(serde_json::to_string_pretty(&detail).unwrap())
+        }
+        "get_project_brief" => {
+            let project_id = required_string(args, "projectId")?;
+            let brief = core
+                .get_project_brief(project_id)
+                .map_err(|error| error.to_string())?;
+            Ok(serde_json::to_string_pretty(&brief).unwrap())
         }
         "register_project" => {
             let path = required_string(args, "path")?;
@@ -500,6 +676,9 @@ fn call(
                 cwd: optional_nullable_string(args, "cwd")?,
                 inferred: false,
                 shell_mode,
+                expected_ports: port_array(args, "expectedPorts")?.unwrap_or_default(),
+                dev_url_path: optional_nullable_string(args, "devUrlPath")?,
+                dev_url_scheme: optional_nullable_string(args, "devUrlScheme")?,
             };
             let detail = core
                 .add_task_with_origin(&project_id, task, "mcp")
@@ -537,6 +716,18 @@ fn call(
                 },
                 inferred: false,
                 shell_mode,
+                expected_ports: port_array(args, "expectedPorts")?
+                    .unwrap_or_else(|| existing.expected_ports.clone()),
+                dev_url_path: if args.get("devUrlPath").is_some() {
+                    optional_nullable_string(args, "devUrlPath")?
+                } else {
+                    existing.dev_url_path.clone()
+                },
+                dev_url_scheme: if args.get("devUrlScheme").is_some() {
+                    optional_nullable_string(args, "devUrlScheme")?
+                } else {
+                    existing.dev_url_scheme.clone()
+                },
             };
             let updated = core
                 .update_task_with_origin(project_id, task_id, task, "mcp")
@@ -629,20 +820,6 @@ fn call(
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::to_string_pretty(&environment).unwrap())
         }
-        "read_project_file" => {
-            let project_id = required_string(args, "projectId")?;
-            let path = args
-                .get("path")
-                .or_else(|| args.get("relativePath"))
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .ok_or_else(|| "missing required string argument: path".to_string())?;
-            let document = core
-                .read_project_file(project_id, path)
-                .map_err(|e| e.to_string())?;
-            Ok(serde_json::to_string_pretty(&document).unwrap())
-        }
         "list_project_events" => {
             let project_id = required_string(args, "projectId")?;
             // Keep MCP responses bounded even when an agent sends an excessively large limit.
@@ -665,12 +842,7 @@ fn call(
         "scan_root" => {
             let root_id = required_string(args, "rootId")?.to_string();
             let result = core
-                .scan_root_with_origin(
-                    &root_id,
-                    &std::sync::atomic::AtomicBool::new(false),
-                    &|_| {},
-                    "mcp",
-                )
+                .scan_root_with_origin(&root_id, cancel, &|_| {}, "mcp")
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::to_string(&result).unwrap())
         }
@@ -727,74 +899,6 @@ fn call(
             let roots = core.list_scan_roots().map_err(|e| e.to_string())?;
             Ok(serde_json::to_string(&roots).unwrap())
         }
-        "list_memory" => {
-            let project_id = required_string(args, "projectId")?;
-            core.get_project(project_id).map_err(|e| e.to_string())?;
-            let items = core.list_memory(project_id).map_err(|e| e.to_string())?;
-            Ok(serde_json::to_string_pretty(&items).unwrap())
-        }
-        "add_memory" => {
-            let project_id = required_string(args, "projectId")?;
-            let text = required_string(args, "text")?;
-            core.get_project(project_id).map_err(|e| e.to_string())?;
-            let item = core
-                .add_memory_with_origin(project_id, text, "mcp")
-                .map_err(|e| e.to_string())?;
-            Ok(serde_json::to_string_pretty(&item).unwrap())
-        }
-        "delete_memory" => {
-            let memory_id = required_string(args, "memoryId")?;
-            core.delete_memory_with_origin(memory_id, "mcp")
-                .map_err(|e| e.to_string())?;
-            Ok(json!({ "status": "deleted", "memoryId": memory_id }).to_string())
-        }
-        "list_summaries" => {
-            let project_id = required_string(args, "projectId")?;
-            core.get_project(project_id).map_err(|e| e.to_string())?;
-            let summaries = core.list_summaries(project_id).map_err(|e| e.to_string())?;
-            Ok(serde_json::to_string_pretty(&summaries).unwrap())
-        }
-        "get_summary" => {
-            let summary_id = required_string(args, "summaryId")?;
-            let summary = core.get_summary(summary_id).map_err(|e| e.to_string())?;
-            Ok(serde_json::to_string_pretty(&summary).unwrap())
-        }
-        "delete_summary" => {
-            let summary_id = required_string(args, "summaryId")?;
-            core.delete_summary_with_origin(summary_id, "mcp")
-                .map_err(|e| e.to_string())?;
-            Ok(json!({ "status": "deleted", "summaryId": summary_id }).to_string())
-        }
-        "accept_summary_memory" => {
-            let summary_id = required_string(args, "summaryId")?;
-            let memory = core
-                .accept_summary_as_memory_with_origin(summary_id, "mcp")
-                .map_err(|e| e.to_string())?;
-            Ok(serde_json::to_string_pretty(&memory).unwrap())
-        }
-        "conversation_summary" => {
-            let project_id = required_string(args, "projectId")?;
-            core.get_project(project_id).map_err(|e| e.to_string())?;
-            let summary = core
-                .conversation_summary(project_id)
-                .map_err(|e| e.to_string())?;
-            Ok(serde_json::to_string_pretty(&summary).unwrap())
-        }
-        "list_conversation" => {
-            let project_id = required_string(args, "projectId")?;
-            core.get_project(project_id).map_err(|e| e.to_string())?;
-            let messages = core
-                .list_conversation(project_id)
-                .map_err(|e| e.to_string())?;
-            Ok(serde_json::to_string_pretty(&messages).unwrap())
-        }
-        "clear_conversation" => {
-            let project_id = required_string(args, "projectId")?;
-            core.get_project(project_id).map_err(|e| e.to_string())?;
-            core.clear_conversation_with_origin(project_id, "mcp")
-                .map_err(|e| e.to_string())?;
-            Ok(json!({ "status": "cleared", "projectId": project_id }).to_string())
-        }
         "list_audit_events" => {
             let limit = args
                 .get("limit")
@@ -803,6 +907,12 @@ fn call(
                 .clamp(1, 500) as usize;
             let events = core.list_audit_events(limit).map_err(|e| e.to_string())?;
             Ok(serde_json::to_string_pretty(&events).unwrap())
+        }
+        "list_attention_items" => {
+            let items = core
+                .list_attention_items()
+                .map_err(|error| error.to_string())?;
+            Ok(serde_json::to_string_pretty(&items).unwrap())
         }
         "git_status" => {
             let project_id = required_string(args, "projectId")?;
@@ -836,6 +946,26 @@ fn record_mcp_audit(
     core.record_audit_event("mcp", action, target_type, target_id, detail, outcome)
         .map(|_| ())
         .map_err(|error| format!("operation completed but audit could not be persisted: {error}"))
+}
+
+fn port_array(args: &Value, key: &str) -> Result<Option<Vec<u16>>, String> {
+    let Some(value) = args.get(key) else {
+        return Ok(None);
+    };
+    let values = value
+        .as_array()
+        .ok_or_else(|| format!("{key} must be an array of ports"))?;
+    let mut ports = Vec::with_capacity(values.len());
+    for value in values {
+        let port = value
+            .as_u64()
+            .filter(|port| (1..=u16::MAX as u64).contains(port))
+            .ok_or_else(|| format!("{key} must contain ports between 1 and 65535"))?;
+        ports.push(port as u16);
+    }
+    ports.sort_unstable();
+    ports.dedup();
+    Ok(Some(ports))
 }
 
 fn result_response(id: Value, result: Value) -> String {
@@ -875,6 +1005,26 @@ mod tests {
         let response: Value =
             serde_json::from_str(&dispatch(&core, &broker, None, &request)).expect("response");
         let tools = response["result"]["tools"].as_array().expect("tools");
+        for unavailable in [
+            "acknowledge_attention_item",
+            "list_provider_profiles",
+            "upsert_provider_profile",
+            "delete_provider_profile",
+            "list_memory",
+            "add_memory",
+            "delete_memory",
+            "list_summaries",
+            "get_summary",
+            "accept_summary_memory",
+            "conversation_summary",
+            "list_conversation",
+            "clear_conversation",
+        ] {
+            assert!(
+                tools.iter().all(|tool| tool["name"] != unavailable),
+                "retired tool {unavailable} must stay unavailable"
+            );
+        }
         for tool in tools {
             let schema = &tool["inputSchema"];
             assert_eq!(schema["type"], "object", "{}", tool["name"]);
@@ -949,20 +1099,9 @@ mod tests {
             "update_task",
             "remove_task",
             "inspect_project_environment",
-            "read_project_file",
             "list_project_events",
             "atlas_report",
             "remove_scan_root",
-            "list_memory",
-            "add_memory",
-            "delete_memory",
-            "list_summaries",
-            "get_summary",
-            "delete_summary",
-            "accept_summary_memory",
-            "conversation_summary",
-            "list_conversation",
-            "clear_conversation",
             "git_status",
             "git_diff",
         ] {
@@ -972,6 +1111,10 @@ mod tests {
                 "{name}"
             );
         }
+        assert!(
+            !tools.iter().any(|tool| tool["name"] == "read_project_file"),
+            "desktop-only project file reading must not be exposed through MCP"
+        );
     }
 
     #[test]
@@ -1382,6 +1525,9 @@ mod tests {
                     cwd: None,
                     inferred: false,
                     shell_mode: false,
+                    expected_ports: Vec::new(),
+                    dev_url_path: None,
+                    dev_url_scheme: None,
                 },
             )
             .expect("task");
@@ -1403,5 +1549,33 @@ mod tests {
         assert!(core.list_task_runs(&project.id).expect("runs").is_empty());
 
         let _ = std::fs::remove_dir_all(project_path);
+    }
+
+    #[test]
+    fn canceled_scan_request_stops_cooperatively() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root_path = std::env::temp_dir().join(format!("repoatlas-mcp-scan-{nonce}"));
+        std::fs::create_dir_all(&root_path).expect("scan root");
+        let core = Core::open_in_memory().expect("core");
+        let root = core.add_scan_root(&root_path).expect("add root");
+        let broker = Broker::new(std::env::temp_dir().join(format!("repoatlas-mcp-logs-{nonce}")))
+            .expect("broker");
+        let cancel = AtomicBool::new(true);
+
+        let response = call_with_cancel(
+            &core,
+            &broker,
+            None,
+            "scan_root",
+            &json!({"rootId": root.id}),
+            &cancel,
+        )
+        .expect("scan response");
+        let response: Value = serde_json::from_str(&response).expect("json");
+        assert_eq!(response["cancelled"], true);
+        let _ = std::fs::remove_dir_all(root_path);
     }
 }

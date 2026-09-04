@@ -1,5 +1,6 @@
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { lazy, useState } from "react";
+import { ArrowLeft } from "@phosphor-icons/react";
+import { useState } from "react";
 import type { MessageKey } from "../i18n";
 import { api } from "../lib/api";
 import type { AppSettings, ScanRoot, ToastTone, UpdateState } from "../types";
@@ -7,8 +8,6 @@ import { Button } from "./ui/button";
 import { ConfirmDialog } from "./ui/confirm";
 import { EmptyState } from "./ui/feedback";
 import { UpdateSettings } from "./UpdateSettings";
-
-const AiSettings = lazy(() => import("./AiSettings").then(({ AiSettings }) => ({ default: AiSettings })));
 
 export interface SettingsPaneProps {
   settings: AppSettings;
@@ -27,6 +26,7 @@ export interface SettingsPaneProps {
   onInstallUpdate: () => Promise<boolean>;
   onRestartApp: () => Promise<void>;
   onDeferUpdate: () => Promise<void>;
+  onBack: () => void;
 }
 
 export function SettingsPane({
@@ -46,6 +46,7 @@ export function SettingsPane({
   onInstallUpdate,
   onRestartApp,
   onDeferUpdate,
+  onBack,
 }: SettingsPaneProps) {
   const [removingRoot, setRemovingRoot] = useState<string>();
   const [pendingRoot, setPendingRoot] = useState<ScanRoot>();
@@ -115,10 +116,11 @@ export function SettingsPane({
   }
 
   return (
-    <main id="main-content" className="settings-pane">
+    <div className="settings-pane">
       <header className="settings-header">
+        <Button type="button" className="settings-back" variant="quiet" onClick={(event) => { event.preventDefault(); event.stopPropagation(); onBack(); }}><ArrowLeft aria-hidden="true" />{t("backToProjects")}</Button>
         <p className="eyebrow">RepoAtlas</p>
-        <h1>{t("settings")}</h1>
+        <h1 id="settings-page-title">{t("settings")}</h1>
         <p>{t("settingsIntro")}</p>
       </header>
       <div className="settings-content">
@@ -176,17 +178,15 @@ export function SettingsPane({
           )}
         </section>
 
-        <AiSettings t={t} notify={notify} />
-
         <UpdateSettings state={updateState} locale={settings.locale === "zh" || settings.locale === "en" ? settings.locale : undefined} t={t} notify={notify} onCheck={onCheckForUpdates} onDownload={onDownloadUpdate} onInstall={onInstallUpdate} onRestart={onRestartApp} onDefer={onDeferUpdate} />
 
         <section className="settings-card">
-          <div className="settings-card-heading"><div><p className="eyebrow">05</p><h2>{t("dataAndBackup")}</h2></div><p>{t("dataHint")}</p></div>
+          <div className="settings-card-heading"><div><p className="eyebrow">04</p><h2>{t("dataAndBackup")}</h2></div><p>{t("dataHint")}</p></div>
           <div className="data-actions"><Button variant="primary" loading={dataBusy === "export"} disabled={Boolean(dataBusy)} onClick={() => void exportData()}>{t("exportData")}</Button><Button loading={dataBusy === "import"} disabled={Boolean(dataBusy)} onClick={() => void importData()}>{t("importData")}</Button><Button loading={dataBusy === "backup"} disabled={Boolean(dataBusy)} onClick={() => void backupData()}>{t("backupDatabase")}</Button></div>
         </section>
       </div>
       <ConfirmDialog open={Boolean(pendingRoot)} title={t("confirmRemoveRoot")} body={pendingRoot ? `${pendingRoot.path}\n${t("confirmRemoveRootHint")}` : ""} confirmLabel={t("remove")} cancelLabel={t("cancel")} busy={Boolean(removingRoot)} onOpenChange={(open) => !open && !removingRoot && setPendingRoot(undefined)} onConfirm={async () => { if (!pendingRoot) return; setRemovingRoot(pendingRoot.id); try { await onRemoveRoot(pendingRoot.id); setPendingRoot(undefined); } catch (error) { notify("error", t("removeRootFailed"), String(error)); } finally { setRemovingRoot(undefined); } }} />
       <ConfirmDialog open={Boolean(pendingImportPath)} title={t("confirmImportData")} body={pendingImportPath ? `${pendingImportPath}\n${t("confirmImportDataHint")}` : ""} confirmLabel={t("importData")} cancelLabel={t("cancel")} busy={dataBusy === "import"} onOpenChange={(open) => !open && dataBusy !== "import" && setPendingImportPath(undefined)} onConfirm={() => void confirmImportData()} />
-    </main>
+    </div>
   );
 }

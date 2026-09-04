@@ -3,7 +3,7 @@
 .atlas-texture { position: absolute; inset: 0 0 0 38%; pointer-events: none; opacity: .55; background: radial-gradient(520px 220px at 82% 12%, color-mix(in srgb, var(--text) 6%, transparent), transparent 70%); }
 :root[data-theme="light"] .atlas-texture { opacity: .42; background: radial-gradient(520px 220px at 82% 12%, color-mix(in srgb, var(--muted) 16%, transparent), transparent 72%); }
 .project-hero { position: relative; display: flex; align-items: flex-start; justify-content: space-between; gap: 30px; padding: 24px 24px 17px; }
-.project-identity { min-width: 0; }
+.project-identity { min-width: 0; flex: 1 1 auto; }
 .project-kicker { display: flex; align-items: center; gap: 7px; margin-bottom: 4px; color: var(--muted); font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
 .project-kicker-warning { color: var(--warn); }
 .project-identity h1 { max-width: 760px; margin: 0; overflow: hidden; padding: .08em 0; font-size: clamp(25px, 2.4vw, 36px); font-weight: 690; letter-spacing: -.05em; line-height: 1.32; text-overflow: ellipsis; white-space: nowrap; }
@@ -12,7 +12,15 @@
 .hero-path svg { width: 13px; flex: 0 0 auto; opacity: 0; transition: opacity .15s ease; }
 .hero-path:hover { color: var(--text-soft); }
 .hero-path:hover svg, .hero-path:focus-visible svg { opacity: 1; }
-.hero-badges { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 13px; }
+.project-hero-side { display: grid; flex: 0 1 560px; justify-items: end; gap: 12px; min-width: 360px; }
+.project-quick-facts { display: grid; grid-template-columns: repeat(4, minmax(68px, auto)); gap: 0; max-width: 100%; margin: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: color-mix(in srgb, var(--bg-subtle) 86%, transparent); }
+.project-quick-facts > div { display: grid; min-width: 0; gap: 3px; padding: 0 10px; border-left: 1px solid var(--line); }
+.project-quick-facts > div:first-child { padding-left: 0; border-left: 0; }
+.project-quick-facts > div:last-child { padding-right: 0; }
+.project-quick-facts dt { color: var(--muted); font-size: 9px; font-weight: 620; letter-spacing: .05em; text-transform: uppercase; }
+.project-quick-facts dd { max-width: 150px; margin: 0; overflow: hidden; color: var(--text-soft); font-family: var(--font-mono); font-size: 10.5px; font-weight: 580; text-overflow: ellipsis; white-space: nowrap; }
+.project-quick-facts dd.is-ready { color: var(--ok); }
+.project-quick-facts dd.is-warning { color: var(--warn); }
 .hero-actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; gap: 7px; max-width: 440px; }
 .project-tabs { position: relative; display: flex; gap: 4px; padding: 0 18px; }
 .project-tabs-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-right: 18px; }

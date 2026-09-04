@@ -1,0 +1,11 @@
+# Derive local project operations views from the shared core
+
+RepoAtlas stores Project Collections, collection membership, environment observations, Task Run peaks and ports, AI evidence fingerprints, and attention acknowledgements in its local SQLite database. The shared Core owns these records and derives the structured Project Brief and Attention Items so desktop and MCP use the same semantics.
+
+Task Run monitoring stays inside the structured Command Broker boundary. One application-level sampler refreshes the operating-system process and listening-port snapshots once for all active Task Runs every five seconds. System inspection runs outside the shared Core database lock, and peak values for the batch are persisted in one short transaction. It observes only launched process trees, uses fixed operating-system inspection commands for listening-port ownership, persists bounded peak values, and generates only `http` or `https` localhost endpoints. It does not add filesystem watching, shell evaluation, remote telemetry, or project-directory metadata.
+
+Task Run history queries use project/time and status/time indexes. Repository Lineage uses a normalized indexed key maintained with Project detection rather than reparsing every Project's facts for each detail request. Attention acknowledgement and Collection membership are resolved in bounded batch queries; these derived views do not use per-item Project-detail lookups.
+
+Attention acknowledgement is versioned by the source condition. It is not deletion of the underlying Audit Event, Task Run, Project, or environment observation; when the source changes, the condition appears again.
+
+The desktop Dashboard is another bounded derived view owned by the shared Core. Opening it performs read-only SQLite aggregation over non-archived Project state, Project Collections, current Task Runs, Attention Items, and terminal Task Run results from the previous seven days. Its recent Project and Task Run lists are capped, and collection activity is derived in batch. It does not refresh Git, read Project files, start a scan, record a Project open event, or create Audit Events. The Tauri adapter exposes the snapshot to the desktop, but MCP does not add a parallel Dashboard tool because Agents already have the narrower Project and Task Run contracts.

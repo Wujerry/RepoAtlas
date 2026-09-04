@@ -57,6 +57,12 @@ pub struct TaskDefinition {
     pub inferred: bool,
     #[serde(default)]
     pub shell_mode: bool,
+    #[serde(default)]
+    pub expected_ports: Vec<u16>,
+    #[serde(default)]
+    pub dev_url_path: Option<String>,
+    #[serde(default)]
+    pub dev_url_scheme: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -132,7 +138,7 @@ pub struct GitCommandResult {
     pub stderr: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskRun {
     pub id: String,
@@ -148,6 +154,36 @@ pub struct TaskRun {
     pub log_path: String,
     pub started_at: String,
     pub finished_at: Option<String>,
+    #[serde(default)]
+    pub peak_cpu_percent: Option<f32>,
+    #[serde(default)]
+    pub peak_memory_bytes: Option<u64>,
+    #[serde(default)]
+    pub observed_ports: Vec<u16>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskRuntimeSnapshot {
+    pub run_id: String,
+    pub captured_at: String,
+    pub cpu_percent: f32,
+    pub peak_cpu_percent: f32,
+    pub memory_bytes: u64,
+    pub peak_memory_bytes: u64,
+    pub process_count: usize,
+    pub ports: Vec<u16>,
+    pub port_inspection_available: bool,
+    pub endpoints: Vec<String>,
+    pub conflicts: Vec<PortConflict>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PortConflict {
+    pub port: u16,
+    pub pid: Option<u32>,
+    pub process_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -315,6 +351,12 @@ pub struct PendingApproval {
     pub task_id: Option<String>,
     #[serde(default)]
     pub shell_mode: bool,
+    #[serde(default)]
+    pub expected_ports: Vec<u16>,
+    #[serde(default)]
+    pub dev_url_path: Option<String>,
+    #[serde(default)]
+    pub dev_url_scheme: Option<String>,
     pub status: String,
     #[serde(default)]
     pub origin: String,
@@ -386,6 +428,131 @@ pub struct ProjectQuery {
     pub section: Option<String>,
     pub search: Option<String>,
     pub include_archived: Option<bool>,
+    #[serde(default)]
+    pub collection_id: Option<String>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectCollection {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub project_count: usize,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CollectionUpsert {
+    pub name: String,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectBrief {
+    pub project: ProjectSummary,
+    pub facts: Vec<DetectedFact>,
+    pub environment: EnvironmentInspection,
+    pub git: Option<GitSnapshot>,
+    pub readme_path: Option<String>,
+    #[serde(default)]
+    pub project_files: Vec<ProjectFile>,
+    #[serde(default)]
+    pub start_here: Vec<StartHereTask>,
+    pub tasks: Vec<TaskDefinition>,
+    pub recent_runs: Vec<TaskRun>,
+    pub recent_activity: Vec<ProjectEvent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AttentionItem {
+    pub id: String,
+    pub kind: String,
+    pub severity: String,
+    pub project_id: Option<String>,
+    pub run_id: Option<String>,
+    pub approval_id: Option<String>,
+    pub title: String,
+    pub detail: String,
+    pub occurred_at: String,
+    pub source_version: String,
+    pub acknowledgeable: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AttentionCenterState {
+    pub approvals: Vec<PendingApproval>,
+    pub items: Vec<AttentionItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardTaskRunSummary {
+    pub kind: String,
+    pub status: String,
+    pub started_at: String,
+    pub finished_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardProjectItem {
+    pub project: ProjectSummary,
+    pub git: Option<GitSnapshot>,
+    pub latest_run: Option<DashboardTaskRunSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardTaskRunItem {
+    pub run: TaskRun,
+    pub project_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardCollectionSummary {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub project_count: usize,
+    pub archived_project_count: usize,
+    pub active_run_count: usize,
+    pub attention_count: usize,
+    pub last_activity_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardTaskRunStats {
+    pub total: usize,
+    pub succeeded: usize,
+    pub failed: usize,
+    pub cancelled: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardSnapshot {
+    pub generated_at: String,
+    pub project_count: usize,
+    pub available_project_count: usize,
+    pub unavailable_project_count: usize,
+    pub collection_count: usize,
+    pub active_run_count: usize,
+    pub attention_count: usize,
+    pub seven_day_runs: DashboardTaskRunStats,
+    pub collections: Vec<DashboardCollectionSummary>,
+    pub recent_projects: Vec<DashboardProjectItem>,
+    pub recent_runs: Vec<DashboardTaskRunItem>,
+    pub attention_preview: Vec<AttentionItem>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -457,19 +624,6 @@ pub struct ProviderProfile {
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct AnalysisPlan {
-    pub provider_id: String,
-    pub provider_name: String,
-    pub model: String,
-    pub base_url: Option<String>,
-    pub evidence_files: Vec<String>,
-    pub character_count: usize,
-    pub is_local: bool,
-    pub suspicious_secret_count: usize,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderPreset {
@@ -512,6 +666,8 @@ pub struct AiSummary {
     pub model: Option<String>,
     #[serde(default)]
     pub evidence_snapshot: Option<String>,
+    #[serde(default)]
+    pub evidence_fingerprint: Option<String>,
     pub text: String,
     pub created_at: String,
 }

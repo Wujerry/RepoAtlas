@@ -1,7 +1,7 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { open } from "@tauri-apps/plugin-dialog";
-import { ArrowCounterClockwise, CaretRight, Check, Copy, FolderSimple, Image, ListBullets, MagnifyingGlass, MapPin, NotePencil, PencilSimple, SortAscending, Star, Trash, TreeStructure } from "@phosphor-icons/react";
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { Archive, ArrowCounterClockwise, CaretRight, Check, ClockCounterClockwise, Copy, FolderPlus, FolderSimple, Image, ListBullets, MagnifyingGlass, MapPin, NotePencil, PencilSimple, Plus, PlusCircle, SortAscending, SquaresFour, Star, Trash, TreeStructure, XCircle } from "@phosphor-icons/react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { MessageKey } from "../i18n";
 import { api } from "../lib/api";
 import { formatTime, stackOf } from "../lib/format";
@@ -18,7 +18,7 @@ import {
   type ProjectSort,
   type ProjectTreeRow,
 } from "../lib/project-tree";
-import type { ProjectScope, ProjectSummary, ScanProgress, ScanRoot } from "../types";
+import type { ProjectCollection, ProjectScope, ProjectSummary, ScanProgress, ScanRoot } from "../types";
 import { Button } from "./ui/button";
 import { ConfirmDialog } from "./ui/confirm";
 import { EmptyState } from "./ui/feedback";
@@ -37,6 +37,12 @@ const scopeKeys: Record<ProjectScope, MessageKey> = {
 };
 
 const scopeOptions: ProjectScope[] = ["projects", "favorites", "recent", "archived"];
+const scopeIcons = {
+  projects: FolderSimple,
+  favorites: Star,
+  recent: ClockCounterClockwise,
+  archived: Archive,
+} as const;
 
 const sortOptions: ProjectSort[] = ["default", "recent-opened", "recent-updated", "recent-committed", "name", "path"];
 
@@ -78,6 +84,11 @@ interface ProjectListProps {
   onIconError?: (error: unknown) => void;
   onReveal?: (path: string) => void;
   onRelocate?: (id: string) => void | Promise<void>;
+  collectionControls?: ReactNode;
+  collections?: ProjectCollection[];
+  selectedCollectionId?: string;
+  onAddToCollection?: (projectId: string, collectionId: string) => void | Promise<void>;
+  onRemoveFromCollection?: (projectId: string, collectionId: string) => void | Promise<void>;
 }
 
 export function ProjectList({
@@ -98,6 +109,7 @@ export function ProjectList({
   t,
   empty,
   onAddRoot,
+  onRegister,
   onScan,
   onCancelScan,
   onRename,
@@ -108,6 +120,11 @@ export function ProjectList({
   onIconError,
   onReveal,
   onRelocate,
+  collectionControls,
+  collections = [],
+  selectedCollectionId,
+  onAddToCollection,
+  onRemoveFromCollection,
 }: ProjectListProps) {
   const iconCache = useRef(new Map<string, { revision: string; icon: { kind: string; source: string | null; dataUrl: string | null } }>());
   const parentRef = useRef<HTMLDivElement>(null);
@@ -123,7 +140,10 @@ export function ProjectList({
   const [pendingProject, setPendingProject] = useState<ProjectSummary>();
   const [pendingFolder, setPendingFolder] = useState<{ path: string; projectIds: string[]; rootCount: number }>();
   const [icons, setIcons] = useState<Record<string, { kind: string; source: string | null; dataUrl: string | null }>>({});
-  const projectIconRevision = projects.map((project) => `${project.id}:${project.updatedAt}`).join("|");
+  const projectIconRevision = useMemo(
+    () => projects.map((project) => `${project.id}:${project.updatedAt}`).join("|"),
+    [projects],
+  );
   const roots = useMemo(() => buildProjectTree(projects, sort), [projects, sort]);
   const groupIds = useMemo(() => collectGroupIds(roots), [roots]);
   const rows = useMemo(() => flattenProjectTree(roots, expandedGroups), [expandedGroups, roots]);
@@ -148,6 +168,7 @@ export function ProjectList({
     setExpandedGroups((current) => {
       const valid = new Set(groupIds);
       if (!initializedExpansion.current) {
+        if (groupIds.length === 0) return current;
         initializedExpansion.current = true;
         previousScope.current = scope;
         searchWasActive.current = Boolean(query.trim());
@@ -362,6 +383,7 @@ export function ProjectList({
         aria-expanded={isTree && row.kind === "group" ? row.expanded : undefined}
         aria-label={row.kind === "project" ? row.project.displayName : row.label}
         className={className}
+        data-tree-active={row.id === activeRowId || undefined}
         style={{ paddingLeft: `${Math.max(0, row.depth - 1) * 12 + 10}px` }}
       >
         {row.kind === "group" ? <ItemContextMenu
@@ -435,6 +457,8 @@ export function ProjectList({
                 { label: t("copyPath"), icon: <Copy />, onClick: () => void navigator.clipboard?.writeText(row.project.canonicalPath) },
                 ...(onReveal ? [{ label: t("revealInExplorer"), icon: <FolderSimple />, onClick: () => onReveal(row.project.canonicalPath) }] : []),
                 ...(onRelocate ? [{ label: t("relocateProject"), icon: <MapPin />, onClick: () => void onRelocate(row.project.id) }] : []),
+                ...(selectedCollectionId && onRemoveFromCollection ? [{ label: t("removeFromCollection"), icon: <XCircle />, onClick: () => void onRemoveFromCollection(row.project.id, selectedCollectionId) }] : []),
+                ...(!selectedCollectionId && onAddToCollection ? collections.map((collection) => ({ label: `${t("addToCollection")} · ${collection.name}`, icon: <SquaresFour />, onClick: () => void onAddToCollection(row.project.id, collection.id) })) : []),
                 { label: t("removeRecord"), danger: true, icon: <Trash />, onClick: () => setPendingProject(row.project) },
               ]}
             />
@@ -448,16 +472,32 @@ export function ProjectList({
     <section className="list-pane" aria-label={t("projects")}>
       <header className="list-header">
         <div className="list-heading"><p className="eyebrow">{t("library")}</p><div><h1>{t("projects")}</h1><span className="project-count">{projects.length}</span></div></div>
-        <div className="list-header-actions"><Button variant="quiet" onClick={onAddRoot}>{t("addRootShort")}</Button><Button variant="quiet" onClick={onScan} disabled={scanning}>{t("discoverShort")}</Button></div>
+        <div className="list-header-actions">
+          <ActionMenu
+            trigger={
+              <button type="button" className="library-actions-trigger" aria-haspopup="menu" aria-label={t("projectActions")} title={t("projectActions")}>
+                <Plus weight="bold" aria-hidden="true" />
+              </button>
+            }
+            items={[
+              { label: t("register"), icon: <PlusCircle aria-hidden="true" />, onClick: onRegister },
+              { label: t("addRoot"), icon: <FolderPlus aria-hidden="true" />, onClick: onAddRoot },
+              { label: t("scanAll"), icon: <MagnifyingGlass aria-hidden="true" />, disabled: scanning, onClick: onScan },
+            ]}
+          />
+        </div>
       </header>
       <div className="list-toolbar">
         <label className="search-field">
           <span className="sr-only">{t("searchHint")}</span><MagnifyingGlass aria-hidden="true" />
           <input value={query} placeholder={t("searchHint")} onChange={(event) => onQuery(event.target.value)} />
         </label>
-        {onScope && <div className="scope-tabs" role="tablist" aria-label={t("projects")}>
-          {scopeOptions.map((value) => <button key={value} type="button" role="tab" aria-selected={scope === value} tabIndex={scope === value ? 0 : -1} className={scope === value ? "active" : ""} onKeyDown={moveTabFocus} onClick={() => onScope(value)}>{t(scopeKeys[value])}</button>)}
-        </div>}
+        <div className="list-toolbar-primary">
+          {onScope && <div className="scope-tabs" role="tablist" aria-label={t("projects")}>
+            {scopeOptions.map((value) => { const ScopeIcon = scopeIcons[value]; return <button key={value} type="button" role="tab" aria-label={t(scopeKeys[value])} title={t(scopeKeys[value])} aria-selected={scope === value} tabIndex={scope === value ? 0 : -1} className={scope === value ? "active" : ""} onKeyDown={moveTabFocus} onClick={() => onScope(value)}><ScopeIcon weight={scope === value ? "fill" : "regular"} aria-hidden="true" /></button>; })}
+          </div>}
+          {collectionControls}
+        </div>
         <div className="list-toolbar-meta">
           <div className="facet-row" aria-label={t("filters")}>
             <select aria-label={t("languageFilter")} value={filters.language} onChange={(event) => onFilters({ ...filters, language: event.target.value })}>
@@ -471,9 +511,8 @@ export function ProjectList({
           <div className="list-view-tools">
             <ActionMenu
               trigger={
-                <button type="button" className="sort-trigger" aria-haspopup="menu" aria-label={t("sortBy")}>
+                <button type="button" className="sort-trigger" aria-haspopup="menu" aria-label={t("sortBy")} title={t(sortLabels[sort])}>
                   <SortAscending aria-hidden="true" />
-                  <span aria-hidden="true">{t(sortLabels[sort])}</span>
                 </button>
               }
               items={sortOptions.map((value) => ({

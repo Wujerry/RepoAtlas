@@ -28,6 +28,9 @@ export default defineConfig(async () => ({
       ignored: ["**/src-tauri/**", "**/crates/**"],
     },
   },
+  worker: {
+    format: "es",
+  },
   build: {
     rollupOptions: {
       output: {
@@ -39,7 +42,7 @@ export default defineConfig(async () => ({
           if (id.includes("framer-motion")) return "motion";
           if (id.includes("react-markdown") || id.includes("remark-gfm")) return "markdown";
           if (id.includes("@tanstack/react-virtual")) return "virtual";
-          return "vendor";
+          return undefined;
         },
       },
     },

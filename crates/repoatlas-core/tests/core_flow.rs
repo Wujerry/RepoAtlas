@@ -1,4 +1,4 @@
-use repoatlas_core::{Broker, Core, GitOp, ProjectPatch, ProjectQuery, TaskSpec};
+use repoatlas_core::{Broker, CollectionUpsert, Core, GitOp, ProjectPatch, ProjectQuery, TaskSpec};
 use std::fs;
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
@@ -739,6 +739,12 @@ fn command_broker_forwards_stdin() {
         )
         .unwrap();
     std::thread::sleep(Duration::from_millis(200));
+    let runtime = broker
+        .runtime_snapshot(core.connection(), &run.id, &[], None, None)
+        .unwrap();
+    assert!(runtime.process_count >= 1);
+    assert!(runtime.memory_bytes > 0);
+    assert!(runtime.endpoints.is_empty());
     broker.write_stdin(&run.id, "repoatlas-in\n").unwrap();
     let started = Instant::now();
     while started.elapsed() < Duration::from_secs(8) {
@@ -1155,6 +1161,9 @@ fn add_task_appends_a_described_custom_task() {
                 cwd: None,
                 inferred: true,
                 shell_mode: false,
+                expected_ports: Vec::new(),
+                dev_url_path: None,
+                dev_url_scheme: None,
             },
         )
         .unwrap();
@@ -1493,6 +1502,9 @@ fn task_approval_resolves_relative_working_directory_against_project() {
                 cwd: Some("scripts".into()),
                 inferred: false,
                 shell_mode: false,
+                expected_ports: Vec::new(),
+                dev_url_path: None,
+                dev_url_scheme: None,
             },
         )
         .unwrap();
@@ -1542,6 +1554,9 @@ fn task_approval_is_denied_when_saved_definition_changes() {
                 cwd: None,
                 inferred: false,
                 shell_mode: false,
+                expected_ports: Vec::new(),
+                dev_url_path: None,
+                dev_url_scheme: None,
             },
         )
         .unwrap();
@@ -1565,10 +1580,13 @@ fn task_approval_is_denied_when_saved_definition_changes() {
             name: "Dev server".into(),
             description: None,
             executable: "node".into(),
-            argv: vec!["changed.js".into()],
+            argv: vec!["server.js".into()],
             cwd: None,
             inferred: false,
             shell_mode: false,
+            expected_ports: vec![5173],
+            dev_url_path: Some("/preview".into()),
+            dev_url_scheme: Some("http".into()),
         },
     )
     .unwrap();
@@ -1596,27 +1614,31 @@ fn removing_a_project_cleans_all_project_scoped_records_and_audits() {
     let project = core.register_project(&project_path).unwrap();
     let detail = core.get_project(&project.id).unwrap();
     let task_id = detail.tasks[0].id.clone();
-    let memory = core
-        .add_memory(&project.id, "keep the local setup documented")
+    let memory_id = "legacy-memory";
+    let summary_id = "legacy-summary";
+    core.connection()
+        .execute(
+            "INSERT INTO ai_memory (id, project_id, text, created_at) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![
+                memory_id,
+                project.id,
+                "keep the local setup documented",
+                "2026-01-01T00:00:00Z"
+            ],
+        )
         .unwrap();
-    let summary = repoatlas_core::ai::save_summary(
-        core.connection(),
-        &project.id,
-        None,
-        None,
-        "local summary",
-        "package.json",
-    )
-    .unwrap();
-    repoatlas_core::ai::append_conversation(
-        core.connection(),
-        &project.id,
-        vec![repoatlas_core::ChatMessage {
-            role: "user".into(),
-            content: "What is this?".into(),
-        }],
-    )
-    .unwrap();
+    core.connection()
+        .execute(
+            "INSERT INTO ai_summaries (id, project_id, provider_id, model, evidence_snapshot, text, created_at) VALUES (?1, ?2, NULL, NULL, ?3, ?4, ?5)",
+            rusqlite::params![summary_id, project.id, "package.json", "local summary", "2026-01-01T00:00:00Z"],
+        )
+        .unwrap();
+    core.connection()
+        .execute(
+            "INSERT INTO project_conversations (project_id, messages, updated_at) VALUES (?1, ?2, ?3)",
+            rusqlite::params![project.id, r#"[{"role":"user","content":"What is this?"}]"#, "2026-01-01T00:00:00Z"],
+        )
+        .unwrap();
     let approval = core
         .request_task_approval(TaskSpec {
             project_id: project.id.clone(),
@@ -1628,13 +1650,13 @@ fn removing_a_project_cleans_all_project_scoped_records_and_audits() {
             shell_mode: false,
         })
         .unwrap();
-    core.record_audit_event("mcp", "memory", "memory", Some(&memory.id), None, "success")
+    core.record_audit_event("mcp", "memory", "memory", Some(memory_id), None, "success")
         .unwrap();
     core.record_audit_event(
         "mcp",
         "summary",
         "summary",
-        Some(&summary.id),
+        Some(summary_id),
         None,
         "success",
     )
@@ -1692,6 +1714,9 @@ fn restart_recovers_starting_approvals_and_running_runs() {
                 cwd: None,
                 inferred: false,
                 shell_mode: false,
+                expected_ports: Vec::new(),
+                dev_url_path: None,
+                dev_url_scheme: None,
             },
         )
         .unwrap();
@@ -1756,6 +1781,9 @@ fn removal_rejects_a_starting_task_approval() {
                 cwd: None,
                 inferred: false,
                 shell_mode: false,
+                expected_ports: Vec::new(),
+                dev_url_path: None,
+                dev_url_scheme: None,
             },
         )
         .unwrap();
@@ -1777,4 +1805,360 @@ fn removal_rejects_a_starting_task_approval() {
         core.get_project(&project.id).unwrap().project.id,
         project.id
     );
+}
+
+#[test]
+fn project_collections_filter_members_without_touching_projects() {
+    let dir = tempdir().unwrap();
+    let first_path = dir.path().join("first");
+    let second_path = dir.path().join("second");
+    fs::create_dir_all(&first_path).unwrap();
+    fs::create_dir_all(&second_path).unwrap();
+    let core = Core::open_in_memory().unwrap();
+    let first = core.register_project(&first_path).unwrap();
+    let second = core.register_project(&second_path).unwrap();
+    let collection = core
+        .create_collection_with_origin(
+            CollectionUpsert {
+                name: "Active clients".into(),
+                description: Some("Current work".into()),
+            },
+            "test",
+        )
+        .unwrap();
+    let updated = core
+        .set_collection_members_with_origin(&collection.id, std::slice::from_ref(&first.id), "test")
+        .unwrap();
+    assert_eq!(updated.project_count, 1);
+    let projects = core
+        .list_projects(ProjectQuery {
+            collection_id: Some(collection.id.clone()),
+            limit: None,
+            ..ProjectQuery::default()
+        })
+        .unwrap();
+    assert_eq!(
+        projects
+            .iter()
+            .map(|project| &project.id)
+            .collect::<Vec<_>>(),
+        vec![&first.id]
+    );
+    let exported = core.export_json().unwrap();
+    assert!(exported.contains("\"version\": 4"));
+    let imported = Core::open_in_memory().unwrap();
+    assert_eq!(imported.import_json(&exported).unwrap(), 2);
+    let imported_collection = imported.list_collections().unwrap().remove(0);
+    assert_eq!(imported_collection.name, "Active clients");
+    assert_eq!(imported_collection.project_count, 1);
+    core.delete_collection_with_origin(&collection.id, "test")
+        .unwrap();
+    assert!(first_path.exists());
+    assert!(second_path.exists());
+    assert_eq!(
+        core.list_projects(ProjectQuery::default()).unwrap().len(),
+        2
+    );
+    assert_eq!(second.id, core.get_project(&second.id).unwrap().project.id);
+}
+
+#[test]
+fn collection_metadata_and_members_save_atomically() {
+    let dir = tempdir().unwrap();
+    let project_path = dir.path().join("collection-member");
+    fs::create_dir_all(&project_path).unwrap();
+    let core = Core::open_in_memory().unwrap();
+    let project = core.register_project(&project_path).unwrap();
+    let collection = core
+        .save_collection_with_members_with_origin(
+            None,
+            CollectionUpsert {
+                name: "One".into(),
+                description: None,
+            },
+            std::slice::from_ref(&project.id),
+            "test",
+        )
+        .unwrap();
+    assert_eq!(collection.project_count, 1);
+
+    let error = core
+        .save_collection_with_members_with_origin(
+            Some(&collection.id),
+            CollectionUpsert {
+                name: "Changed".into(),
+                description: None,
+            },
+            &["missing-project".into()],
+            "test",
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("missing-project"));
+    let stored = core.list_collections().unwrap().remove(0);
+    assert_eq!(stored.name, "One");
+    assert_eq!(stored.project_count, 1);
+}
+
+#[test]
+fn bulk_task_update_validates_and_normalizes_runtime_metadata() {
+    let dir = tempdir().unwrap();
+    let project_path = dir.path().join("bulk-runtime-task");
+    fs::create_dir_all(&project_path).unwrap();
+    let core = Core::open_in_memory().unwrap();
+    let project = core.register_project(&project_path).unwrap();
+    let invalid = repoatlas_core::TaskDefinition {
+        id: "dev".into(),
+        kind: "dev".into(),
+        name: "Dev".into(),
+        description: None,
+        executable: "node".into(),
+        argv: vec!["server.js".into()],
+        cwd: None,
+        inferred: false,
+        shell_mode: false,
+        expected_ports: vec![5173],
+        dev_url_path: Some("preview".into()),
+        dev_url_scheme: Some("http".into()),
+    };
+    let error = core
+        .update_project(
+            &project.id,
+            ProjectPatch {
+                tasks: Some(vec![invalid]),
+                ..ProjectPatch::default()
+            },
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("must start with one slash"));
+
+    let mut valid = core.get_project(&project.id).unwrap().tasks;
+    valid.push(repoatlas_core::TaskDefinition {
+        id: "dev".into(),
+        kind: "dev".into(),
+        name: "Dev".into(),
+        description: None,
+        executable: "node".into(),
+        argv: vec!["server.js".into()],
+        cwd: None,
+        inferred: false,
+        shell_mode: false,
+        expected_ports: vec![5173, 3000, 5173],
+        dev_url_path: Some(" /preview ".into()),
+        dev_url_scheme: Some(" HTTPS ".into()),
+    });
+    core.update_project(
+        &project.id,
+        ProjectPatch {
+            tasks: Some(valid),
+            ..ProjectPatch::default()
+        },
+    )
+    .unwrap();
+    let saved = core.get_project(&project.id).unwrap().tasks.pop().unwrap();
+    assert_eq!(saved.expected_ports, vec![3000, 5173]);
+    assert_eq!(saved.dev_url_path.as_deref(), Some("/preview"));
+    assert_eq!(saved.dev_url_scheme.as_deref(), Some("https"));
+}
+
+#[test]
+fn current_attention_items_can_be_dismissed_but_forged_items_are_rejected() {
+    let dir = tempdir().unwrap();
+    let project_path = dir.path().join("missing-project");
+    fs::create_dir_all(&project_path).unwrap();
+    let core = Core::open_in_memory().unwrap();
+    let project = core.register_project(&project_path).unwrap();
+    fs::remove_dir_all(&project_path).unwrap();
+    core.connection()
+        .execute(
+            "UPDATE projects SET availability = 'unavailable' WHERE id = ?1",
+            [&project.id],
+        )
+        .unwrap();
+    let item = core
+        .list_attention_items()
+        .unwrap()
+        .into_iter()
+        .find(|item| item.project_id.as_deref() == Some(&project.id))
+        .unwrap();
+    assert!(item.acknowledgeable);
+    core.acknowledge_attention_item(&item.id, &item.source_version)
+        .unwrap();
+    assert!(!core
+        .list_attention_items()
+        .unwrap()
+        .iter()
+        .any(|candidate| candidate.id == item.id));
+    assert!(core
+        .acknowledge_attention_item("forged", "version")
+        .is_err());
+}
+
+#[test]
+fn attention_acknowledgement_only_hides_the_matching_failure_version() {
+    let dir = tempdir().unwrap();
+    let project_path = dir.path().join("attention");
+    fs::create_dir_all(&project_path).unwrap();
+    let core = Core::open_in_memory().unwrap();
+    let project = core.register_project(&project_path).unwrap();
+    core.connection().execute(
+        "INSERT INTO task_runs (id, project_id, kind, executable, argv_json, cwd, shell_mode, status, exit_code, log_path, started_at, finished_at) VALUES ('failed-run', ?1, 'test', 'runner', '[]', ?2, 0, 'failed', 2, ?3, '2026-01-01T00:00:00Z', '2026-01-01T00:01:00Z')",
+        rusqlite::params![project.id, project_path.to_string_lossy(), dir.path().join("failed.log").to_string_lossy()],
+    ).unwrap();
+    let item = core
+        .list_attention_items()
+        .unwrap()
+        .into_iter()
+        .find(|item| item.id == "run-failed:failed-run")
+        .unwrap();
+    core.acknowledge_attention_item(&item.id, &item.source_version)
+        .unwrap();
+    assert!(!core
+        .list_attention_items()
+        .unwrap()
+        .iter()
+        .any(|candidate| candidate.id == item.id));
+}
+
+#[test]
+fn environment_attention_returns_when_the_mismatch_details_change() {
+    let dir = tempdir().unwrap();
+    let project_path = dir.path().join("environment-attention");
+    fs::create_dir_all(&project_path).unwrap();
+    let core = Core::open_in_memory().unwrap();
+    let project = core.register_project(&project_path).unwrap();
+    let inspection = |constraint: &str| repoatlas_core::EnvironmentInspection {
+        project_id: project.id.clone(),
+        runtimes: vec![repoatlas_core::RuntimeStatus {
+            ecosystem: "python".into(),
+            label: "Python".into(),
+            constraint: Some(constraint.into()),
+            source: Some("pyproject.toml#project.requires-python".into()),
+            local_version: Some("3.13.7".into()),
+            match_state: "mismatch".into(),
+        }],
+        files: Vec::new(),
+    };
+
+    core.record_environment_inspection(&inspection(">=4.0"))
+        .unwrap();
+    let first = core
+        .list_attention_items()
+        .unwrap()
+        .into_iter()
+        .find(|item| item.id == format!("environment:{}", project.id))
+        .unwrap();
+    core.acknowledge_attention_item(&first.id, &first.source_version)
+        .unwrap();
+    assert!(!core
+        .list_attention_items()
+        .unwrap()
+        .iter()
+        .any(|item| item.id == first.id));
+
+    core.record_environment_inspection(&inspection(">=5.0"))
+        .unwrap();
+    let changed = core
+        .list_attention_items()
+        .unwrap()
+        .into_iter()
+        .find(|item| item.id == first.id)
+        .expect("changed mismatch should return to the attention center");
+    assert_ne!(changed.source_version, first.source_version);
+}
+
+#[test]
+fn dashboard_snapshot_aggregates_bounded_local_state_without_writes() {
+    let dir = tempdir().unwrap();
+    let active_path = dir.path().join("active-project");
+    let unavailable_path = dir.path().join("unavailable-project");
+    let archived_path = dir.path().join("archived-project");
+    fs::create_dir_all(&active_path).unwrap();
+    fs::create_dir_all(&unavailable_path).unwrap();
+    fs::create_dir_all(&archived_path).unwrap();
+
+    let core = Core::open_in_memory().unwrap();
+    let active = core.register_project(&active_path).unwrap();
+    let unavailable = core.register_project(&unavailable_path).unwrap();
+    let archived = core.register_project(&archived_path).unwrap();
+    core.mark_opened(&active.id).unwrap();
+    core.mark_opened(&unavailable.id).unwrap();
+    core.update_project(
+        &archived.id,
+        ProjectPatch {
+            archived: Some(true),
+            ..ProjectPatch::default()
+        },
+    )
+    .unwrap();
+    core.connection()
+        .execute(
+            "UPDATE projects SET availability = 'unavailable' WHERE id = ?1",
+            [&unavailable.id],
+        )
+        .unwrap();
+
+    let collection = core
+        .create_collection_with_origin(
+            CollectionUpsert {
+                name: "Release train".into(),
+                description: Some("Projects shipping together".into()),
+            },
+            "test",
+        )
+        .unwrap();
+    core.set_collection_members_with_origin(
+        &collection.id,
+        &[active.id.clone(), archived.id.clone()],
+        "test",
+    )
+    .unwrap();
+
+    let insert_run = |id: &str, project_id: &str, status: &str, age: &str| {
+        core.connection().execute(
+            "INSERT INTO task_runs (id, project_id, kind, executable, argv_json, cwd, shell_mode, status, exit_code, log_path, started_at, finished_at, peak_cpu_percent, peak_memory_bytes, observed_ports_json)
+             VALUES (?1, ?2, 'test', 'runner', '[]', ?3, 0, ?4,
+                     CASE WHEN ?4 = 'succeeded' THEN 0 WHEN ?4 IN ('failed', 'cancelled') THEN 1 ELSE NULL END,
+                     ?5, datetime('now', ?6),
+                     CASE WHEN ?4 IN ('running', 'starting') THEN NULL ELSE datetime('now', ?6) END,
+                     NULL, NULL, '[]')",
+            rusqlite::params![
+                id,
+                project_id,
+                active_path.to_string_lossy(),
+                status,
+                dir.path().join(format!("{id}.log")).to_string_lossy(),
+                age,
+            ],
+        ).unwrap();
+    };
+    insert_run("run-active", &active.id, "running", "-2 minutes");
+    insert_run("run-success", &active.id, "succeeded", "-1 day");
+    insert_run("run-failed", &active.id, "failed", "-2 days");
+    insert_run("run-cancelled", &unavailable.id, "cancelled", "-3 days");
+    insert_run("run-old", &active.id, "succeeded", "-8 days");
+
+    let audit_count_before = core.list_audit_events(1000).unwrap().len();
+    let snapshot = core.dashboard_snapshot().unwrap();
+    let audit_count_after = core.list_audit_events(1000).unwrap().len();
+
+    assert_eq!(snapshot.project_count, 2);
+    assert_eq!(snapshot.available_project_count, 1);
+    assert_eq!(snapshot.unavailable_project_count, 1);
+    assert_eq!(snapshot.collection_count, 1);
+    assert_eq!(snapshot.active_run_count, 1);
+    assert!(snapshot.attention_count >= 2);
+    assert_eq!(snapshot.seven_day_runs.total, 3);
+    assert_eq!(snapshot.seven_day_runs.succeeded, 1);
+    assert_eq!(snapshot.seven_day_runs.failed, 1);
+    assert_eq!(snapshot.seven_day_runs.cancelled, 1);
+    assert_eq!(snapshot.collections[0].project_count, 1);
+    assert_eq!(snapshot.collections[0].archived_project_count, 1);
+    assert_eq!(snapshot.collections[0].active_run_count, 1);
+    assert!(snapshot.collections[0].attention_count >= 1);
+    assert_eq!(snapshot.recent_projects.len(), 2);
+    assert!(snapshot.recent_projects.len() <= 6);
+    assert_eq!(snapshot.recent_runs[0].run.id, "run-active");
+    assert!(snapshot.recent_runs.len() <= 8);
+    assert!(snapshot.attention_preview.len() <= 3);
+    assert_eq!(audit_count_before, audit_count_after);
 }

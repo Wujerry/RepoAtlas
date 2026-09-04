@@ -4,6 +4,7 @@ use crate::models::{AppSettings, ScanRoot};
 use crate::paths;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
@@ -16,6 +17,16 @@ pub struct ExportFile {
     pub settings: AppSettings,
     pub scan_roots: Vec<ScanRoot>,
     pub projects: Vec<ExportProject>,
+    #[serde(default)]
+    pub collections: Vec<ExportCollection>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportCollection {
+    pub name: String,
+    pub description: Option<String>,
+    pub project_paths: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -52,13 +63,15 @@ pub fn export(conn: &Connection) -> Result<String> {
     };
     let scan_roots = list_scan_roots(conn)?;
     let projects = export_projects(conn)?;
+    let collections = export_collections(conn)?;
     let file = ExportFile {
         format: "repoatlas-export".into(),
-        version: 3,
+        version: 4,
         exported_at: now(),
         settings,
         scan_roots,
         projects,
+        collections,
     };
     serde_json::to_string_pretty(&file).map_err(|err| Error::msg(err.to_string()))
 }
@@ -96,6 +109,18 @@ pub fn import_into(
                 .transpose()
         })
         .collect::<Result<Vec<_>>>()?;
+    for collection in &file.collections {
+        if collection.name.trim().is_empty() || collection.name.chars().count() > 80 {
+            return Err(Error::msg("invalid collection name in export"));
+        }
+        if collection
+            .description
+            .as_ref()
+            .is_some_and(|value| value.chars().count() > 500)
+        {
+            return Err(Error::msg("invalid collection description in export"));
+        }
+    }
 
     conn.execute_batch("BEGIN IMMEDIATE")?;
     let result = (|| {
@@ -132,6 +157,7 @@ pub fn import_into(
         }
 
         let mut count = 0;
+        let mut imported_project_ids = HashMap::new();
         for (index, project) in file.projects.iter().enumerate() {
             let path = Path::new(&project.canonical_path);
             if !path.is_dir() {
@@ -151,6 +177,7 @@ pub fn import_into(
                 )
                 .optional()?;
             let id = id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            imported_project_ids.insert(project.canonical_path.clone(), id.clone());
             let vcs_kind = if canonical.join(".git").exists() {
                 "git"
             } else if canonical.join(".svn").exists() {
@@ -227,6 +254,52 @@ pub fn import_into(
                 )?;
             }
             count += 1;
+        }
+        for collection in &file.collections {
+            let name = collection.name.trim();
+            let description = collection
+                .description
+                .as_ref()
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty());
+            let existing_id = conn
+                .query_row(
+                    "SELECT id FROM project_collections WHERE name = ?1 COLLATE NOCASE",
+                    [name],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            let id = existing_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            conn.execute(
+                "INSERT INTO project_collections (id, name, description, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)
+                 ON CONFLICT(id) DO UPDATE SET name = excluded.name, description = excluded.description, updated_at = excluded.updated_at",
+                params![id, name, description, now()],
+            )?;
+            conn.execute(
+                "DELETE FROM project_collection_members WHERE collection_id = ?1",
+                [&id],
+            )?;
+            for path in &collection.project_paths {
+                let project_id = imported_project_ids.get(path).cloned().or_else(|| {
+                    let canonical = paths::canonicalize(Path::new(path)).ok()?;
+                    let canonical = paths::path_to_string(&canonical);
+                    conn.query_row(
+                        "SELECT id FROM projects WHERE canonical_path = ?1",
+                        [canonical],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()
+                    .ok()
+                    .flatten()
+                });
+                let Some(project_id) = project_id else {
+                    continue;
+                };
+                conn.execute(
+                    "INSERT OR IGNORE INTO project_collection_members (collection_id, project_id, created_at) VALUES (?1, ?2, ?3)",
+                    params![id, project_id, now()],
+                )?;
+            }
         }
         Ok(count)
     })();
@@ -352,6 +425,35 @@ fn export_projects(conn: &Connection) -> Result<Vec<ExportProject>> {
         });
     }
     Ok(out)
+}
+
+fn export_collections(conn: &Connection) -> Result<Vec<ExportCollection>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, description FROM project_collections ORDER BY lower(name), id",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<String>>(2)?,
+        ))
+    })?;
+    let mut collections = Vec::new();
+    for row in rows {
+        let (id, name, description) = row?;
+        let mut member_stmt = conn.prepare(
+            "SELECT p.canonical_path FROM project_collection_members m JOIN projects p ON p.id = m.project_id WHERE m.collection_id = ?1 ORDER BY p.canonical_path",
+        )?;
+        let project_paths = member_stmt
+            .query_map([id], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        collections.push(ExportCollection {
+            name,
+            description,
+            project_paths,
+        });
+    }
+    Ok(collections)
 }
 
 fn list_scan_roots(conn: &Connection) -> Result<Vec<ScanRoot>> {

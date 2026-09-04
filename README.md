@@ -13,52 +13,64 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-FFA31A.svg" alt="MIT License" /></a>
 </p>
 
-RepoAtlas gathers the code projects scattered across your drives into one local library. Saved tasks run against them with live output, and every run leaves an exit code and a log. Everything stays on your machine: local SQLite, no account, no sync server.
+RepoAtlas turns scattered local checkouts into one working library. See what each Project is, open it in the right coding Agent or tool, run repeatable development tasks, and keep the output and history on your machine.
 
+> **macOS contributors wanted.** RepoAtlas has not yet been tested on real Mac hardware, so there is no supported macOS build today. If you have a Mac, help us build, test, and document it through [CONTRIBUTING.md](CONTRIBUTING.md), or open an [issue](https://github.com/wujer/RepoAtlas/issues) with reproducible results.
 
-## The library
+## Let your AI Agent do the setup
 
-![The RepoAtlas library view: projects grouped by location with branch and dirty-file status](assets/screenshots/en-dark-library.png)
+The fastest first run is not filling in a project catalog by hand:
 
-You authorize a **Scan Root** — one directory — and scanning only happens there. No disk crawl, no filesystem watchers, no silent symlink walks. Each canonical checkout becomes a **Project**. Multiple checkouts of the same repository are linked through **Repository Lineage**, and a module can be promoted to its own project.
+1. Open RepoAtlas and copy the onboarding instruction to your external AI coding Agent.
+2. The Agent connects RepoAtlas MCP, asks which directories it may scan, and registers the approved Projects.
+3. Using evidence from each checkout, the Agent adds useful descriptions, reusable Task Definitions, and recognizable Project icons.
+4. RepoAtlas refreshes the local library so you can review the result and start working.
 
-Projects group and sort the way folders do, searchable in English and Chinese, with branch, dirty files, and detected runtimes shown up front.
+For a single open checkout, the Agent can call `register_project`. For a larger archive, the Agent asks for your approval, adds the approved directory as a **Scan Root**, and explicitly calls `scan_root`. Manual registration and scanning remain available in the desktop app.
 
-## Tasks
+The Agent keeps ownership of its model, account, provider configuration, conversation, and decisions about reading project files. RepoAtlas keeps the durable Project and task records.
 
-![The RepoAtlas task workbench: saved tasks on the left, program details and live output on the right](assets/screenshots/en-light-tasks.png)
+## Main features
 
-A **Task Definition** is a program, an argument vector, and a working directory — not a hand-built shell string. It runs in a real PTY, output streams line by line, and each **Task Run** keeps its exit code and full log. Stopping a task terminates the whole process tree. Shell mode exists as a clearly marked, higher-risk option; it is not the default.
+- **Working dashboard** — start with local Project and Collection status, seven-day Task Run results, recent work, and items that need action.
+- **Agent-assisted initialization** — let an external AI Agent inventory approved directories and write evidence-backed descriptions, tasks, and icons through MCP.
+- **Project library** — search Projects in English or Chinese, group related work with Project Collections, and relate multiple checkouts through Repository Lineage.
+- **Project Brief and read-only Files** — inspect detected facts, environment requirements, README, source, configuration, recent activity, and run history without turning RepoAtlas into an editor.
+- **Saved development tasks** — keep dev, test, build, and packaging commands as reviewed programs plus argument vectors, then run them in a real PTY.
+- **Global task workbench** — follow active work across Projects in one full-window surface with up to four live terminals.
+- **Runtime visibility** — see process-tree CPU, memory, child processes, listening ports, and safe localhost previews next to the terminal.
+- **Conservative Git** — review status, diffs, and history; pull fast-forward only. SVN support remains read-only.
+- **Attention and approval** — collect failed runs, unavailable Projects, environment mismatches, and Agent task requests that still need desktop approval.
+- **Local-first records** — Project metadata, task output, exit codes, logs, and audit history stay in local SQLite; no RepoAtlas account or sync server is required.
 
-## Git, knowledge, and MCP
+## Project library
 
-- **Conservative Git**: status, diffs, history, and fast-forward-only pulls. Destructive checkout and reset are not implemented. SVN is read-only.
-- **Project knowledge**: notes, detected facts, and AI summaries stay with the checkout. Writing to AI Memory requires your confirmation.
-- **MCP**: agents read project knowledge over stdio, inside the same boundaries. A task request from an agent becomes a time-bounded Pending Approval on your desktop — no approval, no run.
+![The RepoAtlas library view with Project Collections, distinct Project icons, branch state, and attention items](assets/screenshots/en-dark-library.png)
 
-## Boundaries
+Every canonical checkout is a **Project**. A **Scan Root** is a directory you explicitly authorize for discovery. Scanning is manual, stays under those roots, and never turns into a whole-disk crawler or filesystem watcher.
 
-These rules are enforced in `repoatlas-core`:
+Projects remain tied to their real paths. Collections organize them without moving directories, and removing a RepoAtlas record does not delete the checkout on disk.
 
-- All data lives in local SQLite. No account, no sync server.
-- Scanning happens only beneath explicitly authorized Scan Roots, and only when you trigger it.
-- Removing a Project or Scan Root deletes a record, never your folders.
-- Git operations are typed; pulls are fast-forward only.
-- MCP cannot write Git, evaluate shell strings, run arbitrary commands, or delete files.
-- You preview the exact list of evidence before AI sees any of it.
+RepoAtlas opens on the Dashboard instead of choosing a Project for you. Collection cards are quick entries into the existing filtered project tree; the snapshot is calculated from bounded local records and does not scan checkouts, refresh Git, read source files, or contact a remote analytics service.
 
-## Download (Windows x64 beta)
+## Task workbench
+
+![The RepoAtlas global task workbench with a runtime monitor and live terminal output](assets/screenshots/en-light-tasks.png)
+
+A **Task Definition** records the executable, argument vector, and working directory instead of hiding work inside an assembled shell string. Each **Task Run** streams through a real PTY and retains its exit code and full log.
+
+Open the global workbench to follow active runs across Projects. Runtime observations sit beside each terminal, with CPU, memory, process count, detected listening ports, and safe localhost preview links available while work remains active. Stopping a task terminates its process tree.
+
+## Download — Windows x64 beta
 
 1. Download the latest installer from [Releases](https://github.com/wujer/RepoAtlas/releases).
-2. Verify the SHA-256 checksum against the published `SHA256SUMS`:
+2. Verify its SHA-256 checksum against the published `SHA256SUMS`:
 
    ```powershell
    Get-FileHash .\RepoAtlas_0.1.0_x64-setup.exe -Algorithm SHA256
    ```
 
-3. Run the installer. SmartScreen will show an "unknown publisher" warning — expected for an unsigned build. Choose **More info**, then **Run anyway**.
-
-macOS builds are not available yet. They will be published after testing on real hardware.
+3. Run the installer. SmartScreen will show an “unknown publisher” warning for the unsigned beta. Choose **More info**, then **Run anyway**.
 
 ## Run from source
 
@@ -69,14 +81,14 @@ pnpm install
 pnpm tauri dev
 ```
 
-On first launch, follow the onboarding dialog. It walks you through connecting an MCP client and calling `register_project`, which authorizes your first Scan Root and adds the project to the library.
+On first launch, choose **Copy for Agent, scan and discover** in the onboarding dialog. RepoAtlas prepares an instruction that lets your Agent configure MCP, ask for the directories you approve, discover Projects, and populate their descriptions, tasks, and icons.
 
 ## Architecture and development
 
 - `src/` — React 19 and TypeScript desktop UI. `src/lib/api.ts` is the typed Tauri boundary.
 - `src-tauri/` — Tauri 2 commands and desktop integration.
-- `crates/repoatlas-core/` — the authoritative core: SQLite, scanning, Git, tasks, audit, and AI providers.
-- `crates/repoatlas-mcp/` — stdio MCP adapter. It reuses `repoatlas-core` and creates no parallel persistence.
+- `crates/repoatlas-core/` — the authoritative core for SQLite, scanning, safe file inspection, Git, tasks, approvals, and audit.
+- `crates/repoatlas-mcp/` — the stdio MCP adapter. It reuses `repoatlas-core` and creates no parallel persistence path.
 
 Checks:
 
@@ -84,6 +96,7 @@ Checks:
 pnpm typecheck
 pnpm test -- --run
 cargo test -p repoatlas-core
+cargo test -p repoatlas-mcp
 cargo check -p repoatlas
 pnpm build
 ```

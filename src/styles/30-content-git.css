@@ -41,8 +41,8 @@
 .scan-status.is-idle .scan-sweep { animation: none; }
 .overview-notes { display: grid; align-content: start; }
 .inline-form { display: flex; align-items: flex-end; gap: 8px; margin-top: 14px; }.inline-form > label { flex: 1; min-width: 0; }
-.field-group { display: grid; gap: 6px; min-width: 0; margin-top: 14px; }.field-group > span, .field-label, .inline-form label > span { display: flex; align-items: center; gap: 5px; color: var(--text-soft); font-size: 10px; font-weight: 570; }.field-group input, .field-group textarea, .field-group select, .inline-form input, .field-control, .question-form textarea, .provider-bar input, .provider-bar select { width: 100%; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-elevated); color: var(--text); transition: border .15s ease, background .15s ease; }
-.field-group input, .field-group select, .inline-form input, .field-control, .provider-bar input, .provider-bar select { height: 40px; padding: 0 10px; }
+.field-group { display: grid; gap: 6px; min-width: 0; margin-top: 14px; }.field-group > span, .field-label, .inline-form label > span { display: flex; align-items: center; gap: 5px; color: var(--text-soft); font-size: 10px; font-weight: 570; }.field-group input, .field-group textarea, .field-group select, .inline-form input, .field-control { width: 100%; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-elevated); color: var(--text); transition: border .15s ease, background .15s ease; }
+.field-group input, .field-group select, .inline-form input, .field-control { height: 40px; padding: 0 10px; }
 .field-group textarea { min-height: 118px; padding: 9px 10px; resize: vertical; line-height: 1.55; }
 
 .git-layout { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 16px; align-items: start; width: 100%; min-width: 0; }

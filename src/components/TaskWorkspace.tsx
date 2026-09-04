@@ -10,8 +10,9 @@ import { formatCommand, InlineLoadError, statusKey } from "./DashboardShared";
 import { TaskTerminal } from "./TaskTerminal";
 
 export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t, notify, onRetry, onSaveTasks, onRun, onStopRun, onClearLog, onHistory }: { tasks: ProjectDetail["tasks"]; runs: TaskRun[]; loading: boolean; error?: string; activeRunId?: string; log: string; t: (key: MessageKey) => string; notify: (tone: ToastTone, title: string, detail?: string) => void; onRetry?: () => void; onSaveTasks: (tasks: ProjectDetail["tasks"]) => Promise<void>; onRun: (id: string) => void; onStopRun: (runId: string) => void; onClearLog: () => void; onHistory: (run: TaskRun) => void; }) {
-  type TaskDraft = { name: string; description: string; kind: string; executable: string; argv: string[]; cwd: string };
-  const [draft, setDraft] = useState<TaskDraft>({ name: "", description: "", kind: "run", executable: "", argv: [], cwd: "" });
+  type TaskDraft = { name: string; description: string; kind: string; executable: string; argv: string[]; cwd: string; expectedPorts: string; devUrlPath: string; devUrlScheme: "http" | "https" };
+  const emptyDraft: TaskDraft = { name: "", description: "", kind: "run", executable: "", argv: [], cwd: "", expectedPorts: "", devUrlPath: "/", devUrlScheme: "http" };
+  const [draft, setDraft] = useState<TaskDraft>(emptyDraft);
   const [editor, setEditor] = useState<{ mode: "new" } | { mode: "edit"; taskId: string } | null>(null);
   const [savingTask, setSavingTask] = useState(false);
   const [consoleOpen, setConsoleOpen] = useState(false);
@@ -50,13 +51,13 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
   function openNewTask(event: MouseEvent<HTMLButtonElement>) {
     editorReturnFocusRef.current = event.currentTarget;
     const preferredExecutable = tasks.find((task) => task.inferred)?.executable ?? tasks[0]?.executable ?? "";
-    setDraft({ name: "", description: "", kind: "run", executable: preferredExecutable, argv: [], cwd: "" });
+    setDraft({ ...emptyDraft, executable: preferredExecutable });
     setEditor({ mode: "new" });
   }
 
   function openTaskEditor(task: ProjectDetail["tasks"][number], event: MouseEvent<HTMLButtonElement>) {
     editorReturnFocusRef.current = event.currentTarget;
-    setDraft({ name: task.name, description: task.description ?? "", kind: task.kind, executable: task.executable, argv: [...task.argv], cwd: task.cwd ?? "" });
+    setDraft({ name: task.name, description: task.description ?? "", kind: task.kind, executable: task.executable, argv: [...task.argv], cwd: task.cwd ?? "", expectedPorts: (task.expectedPorts ?? []).join(", "), devUrlPath: task.devUrlPath ?? "/", devUrlScheme: task.devUrlScheme === "https" ? "https" : "http" });
     setEditor({ mode: "edit", taskId: task.id });
   }
 
@@ -64,7 +65,7 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
     const returnFocus = editorReturnFocusRef.current;
     const editorCard = editorRef.current?.closest<HTMLElement>(".task-card");
     setEditor(null);
-    setDraft({ name: "", description: "", kind: "run", executable: "", argv: [], cwd: "" });
+    setDraft(emptyDraft);
     requestAnimationFrame(() => (editorCard?.querySelector<HTMLButtonElement>("[data-task-edit]") ?? returnFocus)?.focus());
   }
 
@@ -77,9 +78,18 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
     // contain spaces (for example, a message or a path) without reparsing a
     // shell-like string and accidentally changing the command semantics.
     const argv = [...draft.argv];
+    const portTokens = draft.expectedPorts.split(",").map((value) => value.trim()).filter(Boolean);
+    const expectedPorts = [...new Set(portTokens.map(Number))];
+    if (draft.kind === "dev" && expectedPorts.some((value) => !Number.isInteger(value) || value <= 0 || value > 65535)) {
+      notify("error", t("invalidExpectedPorts"));
+      return;
+    }
+    const runtimeMetadata = draft.kind === "dev"
+      ? { expectedPorts, devUrlPath: draft.devUrlPath.trim() || null, devUrlScheme: draft.devUrlScheme }
+      : { expectedPorts: [], devUrlPath: null, devUrlScheme: null };
     const next = editor.mode === "edit"
-      ? tasks.map((task) => task.id === editor.taskId ? { ...task, name, description: draft.description.trim() || null, kind: draft.kind, executable, argv, cwd: draft.cwd.trim() || null, inferred: false, shellMode: false } : task)
-      : [...tasks, { id: crypto.randomUUID(), name, description: draft.description.trim() || null, kind: draft.kind, executable, argv, cwd: draft.cwd.trim() || null, inferred: false, shellMode: false }];
+      ? tasks.map((task) => task.id === editor.taskId ? { ...task, name, description: draft.description.trim() || null, kind: draft.kind, executable, argv, cwd: draft.cwd.trim() || null, inferred: false, shellMode: false, ...runtimeMetadata } : task)
+      : [...tasks, { id: crypto.randomUUID(), name, description: draft.description.trim() || null, kind: draft.kind, executable, argv, cwd: draft.cwd.trim() || null, inferred: false, shellMode: false, ...runtimeMetadata }];
     setSavingTask(true);
     try {
       await onSaveTasks(next);
@@ -142,6 +152,11 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
              <span className="field-hint">{t("argumentHint")}</span>
            </div>
           <label className="field-group field-group-wide"><span>{t("workingDirectory")}</span><input value={draft.cwd} onChange={(event) => setDraft({ ...draft, cwd: event.target.value })} /></label>
+          {draft.kind === "dev" && <>
+            <label className="field-group"><span>{t("expectedPorts")}</span><input inputMode="numeric" value={draft.expectedPorts} placeholder="3000, 5173" onChange={(event) => setDraft({ ...draft, expectedPorts: event.target.value })} /><span className="field-hint">{t("expectedPortsHint")}</span></label>
+            <label className="field-group"><span>{t("devUrlScheme")}</span><select value={draft.devUrlScheme} onChange={(event) => setDraft({ ...draft, devUrlScheme: event.target.value as "http" | "https" })}><option value="http">http</option><option value="https">https</option></select></label>
+            <label className="field-group field-group-wide"><span>{t("devUrlPath")}</span><input value={draft.devUrlPath} placeholder="/" onChange={(event) => setDraft({ ...draft, devUrlPath: event.target.value })} /></label>
+          </>}
         </div>
         <div className="settings-actions">
           <Button type="submit" variant="primary" loading={savingTask} disabled={savingTask || !draft.name.trim() || !draft.executable.trim()}>{t("save")}</Button>

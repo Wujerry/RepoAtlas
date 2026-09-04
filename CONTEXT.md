@@ -1,6 +1,6 @@
 # RepoAtlas
 
-RepoAtlas is a local code asset control center. Its language distinguishes a local project asset from its repository lineage, discovered evidence, runnable tasks, and AI-maintained knowledge.
+RepoAtlas is a local code asset control center. Its language distinguishes a local project asset from its repository lineage, discovered evidence, runnable tasks, and external Agent integrations.
 
 ## Code assets
 
@@ -21,11 +21,11 @@ A constituent package or component within a project, especially inside a monorep
 _Avoid_: Subproject, nested project
 
 **Detected Fact**:
-Project knowledge backed by local evidence and carrying its source, confidence, and observation time.
+An observed project fact backed by local evidence and carrying its source, confidence, and observation time.
 _Avoid_: Guess, metadata
 
 **Unavailable Project**:
-A project whose known location cannot currently be accessed while its managed knowledge and history remain retained.
+A project whose known location cannot currently be accessed while its managed metadata and history remain retained.
 _Avoid_: Missing project, deleted project
 
 **Dependency Snapshot**:
@@ -40,9 +40,21 @@ _Avoid_: Tag, label
 A user-owned classification attached to a project for personal organization.
 _Avoid_: Facet, detected category
 
+**Project Collection**:
+A user-owned named set of Projects used for organization and filtering. Membership never changes Project identity or filesystem location.
+_Avoid_: Folder, Scan Root, workspace
+
+**Dashboard**:
+The default local overview derived from RepoAtlas records: Project and Project Collection state, recent Task Run results, and current Attention Items. It does not scan Projects or inspect their files when opened.
+_Avoid_: Analytics service, activity feed, AI summary
+
 **Recent Activity**:
 A user's latest meaningful interaction with a project through RepoAtlas, such as opening it, launching a tool, or running a task.
 _Avoid_: File modification, last commit
+
+**Project File View**:
+A desktop-only, read-only view of a Project's local directory tree and previewable files. It loads paths on demand, never follows symbolic links, and is not a code editor or MCP file API.
+_Avoid_: Workspace, file manager, editor
 
 ## Commands and safety
 
@@ -54,9 +66,17 @@ _Avoid_: Shell command, script
 One execution of a task definition, including its lifecycle, output, and result.
 _Avoid_: Command, process
 
+**Runtime Observation**:
+A live, bounded observation of one Task Run's process tree, CPU, memory, listening ports, and local development endpoints.
+_Avoid_: Profiler, telemetry upload, background watcher
+
+**Attention Item**:
+A derived, actionable local condition such as a Pending Approval, failed Task Run, Unavailable Project, or environment mismatch. Acknowledgement applies only to that condition version.
+_Avoid_: Notification feed, audit log
+
 **Task Proposal**:
 A non-executable suggestion for a task or operation that requires policy evaluation and, when necessary, user approval.
-_Avoid_: AI command, pending task
+_Avoid_: Agent command, pending task
 
 **Approval**:
 An explicit, scoped user authorization for one operation or a defined class of operations.
@@ -74,32 +94,16 @@ _Avoid_: Command log, task output
 A user-configurable integration that opens a project in an IDE, terminal, or filesystem browser.
 _Avoid_: Task, command
 
-## AI knowledge
+## Agent integration
 
-**AI Summary**:
-A regenerable description derived from a particular snapshot of a project's evidence.
-_Avoid_: AI Memory, project description
+**Project Brief**:
+A structured local view of a Project's detected facts, environment, tasks, recent runs, and recent activity.
+_Avoid_: AI Summary, README replacement
 
-**AI Memory**:
-User-controlled, persistent project knowledge that remains independent of regenerated summaries and detected facts.
-_Avoid_: AI Summary, chat history
+**External Agent**:
+An installed third-party coding agent opened at a Project's location. The Agent owns its model, account, provider configuration, and conversation.
+_Avoid_: built-in assistant, RepoAtlas model
 
-**Analysis Plan**:
-A reviewable selection of project evidence proposed for an AI analysis request.
-_Avoid_: Prompt, context dump
-
-**Provider Profile**:
-A reusable connection to one AI service, including its protocol, endpoint, encrypted API key, and available models.
-_Avoid_: Model, environment variable
-
-**Provider Preset**:
-A maintained template that supplies known defaults for creating a provider profile without owning the resulting profile.
-_Avoid_: Provider, hard-coded provider
-
-**Analysis Snapshot**:
-A reproducible AI result associated with the selected evidence, provider profile, model, and project state from which it was generated.
-_Avoid_: AI Memory, live project state
-
-**Project Conversation**:
-A locally retained AI question-and-answer history associated with one project and independently removable from AI Memory.
-_Avoid_: AI Memory, global chat
+**Agent Request**:
+A typed request received through RepoAtlas MCP. Record-management requests follow MCP policy; protected execution becomes a Pending Approval in the desktop app.
+_Avoid_: direct execution, chat message

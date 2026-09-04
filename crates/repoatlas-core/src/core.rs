@@ -4,10 +4,12 @@ use crate::environment;
 use crate::error::{Error, Result};
 use crate::git;
 use crate::models::{
-    AppSettings, AtlasReport, AuditEvent, CheckoutLineage, GitCommandResult, GitDiff, GitOp,
-    GitStatus, LineageCheckout, ProjectDetail, ProjectEvent, ProjectPatch, ProjectQuery,
-    ProjectRemoval, ProjectSummary, ReadmeDocument, ScanProgress, ScanResult, ScanRoot,
-    ScanRootRemoval, SearchHit, StartHereTask, TaskDefinition,
+    AppSettings, AtlasReport, AttentionItem, AuditEvent, CheckoutLineage, CollectionUpsert,
+    DashboardCollectionSummary, DashboardProjectItem, DashboardSnapshot, DashboardTaskRunItem,
+    DashboardTaskRunStats, DashboardTaskRunSummary, GitCommandResult, GitDiff, GitOp, GitSnapshot,
+    GitStatus, LineageCheckout, PendingApproval, ProjectBrief, ProjectCollection, ProjectDetail,
+    ProjectEvent, ProjectPatch, ProjectQuery, ProjectRemoval, ProjectSummary, ReadmeDocument,
+    ScanProgress, ScanResult, ScanRoot, ScanRootRemoval, SearchHit, StartHereTask, TaskDefinition,
 };
 use crate::paths;
 use crate::scan::{path_exists, ScanEngine};
@@ -297,6 +299,11 @@ impl Core {
     }
 
     pub fn list_projects(&self, query: ProjectQuery) -> Result<Vec<ProjectSummary>> {
+        let collection_ids = query
+            .collection_id
+            .as_deref()
+            .map(|id| self.collection_project_ids(id))
+            .transpose()?;
         if let Some(search) = query
             .search
             .as_ref()
@@ -304,17 +311,237 @@ impl Core {
             .filter(|value| !value.is_empty())
         {
             return Ok(self
-                .search_projects(search, 200)?
+                .search_projects(search, 5_000)?
                 .into_iter()
                 .map(|hit| hit.project)
+                .filter(|project| {
+                    collection_ids
+                        .as_ref()
+                        .is_none_or(|ids| ids.contains(&project.id))
+                })
                 .filter(|project| self.matches_section(project, &query))
+                .take(query.limit.unwrap_or(200).clamp(1, 5_000))
                 .collect());
         }
-        Ok(self
-            .load_projects()?
-            .into_iter()
-            .filter(|project| self.matches_section(project, &query))
-            .collect())
+        self.load_projects_for_query(&query)
+    }
+
+    pub fn list_collections(&self) -> Result<Vec<ProjectCollection>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT c.id, c.name, c.description, COUNT(m.project_id), c.created_at, c.updated_at
+             FROM project_collections c
+             LEFT JOIN project_collection_members m ON m.collection_id = c.id
+             GROUP BY c.id
+             ORDER BY lower(c.name), c.id",
+        )?;
+        let collections = stmt
+            .query_map([], |row| {
+                Ok(ProjectCollection {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    description: row.get(2)?,
+                    project_count: row.get::<_, i64>(3)? as usize,
+                    created_at: row.get(4)?,
+                    updated_at: row.get(5)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(collections)
+    }
+
+    pub fn create_collection_with_origin(
+        &self,
+        upsert: CollectionUpsert,
+        origin: &str,
+    ) -> Result<ProjectCollection> {
+        let (name, description) = validate_collection(upsert)?;
+        let id = Uuid::new_v4().to_string();
+        let timestamp = now();
+        self.with_immediate_transaction(|core| {
+            core.conn.execute(
+                "INSERT INTO project_collections (id, name, description, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)",
+                params![id, name, description, timestamp],
+            ).map_err(map_collection_constraint)?;
+            core.record_audit_event(origin, "create_collection", "collection", Some(&id), None, "success")?;
+            core.get_collection(&id)
+        })
+    }
+
+    pub fn update_collection_with_origin(
+        &self,
+        id: &str,
+        upsert: CollectionUpsert,
+        origin: &str,
+    ) -> Result<ProjectCollection> {
+        let (name, description) = validate_collection(upsert)?;
+        self.with_immediate_transaction(|core| {
+            let changed = core.conn.execute(
+                "UPDATE project_collections SET name = ?1, description = ?2, updated_at = ?3 WHERE id = ?4",
+                params![name, description, now(), id],
+            ).map_err(map_collection_constraint)?;
+            if changed == 0 { return Err(Error::NotFound(id.into())); }
+            core.record_audit_event(origin, "update_collection", "collection", Some(id), None, "success")?;
+            core.get_collection(id)
+        })
+    }
+
+    pub fn delete_collection_with_origin(&self, id: &str, origin: &str) -> Result<()> {
+        self.with_immediate_transaction(|core| {
+            let changed = core
+                .conn
+                .execute("DELETE FROM project_collections WHERE id = ?1", [id])?;
+            if changed == 0 {
+                return Err(Error::NotFound(id.into()));
+            }
+            core.record_audit_event(
+                origin,
+                "delete_collection",
+                "collection",
+                Some(id),
+                Some("collection record only; project directories unchanged"),
+                "success",
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn set_collection_members_with_origin(
+        &self,
+        id: &str,
+        project_ids: &[String],
+        origin: &str,
+    ) -> Result<ProjectCollection> {
+        let unique = project_ids.iter().cloned().collect::<HashSet<_>>();
+        self.with_immediate_transaction(|core| {
+            core.get_collection(id)?;
+            core.ensure_projects_exist(&unique)?;
+            let timestamp = now();
+            core.replace_collection_members(id, &unique, &timestamp)?;
+            core.conn.execute(
+                "UPDATE project_collections SET updated_at = ?1 WHERE id = ?2",
+                params![now(), id],
+            )?;
+            core.record_audit_event(
+                origin,
+                "set_collection_members",
+                "collection",
+                Some(id),
+                Some(&format!("{} projects", project_ids.len())),
+                "success",
+            )?;
+            core.get_collection(id)
+        })
+    }
+
+    pub fn collection_member_ids(&self, id: &str) -> Result<Vec<String>> {
+        self.get_collection(id)?;
+        let mut stmt = self.conn.prepare(
+            "SELECT project_id FROM project_collection_members WHERE collection_id = ?1 ORDER BY created_at, project_id",
+        )?;
+        let project_ids = stmt
+            .query_map([id], |row| row.get(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(project_ids)
+    }
+
+    pub fn save_collection_with_members_with_origin(
+        &self,
+        id: Option<&str>,
+        upsert: CollectionUpsert,
+        project_ids: &[String],
+        origin: &str,
+    ) -> Result<ProjectCollection> {
+        let (name, description) = validate_collection(upsert)?;
+        let collection_id = id
+            .map(str::to_string)
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
+        let unique = project_ids.iter().cloned().collect::<HashSet<_>>();
+        self.with_immediate_transaction(|core| {
+            core.ensure_projects_exist(&unique)?;
+            let timestamp = now();
+            if id.is_some() {
+                let changed = core.conn.execute(
+                    "UPDATE project_collections SET name = ?1, description = ?2, updated_at = ?3 WHERE id = ?4",
+                    params![name, description, timestamp, collection_id],
+                ).map_err(map_collection_constraint)?;
+                if changed == 0 { return Err(Error::NotFound(collection_id.clone())); }
+            } else {
+                core.conn.execute(
+                    "INSERT INTO project_collections (id, name, description, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)",
+                    params![collection_id, name, description, timestamp],
+                ).map_err(map_collection_constraint)?;
+            }
+            core.replace_collection_members(&collection_id, &unique, &timestamp)?;
+            core.record_audit_event(origin, "save_collection", "collection", Some(&collection_id), Some(&format!("{} projects", unique.len())), "success")?;
+            core.get_collection(&collection_id)
+        })
+    }
+
+    fn get_collection(&self, id: &str) -> Result<ProjectCollection> {
+        self.conn.query_row(
+            "SELECT c.id, c.name, c.description, COUNT(m.project_id), c.created_at, c.updated_at
+             FROM project_collections c LEFT JOIN project_collection_members m ON m.collection_id = c.id
+             WHERE c.id = ?1 GROUP BY c.id",
+            [id],
+            |row| Ok(ProjectCollection { id: row.get(0)?, name: row.get(1)?, description: row.get(2)?, project_count: row.get::<_, i64>(3)? as usize, created_at: row.get(4)?, updated_at: row.get(5)? }),
+        ).optional()?.ok_or_else(|| Error::NotFound(id.into()))
+    }
+
+    fn collection_project_ids(&self, id: &str) -> Result<HashSet<String>> {
+        Ok(self.collection_member_ids(id)?.into_iter().collect())
+    }
+
+    fn ensure_projects_exist(&self, project_ids: &HashSet<String>) -> Result<()> {
+        let mut found = HashSet::with_capacity(project_ids.len());
+        let ids = project_ids.iter().collect::<Vec<_>>();
+        for chunk in ids.chunks(500) {
+            let placeholders = (1..=chunk.len())
+                .map(|index| format!("?{index}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let mut stmt = self.conn.prepare(&format!(
+                "SELECT id FROM projects WHERE id IN ({placeholders})"
+            ))?;
+            let rows = stmt
+                .query_map(rusqlite::params_from_iter(chunk.iter().copied()), |row| {
+                    row.get::<_, String>(0)
+                })?;
+            found.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
+        }
+        if let Some(missing) = project_ids.iter().find(|id| !found.contains(*id)) {
+            return Err(Error::NotFound(missing.clone()));
+        }
+        Ok(())
+    }
+
+    fn replace_collection_members(
+        &self,
+        collection_id: &str,
+        desired: &HashSet<String>,
+        timestamp: &str,
+    ) -> Result<()> {
+        let existing = {
+            let mut stmt = self.conn.prepare(
+                "SELECT project_id FROM project_collection_members WHERE collection_id = ?1",
+            )?;
+            let rows = stmt
+                .query_map([collection_id], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<HashSet<_>>>()?;
+            rows
+        };
+        let mut remove = self.conn.prepare(
+            "DELETE FROM project_collection_members WHERE collection_id = ?1 AND project_id = ?2",
+        )?;
+        for project_id in existing.difference(desired) {
+            remove.execute(params![collection_id, project_id])?;
+        }
+        let mut insert = self.conn.prepare(
+            "INSERT OR IGNORE INTO project_collection_members (collection_id, project_id, created_at) VALUES (?1, ?2, ?3)",
+        )?;
+        for project_id in desired.difference(&existing) {
+            insert.execute(params![collection_id, project_id, timestamp])?;
+        }
+        Ok(())
     }
 
     pub fn search_projects(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>> {
@@ -395,10 +622,37 @@ impl Core {
         Ok(detail)
     }
 
+    pub fn task_for_start(
+        &self,
+        project_id: &str,
+        task_id: &str,
+    ) -> Result<(String, TaskDefinition)> {
+        let (canonical_path, tasks_json) = self
+            .conn
+            .query_row(
+                "SELECT canonical_path, tasks_json FROM projects WHERE id = ?1",
+                [project_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?
+            .ok_or_else(|| Error::NotFound(project_id.into()))?;
+        let task = from_json::<Vec<TaskDefinition>>(tasks_json)?
+            .into_iter()
+            .find(|task| task.id == task_id)
+            .ok_or_else(|| Error::NotFound(task_id.into()))?;
+        Ok((canonical_path, task))
+    }
+
     pub fn read_project_readme(&self, project_id: &str) -> Result<ReadmeDocument> {
-        let detail = self.get_project(project_id)?;
-        let relative = detail
-            .readme_path
+        let relative = self
+            .conn
+            .query_row(
+                "SELECT readme_path FROM projects WHERE id = ?1",
+                [project_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .ok_or_else(|| Error::NotFound(project_id.into()))?
             .ok_or_else(|| Error::msg("README not found"))?;
         self.read_project_document(project_id, &relative)
     }
@@ -409,7 +663,7 @@ impl Core {
         relative_path: &str,
     ) -> Result<ReadmeDocument> {
         const MAX_DOCUMENT_BYTES: usize = 1024 * 1024;
-        let detail = self.get_project(project_id)?;
+        let project_root = self.project_path(project_id)?;
         let relative = Path::new(relative_path);
         if relative.is_absolute()
             || relative
@@ -442,10 +696,7 @@ impl Core {
         {
             return Err(Error::msg("unsupported project document"));
         }
-        let file = environment::open_regular_project_file(
-            Path::new(&detail.project.canonical_path),
-            relative,
-        )?;
+        let file = environment::open_regular_project_file(&project_root, relative)?;
         let mut bytes = Vec::with_capacity(MAX_DOCUMENT_BYTES + 1);
         file.take((MAX_DOCUMENT_BYTES + 1) as u64)
             .read_to_end(&mut bytes)?;
@@ -463,7 +714,71 @@ impl Core {
         project_id: &str,
     ) -> Result<crate::models::EnvironmentInspection> {
         let detail = self.get_project(project_id)?;
-        Ok(environment::inspect_environment(&detail))
+        let inspection = environment::inspect_environment(&detail);
+        self.persist_environment_observation(&inspection)?;
+        Ok(inspection)
+    }
+
+    pub fn record_environment_inspection(
+        &self,
+        inspection: &crate::models::EnvironmentInspection,
+    ) -> Result<()> {
+        self.persist_environment_observation(inspection)
+    }
+
+    pub fn get_project_brief(&self, project_id: &str) -> Result<ProjectBrief> {
+        let detail = self.get_project(project_id)?;
+        let environment = environment::inspect_environment(&detail);
+        let mut recent_runs = self.list_task_runs(project_id)?;
+        recent_runs.truncate(10);
+        let recent_activity = self.list_project_events(project_id, 12)?;
+        Ok(ProjectBrief {
+            project: detail.project,
+            facts: detail.facts,
+            environment,
+            git: detail.git,
+            readme_path: detail.readme_path,
+            project_files: detail.project_files,
+            start_here: detail.start_here,
+            tasks: detail.tasks,
+            recent_runs,
+            recent_activity,
+        })
+    }
+
+    fn persist_environment_observation(
+        &self,
+        inspection: &crate::models::EnvironmentInspection,
+    ) -> Result<()> {
+        let inspection_json = serde_json::to_string(inspection).map_err(|error| {
+            Error::msg(format!(
+                "could not serialize environment inspection: {error}"
+            ))
+        })?;
+        let mut conditions = inspection
+            .runtimes
+            .iter()
+            .filter(|runtime| matches!(runtime.match_state.as_str(), "mismatch" | "missing"))
+            .map(|runtime| {
+                format!(
+                    "{}:{}:{}:{}:{}:{}",
+                    runtime.ecosystem,
+                    runtime.label,
+                    runtime.constraint.as_deref().unwrap_or_default(),
+                    runtime.source.as_deref().unwrap_or_default(),
+                    runtime.local_version.as_deref().unwrap_or_default(),
+                    runtime.match_state
+                )
+            })
+            .collect::<Vec<_>>();
+        conditions.sort();
+        let condition_version = stable_fingerprint(&conditions.join("\n"));
+        self.conn.execute(
+            "INSERT INTO environment_observations (project_id, inspection_json, observed_at, condition_version) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(project_id) DO UPDATE SET inspection_json = excluded.inspection_json, observed_at = excluded.observed_at, condition_version = excluded.condition_version",
+            params![inspection.project_id, inspection_json, now(), condition_version],
+        )?;
+        Ok(())
     }
 
     pub fn read_project_icons(
@@ -785,25 +1100,30 @@ impl Core {
         };
         let favorite = patch.favorite.unwrap_or(existing.project.favorite);
         let archived = patch.archived.unwrap_or(existing.project.archived);
-        if let Some(tasks) = patch.tasks.as_ref() {
-            let mut ids = HashSet::with_capacity(tasks.len());
-            for task in tasks {
-                if task.id.trim().is_empty()
-                    || task.name.trim().is_empty()
-                    || task.executable.trim().is_empty()
-                {
-                    return Err(Error::msg(
-                        "each task requires a unique id, name, and executable",
-                    ));
+        let tasks = patch
+            .tasks
+            .map(|mut tasks| -> Result<Vec<TaskDefinition>> {
+                let mut ids = HashSet::with_capacity(tasks.len());
+                for task in &mut tasks {
+                    if task.id.trim().is_empty()
+                        || task.name.trim().is_empty()
+                        || task.executable.trim().is_empty()
+                    {
+                        return Err(Error::msg(
+                            "each task requires a unique id, name, and executable",
+                        ));
+                    }
+                    if task.shell_mode {
+                        return Err(Error::msg("shell-mode tasks are not enabled"));
+                    }
+                    if !ids.insert(task.id.clone()) {
+                        return Err(Error::msg("task ids must be unique"));
+                    }
+                    normalize_task_runtime_metadata(task)?;
                 }
-                if task.shell_mode {
-                    return Err(Error::msg("shell-mode tasks are not enabled"));
-                }
-                if !ids.insert(task.id.as_str()) {
-                    return Err(Error::msg("task ids must be unique"));
-                }
-            }
-        }
+                Ok(tasks)
+            })
+            .transpose()?;
         self.conn.execute(
             "UPDATE projects SET display_name = ?1, notes = ?2, description = ?3, favorite = ?4, archived = ?5, updated_at = ?6 WHERE id = ?7",
             params![display_name, notes, description, favorite as i64, archived as i64, now(), id],
@@ -811,7 +1131,7 @@ impl Core {
         if let Some(tags) = patch.tags {
             self.replace_tags(id, &tags)?;
         }
-        if let Some(tasks) = patch.tasks {
+        if let Some(tasks) = tasks {
             self.conn.execute(
                 "UPDATE projects SET tasks_json = ?1, updated_at = ?2 WHERE id = ?3",
                 params![to_json(&tasks)?, now(), id],
@@ -853,7 +1173,7 @@ impl Core {
         })
     }
 
-    fn add_task_inner(&self, project_id: &str, task: TaskDefinition) -> Result<ProjectDetail> {
+    fn add_task_inner(&self, project_id: &str, mut task: TaskDefinition) -> Result<ProjectDetail> {
         let mut detail = self.get_project(project_id)?;
         if task.shell_mode {
             return Err(Error::msg("shell-mode tasks are not enabled"));
@@ -864,6 +1184,7 @@ impl Core {
         if task.executable.trim().is_empty() {
             return Err(Error::msg("task executable is required"));
         }
+        normalize_task_runtime_metadata(&mut task)?;
         let mut next = task;
         if next.id.trim().is_empty() {
             next.id = uuid::Uuid::new_v4().to_string();
@@ -935,6 +1256,7 @@ impl Core {
         if task.name.trim().is_empty() || task.executable.trim().is_empty() {
             return Err(Error::msg("task name and executable are required"));
         }
+        normalize_task_runtime_metadata(&mut task)?;
         if !detail.tasks.iter().any(|existing| existing.id == task_id) {
             return Err(Error::NotFound(task_id.into()));
         }
@@ -1431,11 +1753,29 @@ impl Core {
         discovered: &[crate::scan::DiscoveredProject],
         cancelled: bool,
     ) -> Result<u64> {
-        let mut found_ids = Vec::new();
+        let mut found_ids = HashSet::new();
         for item in discovered {
-            let summary = self.upsert_project(&item.path, Some(root_id), "scan")?;
-            found_ids.push(summary.id);
+            found_ids.insert(self.ingest_scan_project(root_id, item)?);
         }
+        self.finalize_scan_ingest(root_id, &found_ids, cancelled)
+    }
+
+    pub fn ingest_scan_project(
+        &self,
+        root_id: &str,
+        discovered: &crate::scan::DiscoveredProject,
+    ) -> Result<String> {
+        Ok(self
+            .upsert_project(&discovered.path, Some(root_id), "scan")?
+            .id)
+    }
+
+    pub fn finalize_scan_ingest(
+        &self,
+        root_id: &str,
+        found_ids: &HashSet<String>,
+        cancelled: bool,
+    ) -> Result<u64> {
         if !cancelled {
             let existing: Vec<(String, String)> = {
                 let mut stmt = self
@@ -1458,7 +1798,7 @@ impl Core {
                 "UPDATE scan_roots SET last_scanned_at = ?1 WHERE id = ?2",
                 params![now(), root_id],
             )?;
-            for id in &found_ids {
+            for id in found_ids {
                 self.record_project_event(id, "scan", "Scan refreshed project", Some(root_id))?;
             }
         }
@@ -1493,47 +1833,16 @@ impl Core {
             current_path: Some(root.path.clone()),
             message: None,
         });
-        let (discovered, visited, errors, cancelled) = engine.walk()?;
-        let mut found_ids = Vec::new();
+        let (discovered, visited, errors, walk_cancelled) = engine.walk()?;
+        let mut found_ids = HashSet::new();
         for item in &discovered {
-            let summary = self.upsert_project(&item.path, Some(root_id), "scan")?;
-            found_ids.push(summary.id);
-        }
-        if !cancelled {
-            let existing: Vec<(String, String)> = {
-                let mut stmt = self
-                    .conn
-                    .prepare("SELECT id, canonical_path FROM projects WHERE scan_root_id = ?1")?;
-                let rows = stmt
-                    .query_map(params![root_id], |row| Ok((row.get(0)?, row.get(1)?)))?
-                    .collect::<rusqlite::Result<Vec<_>>>()?;
-                rows
-            };
-            for (id, path) in existing {
-                if !found_ids.contains(&id) && !PathBuf::from(&path).exists() {
-                    self.conn.execute(
-                        "UPDATE projects SET availability = 'unavailable', updated_at = ?1 WHERE id = ?2",
-                        params![now(), id],
-                    )?;
-                }
+            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                break;
             }
-            self.conn.execute(
-                "UPDATE scan_roots SET last_scanned_at = ?1 WHERE id = ?2",
-                params![now(), root_id],
-            )?;
-            // Keep the activity timeline useful after a full scan.  A scan can
-            // discover many projects, but the event is still scoped to the
-            // project record so the overview can render it without any
-            // additional root-level join.
-            for id in &found_ids {
-                self.record_project_event(id, "scan", "Scan refreshed project", Some(root_id))?;
-            }
+            found_ids.insert(self.ingest_scan_project(root_id, item)?);
         }
-        let unavailable: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM projects WHERE scan_root_id = ?1 AND availability = 'unavailable'",
-            params![root_id],
-            |row| row.get(0),
-        )?;
+        let cancelled = walk_cancelled || cancel.load(std::sync::atomic::Ordering::Relaxed);
+        let unavailable = self.finalize_scan_ingest(root_id, &found_ids, cancelled)?;
         on_progress(ScanProgress {
             scan_id: scan_id.clone(),
             root_path: root.path.clone(),
@@ -1547,7 +1856,7 @@ impl Core {
             scan_id,
             visited,
             discovered: discovered.len() as u64,
-            unavailable: unavailable as u64,
+            unavailable,
             cancelled,
             errors,
         })
@@ -1606,155 +1915,6 @@ impl Core {
             }
         }
         crate::broker::read_log(&run, 200_000)
-    }
-
-    pub fn list_provider_profiles(&self) -> Result<Vec<crate::models::ProviderProfile>> {
-        crate::ai::list_profiles(&self.conn)
-    }
-
-    pub fn upsert_provider_profile(
-        &self,
-        upsert: crate::models::ProviderUpsert,
-    ) -> Result<crate::models::ProviderProfile> {
-        crate::ai::upsert_profile(&self.conn, upsert)
-    }
-
-    pub fn delete_provider_profile(&self, id: &str) -> Result<()> {
-        crate::ai::delete_profile(&self.conn, id)
-    }
-
-    pub fn get_provider_profile(&self, id: &str) -> Result<crate::models::ProviderProfile> {
-        crate::ai::get_profile(&self.conn, id)
-    }
-
-    pub fn provider_presets(&self) -> Vec<crate::models::ProviderPreset> {
-        crate::ai::presets::all()
-    }
-
-    pub fn list_memory(&self, project_id: &str) -> Result<Vec<crate::models::AiMemoryItem>> {
-        crate::ai::list_memory(&self.conn, project_id)
-    }
-
-    pub fn add_memory(&self, project_id: &str, text: &str) -> Result<crate::models::AiMemoryItem> {
-        self.get_project(project_id)?;
-        crate::ai::add_memory(&self.conn, project_id, text)
-    }
-
-    pub fn add_memory_with_origin(
-        &self,
-        project_id: &str,
-        text: &str,
-        origin: &str,
-    ) -> Result<crate::models::AiMemoryItem> {
-        let origin = origin.to_owned();
-        self.with_immediate_transaction(|core| {
-            let item = core.add_memory(project_id, text)?;
-            core.record_audit_event(
-                &origin,
-                "add_memory",
-                "memory",
-                Some(&item.id),
-                Some(project_id),
-                "success",
-            )?;
-            Ok(item)
-        })
-    }
-
-    pub fn delete_memory(&self, id: &str) -> Result<()> {
-        self.delete_memory_inner(id)
-    }
-
-    pub fn delete_memory_with_origin(&self, id: &str, origin: &str) -> Result<()> {
-        let origin = origin.to_owned();
-        self.with_immediate_transaction(|core| {
-            core.delete_memory_inner(id)?;
-            core.record_audit_event(
-                &origin,
-                "delete_memory",
-                "memory",
-                Some(id),
-                None,
-                "success",
-            )?;
-            Ok(())
-        })
-    }
-
-    fn delete_memory_inner(&self, id: &str) -> Result<()> {
-        let deleted = self
-            .conn
-            .execute("DELETE FROM ai_memory WHERE id = ?1", params![id])?;
-        if deleted == 0 {
-            return Err(Error::NotFound(id.into()));
-        }
-        Ok(())
-    }
-
-    pub fn latest_summary(&self, project_id: &str) -> Result<Option<crate::models::AiSummary>> {
-        crate::ai::latest_summary(&self.conn, project_id)
-    }
-
-    pub fn list_summaries(&self, project_id: &str) -> Result<Vec<crate::models::AiSummary>> {
-        crate::ai::list_summaries(&self.conn, project_id)
-    }
-
-    pub fn get_summary(&self, summary_id: &str) -> Result<crate::models::AiSummary> {
-        crate::ai::get_summary(&self.conn, summary_id)
-    }
-
-    pub fn delete_summary(&self, summary_id: &str) -> Result<()> {
-        self.delete_summary_inner(summary_id)
-    }
-
-    pub fn delete_summary_with_origin(&self, summary_id: &str, origin: &str) -> Result<()> {
-        let origin = origin.to_owned();
-        self.with_immediate_transaction(|core| {
-            let summary = core.get_summary(summary_id)?;
-            core.delete_summary_inner(summary_id)?;
-            core.record_audit_event(
-                &origin,
-                "delete_summary",
-                "summary",
-                Some(summary_id),
-                Some(&summary.project_id),
-                "success",
-            )?;
-            Ok(())
-        })
-    }
-
-    fn delete_summary_inner(&self, summary_id: &str) -> Result<()> {
-        crate::ai::delete_summary(&self.conn, summary_id)
-    }
-
-    pub fn accept_summary_as_memory(
-        &self,
-        summary_id: &str,
-    ) -> Result<crate::models::AiMemoryItem> {
-        let summary = self.get_summary(summary_id)?;
-        self.add_memory(&summary.project_id, &summary.text)
-    }
-
-    pub fn accept_summary_as_memory_with_origin(
-        &self,
-        summary_id: &str,
-        origin: &str,
-    ) -> Result<crate::models::AiMemoryItem> {
-        let origin = origin.to_owned();
-        self.with_immediate_transaction(|core| {
-            let summary = core.get_summary(summary_id)?;
-            let item = core.add_memory(&summary.project_id, &summary.text)?;
-            core.record_audit_event(
-                &origin,
-                "accept_summary_memory",
-                "memory",
-                Some(&item.id),
-                Some(summary_id),
-                "success",
-            )?;
-            Ok(item)
-        })
     }
 
     pub fn record_project_event(
@@ -1847,6 +2007,495 @@ impl Core {
             .map_err(Into::into)
     }
 
+    pub fn list_attention_items(&self) -> Result<Vec<AttentionItem>> {
+        let approvals = self.list_pending_approvals()?;
+        self.list_attention_items_with_approvals(&approvals)
+    }
+
+    pub fn attention_center(&self) -> Result<crate::models::AttentionCenterState> {
+        let approvals = self.list_pending_approvals()?;
+        let items = self.list_attention_items_with_approvals(&approvals)?;
+        Ok(crate::models::AttentionCenterState { approvals, items })
+    }
+
+    pub fn dashboard_snapshot(&self) -> Result<DashboardSnapshot> {
+        const RECENT_PROJECT_LIMIT: usize = 6;
+        const RECENT_RUN_LIMIT: usize = 8;
+        const ATTENTION_PREVIEW_LIMIT: usize = 3;
+
+        let (project_count, available_project_count, unavailable_project_count) =
+            self.conn.query_row(
+                "SELECT COUNT(*),
+                    COALESCE(SUM(CASE WHEN availability = 'ready' THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN availability = 'unavailable' THEN 1 ELSE 0 END), 0)
+             FROM projects WHERE archived = 0",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
+            )?;
+
+        let attention_items = self.list_attention_items()?;
+        let active_runs = self.list_active_task_runs()?;
+        let recent_runs = crate::broker::list_dashboard_runs(&self.conn, RECENT_RUN_LIMIT)?;
+        let seven_day_runs = self.dashboard_task_run_stats()?;
+        let collections = self.dashboard_collection_summaries(&active_runs, &attention_items)?;
+        let recent_projects = self.dashboard_recent_projects(RECENT_PROJECT_LIMIT)?;
+
+        let run_project_ids = recent_runs
+            .iter()
+            .map(|run| run.project_id.clone())
+            .collect::<Vec<_>>();
+        let project_names = self.load_projects_by_ids(&run_project_ids)?;
+        let recent_runs = recent_runs
+            .into_iter()
+            .map(|run| DashboardTaskRunItem {
+                project_name: project_names
+                    .get(&run.project_id)
+                    .map(|project| project.display_name.clone())
+                    .unwrap_or_else(|| run.project_id.clone()),
+                run,
+            })
+            .collect();
+
+        Ok(DashboardSnapshot {
+            generated_at: now(),
+            project_count: project_count as usize,
+            available_project_count: available_project_count as usize,
+            unavailable_project_count: unavailable_project_count as usize,
+            collection_count: collections.len(),
+            active_run_count: active_runs.len(),
+            attention_count: attention_items.len(),
+            seven_day_runs,
+            collections,
+            recent_projects,
+            recent_runs,
+            attention_preview: attention_items
+                .into_iter()
+                .take(ATTENTION_PREVIEW_LIMIT)
+                .collect(),
+        })
+    }
+
+    fn dashboard_task_run_stats(&self) -> Result<DashboardTaskRunStats> {
+        let mut stats = DashboardTaskRunStats::default();
+        let mut stmt = self.conn.prepare(
+            "SELECT status, COUNT(*) FROM task_runs
+             WHERE status IN ('succeeded', 'failed', 'cancelled')
+               AND datetime(COALESCE(finished_at, started_at)) >= datetime('now', '-7 days')
+             GROUP BY status",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as usize))
+        })?;
+        for row in rows {
+            let (status, count) = row?;
+            match status.as_str() {
+                "succeeded" => stats.succeeded = count,
+                "failed" => stats.failed = count,
+                "cancelled" => stats.cancelled = count,
+                _ => {}
+            }
+        }
+        stats.total = stats.succeeded + stats.failed + stats.cancelled;
+        Ok(stats)
+    }
+
+    fn dashboard_collection_summaries(
+        &self,
+        active_runs: &[crate::models::TaskRun],
+        attention_items: &[AttentionItem],
+    ) -> Result<Vec<DashboardCollectionSummary>> {
+        let collections = self.list_collections()?;
+        if collections.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut memberships = HashMap::<String, Vec<String>>::new();
+        let mut counts = HashMap::<String, (usize, usize)>::new();
+        let mut stmt = self.conn.prepare(
+            "SELECT m.collection_id, m.project_id, p.archived
+             FROM project_collection_members m
+             JOIN projects p ON p.id = m.project_id",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)? != 0,
+            ))
+        })?;
+        for row in rows {
+            let (collection_id, project_id, archived) = row?;
+            memberships
+                .entry(project_id)
+                .or_default()
+                .push(collection_id.clone());
+            let entry = counts.entry(collection_id).or_default();
+            if archived {
+                entry.1 += 1;
+            } else {
+                entry.0 += 1;
+            }
+        }
+
+        let mut active_counts = HashMap::<String, usize>::new();
+        for run in active_runs {
+            if let Some(collection_ids) = memberships.get(&run.project_id) {
+                for collection_id in collection_ids {
+                    *active_counts.entry(collection_id.clone()).or_default() += 1;
+                }
+            }
+        }
+        let mut attention_counts = HashMap::<String, usize>::new();
+        for item in attention_items {
+            let Some(project_id) = item.project_id.as_ref() else {
+                continue;
+            };
+            if let Some(collection_ids) = memberships.get(project_id) {
+                for collection_id in collection_ids {
+                    *attention_counts.entry(collection_id.clone()).or_default() += 1;
+                }
+            }
+        }
+
+        let mut last_activity = HashMap::<String, String>::new();
+        let mut activity_stmt = self.conn.prepare(
+            "WITH activity(project_id, occurred_at) AS (
+                SELECT id, last_opened_at FROM projects WHERE last_opened_at IS NOT NULL
+                UNION ALL
+                SELECT project_id, created_at FROM project_events
+                UNION ALL
+                SELECT project_id, started_at FROM task_runs
+             )
+             SELECT m.collection_id, MAX(activity.occurred_at)
+             FROM project_collection_members m
+             JOIN activity ON activity.project_id = m.project_id
+             GROUP BY m.collection_id",
+        )?;
+        let activity_rows = activity_stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        for row in activity_rows {
+            let (collection_id, occurred_at) = row?;
+            last_activity.insert(collection_id, occurred_at);
+        }
+
+        Ok(collections
+            .into_iter()
+            .map(|collection| {
+                let (project_count, archived_project_count) =
+                    counts.get(&collection.id).copied().unwrap_or_default();
+                DashboardCollectionSummary {
+                    active_run_count: active_counts.get(&collection.id).copied().unwrap_or(0),
+                    attention_count: attention_counts.get(&collection.id).copied().unwrap_or(0),
+                    last_activity_at: last_activity.remove(&collection.id),
+                    project_count,
+                    archived_project_count,
+                    id: collection.id,
+                    name: collection.name,
+                    description: collection.description,
+                }
+            })
+            .collect())
+    }
+
+    fn dashboard_recent_projects(&self, limit: usize) -> Result<Vec<DashboardProjectItem>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id FROM projects
+             WHERE archived = 0 AND last_opened_at IS NOT NULL
+             ORDER BY datetime(last_opened_at) DESC, lower(display_name), id
+             LIMIT ?1",
+        )?;
+        let project_ids = stmt
+            .query_map([limit.clamp(1, 50) as i64], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        if project_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut projects = self.load_projects_by_ids(&project_ids)?;
+        let placeholders = (1..=project_ids.len())
+            .map(|index| format!("?{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let mut git = HashMap::<String, GitSnapshot>::new();
+        let mut git_stmt = self.conn.prepare(&format!(
+            "SELECT id, git_json FROM projects WHERE id IN ({placeholders}) AND git_json IS NOT NULL"
+        ))?;
+        let git_rows = git_stmt
+            .query_map(rusqlite::params_from_iter(project_ids.iter()), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
+        for row in git_rows {
+            let (project_id, value) = row?;
+            if let Ok(snapshot) = serde_json::from_str::<GitSnapshot>(&value) {
+                git.insert(project_id, snapshot);
+            }
+        }
+
+        let mut latest_runs = HashMap::<String, DashboardTaskRunSummary>::new();
+        let mut run_stmt = self.conn.prepare(&format!(
+            "SELECT r.project_id, r.kind, r.status, r.started_at, r.finished_at
+             FROM task_runs r
+             WHERE r.project_id IN ({placeholders})
+               AND r.id = (
+                 SELECT latest.id FROM task_runs latest
+                 WHERE latest.project_id = r.project_id
+                 ORDER BY datetime(latest.started_at) DESC, latest.id DESC LIMIT 1
+               )"
+        ))?;
+        let run_rows =
+            run_stmt.query_map(rusqlite::params_from_iter(project_ids.iter()), |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    DashboardTaskRunSummary {
+                        kind: row.get(1)?,
+                        status: row.get(2)?,
+                        started_at: row.get(3)?,
+                        finished_at: row.get(4)?,
+                    },
+                ))
+            })?;
+        for row in run_rows {
+            let (project_id, run) = row?;
+            latest_runs.insert(project_id, run);
+        }
+
+        Ok(project_ids
+            .into_iter()
+            .filter_map(|project_id| {
+                projects
+                    .remove(&project_id)
+                    .map(|project| DashboardProjectItem {
+                        git: git.remove(&project_id),
+                        latest_run: latest_runs.remove(&project_id),
+                        project,
+                    })
+            })
+            .collect())
+    }
+
+    fn list_attention_items_with_approvals(
+        &self,
+        approvals: &[PendingApproval],
+    ) -> Result<Vec<AttentionItem>> {
+        let mut items = Vec::new();
+        for approval in approvals {
+            items.push(AttentionItem {
+                id: format!("approval:{}", approval.id),
+                kind: "approval".into(),
+                severity: "action".into(),
+                project_id: Some(approval.project_id.clone()),
+                run_id: None,
+                approval_id: Some(approval.id.clone()),
+                title: approval.title.clone(),
+                detail: approval.detail.clone(),
+                occurred_at: approval.created_at.clone(),
+                source_version: approval.created_at.clone(),
+                acknowledgeable: false,
+            });
+        }
+        let unavailable_projects = {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, display_name, canonical_path, updated_at FROM projects WHERE availability = 'unavailable' ORDER BY datetime(updated_at) DESC LIMIT 500",
+            )?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            rows
+        };
+        for (project_id, display_name, canonical_path, updated_at) in unavailable_projects {
+            items.push(AttentionItem {
+                id: format!("project-unavailable:{project_id}"),
+                kind: "project_unavailable".into(),
+                severity: "warning".into(),
+                project_id: Some(project_id),
+                run_id: None,
+                approval_id: None,
+                title: format!("{display_name} is unavailable"),
+                detail: canonical_path,
+                occurred_at: updated_at.clone(),
+                source_version: updated_at,
+                acknowledgeable: true,
+            });
+        }
+        let mut failed_stmt = self.conn.prepare(
+            "SELECT id, project_id, kind, exit_code, started_at, finished_at FROM task_runs WHERE status = 'failed' ORDER BY datetime(started_at) DESC LIMIT 50",
+        )?;
+        let failed = failed_stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<i32>>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for (id, project_id, kind, exit_code, started_at, finished_at) in failed {
+            let occurred_at = finished_at.unwrap_or(started_at);
+            items.push(AttentionItem {
+                id: format!("run-failed:{id}"),
+                kind: "task_failed".into(),
+                severity: "error".into(),
+                project_id: Some(project_id),
+                run_id: Some(id),
+                approval_id: None,
+                title: format!("{kind} task failed"),
+                detail: exit_code.map_or_else(
+                    || "No exit code was reported".into(),
+                    |code| format!("Exit code {code}"),
+                ),
+                occurred_at: occurred_at.clone(),
+                source_version: occurred_at,
+                acknowledgeable: true,
+            });
+        }
+        let mut environment_stmt = self.conn.prepare(
+            "SELECT project_id, inspection_json, observed_at, condition_version FROM environment_observations ORDER BY datetime(observed_at) DESC",
+        )?;
+        let observations = environment_stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for (project_id, inspection_json, observed_at, condition_version) in observations {
+            let Ok(inspection) =
+                serde_json::from_str::<crate::models::EnvironmentInspection>(&inspection_json)
+            else {
+                continue;
+            };
+            let mismatches = inspection
+                .runtimes
+                .into_iter()
+                .filter(|runtime| matches!(runtime.match_state.as_str(), "mismatch" | "missing"))
+                .map(|runtime| runtime.label)
+                .collect::<Vec<_>>();
+            if mismatches.is_empty() {
+                continue;
+            }
+            items.push(AttentionItem {
+                id: format!("environment:{project_id}"),
+                kind: "environment_mismatch".into(),
+                severity: "warning".into(),
+                project_id: Some(project_id),
+                run_id: None,
+                approval_id: None,
+                title: "Project environment needs attention".into(),
+                detail: mismatches.join(", "),
+                occurred_at: observed_at.clone(),
+                source_version: condition_version,
+                acknowledgeable: true,
+            });
+        }
+        for event in self.list_audit_events(50)?.into_iter().filter(|event| {
+            (event.outcome == "failure" || event.outcome == "failed")
+                && event.action != "finish_task_run"
+        }) {
+            items.push(AttentionItem {
+                id: format!("audit:{}", event.id),
+                kind: "system_failure".into(),
+                severity: "error".into(),
+                project_id: (event.target_type == "project")
+                    .then_some(event.target_id.clone())
+                    .flatten(),
+                run_id: None,
+                approval_id: None,
+                title: event.action.replace('_', " "),
+                detail: event
+                    .detail
+                    .unwrap_or_else(|| "RepoAtlas recorded an operation failure".into()),
+                occurred_at: event.created_at.clone(),
+                source_version: event.created_at,
+                acknowledgeable: true,
+            });
+        }
+        let acknowledgeable_ids = items
+            .iter()
+            .filter(|item| item.acknowledgeable)
+            .map(|item| item.id.as_str())
+            .collect::<Vec<_>>();
+        let mut acknowledged = HashSet::new();
+        for chunk in acknowledgeable_ids.chunks(500) {
+            let placeholders = (1..=chunk.len())
+                .map(|index| format!("?{index}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let mut stmt = self.conn.prepare(&format!(
+                "SELECT item_id, source_version FROM attention_acknowledgements WHERE item_id IN ({placeholders})"
+            ))?;
+            let rows = stmt
+                .query_map(rusqlite::params_from_iter(chunk.iter().copied()), |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?;
+            acknowledged.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
+        }
+        items.retain(|item| {
+            !item.acknowledgeable
+                || !acknowledged.contains(&(item.id.clone(), item.source_version.clone()))
+        });
+        items.sort_by(|left, right| {
+            attention_severity_rank(&right.severity)
+                .cmp(&attention_severity_rank(&left.severity))
+                .then_with(|| right.occurred_at.cmp(&left.occurred_at))
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        Ok(items)
+    }
+
+    pub fn acknowledge_attention_item(&self, item_id: &str, source_version: &str) -> Result<()> {
+        if item_id.trim().is_empty() || source_version.trim().is_empty() {
+            return Err(Error::msg(
+                "attention item id and source version are required",
+            ));
+        }
+        let current = self
+            .list_attention_items()?
+            .into_iter()
+            .find(|item| item.id == item_id && item.source_version == source_version)
+            .ok_or_else(|| Error::msg("attention item is no longer current"))?;
+        if !current.acknowledgeable {
+            return Err(Error::msg(
+                "this live attention item cannot be acknowledged",
+            ));
+        }
+        self.with_immediate_transaction(|core| {
+            core.conn.execute(
+                "INSERT OR REPLACE INTO attention_acknowledgements (item_id, source_version, acknowledged_at) VALUES (?1, ?2, ?3)",
+                params![item_id, source_version, now()],
+            )?;
+            core.record_audit_event(
+                "desktop",
+                "acknowledge_attention_item",
+                "attention_item",
+                Some(item_id),
+                Some(source_version),
+                "success",
+            )?;
+            Ok(())
+        })
+    }
+
     pub fn list_project_events(&self, project_id: &str, limit: usize) -> Result<Vec<ProjectEvent>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, project_id, kind, title, detail, created_at FROM project_events WHERE project_id = ?1 ORDER BY datetime(created_at) DESC, id DESC LIMIT ?2",
@@ -1893,33 +2542,19 @@ impl Core {
             }));
         };
         let mut stmt = self.conn.prepare(
-            "SELECT id, display_name, canonical_path, git_json, facts_json FROM projects WHERE id != ?1",
+            "SELECT id, display_name, canonical_path, git_json FROM projects WHERE id != ?1 AND lineage_key = ?2",
         )?;
-        let rows = stmt.query_map(params![detail.project.id], |row| {
+        let rows = stmt.query_map(params![detail.project.id, normalized], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, Option<String>>(3)?,
-                row.get::<_, String>(4)?,
             ))
         })?;
         let mut checkouts = Vec::new();
         for row in rows {
-            let (id, display_name, canonical_path, git_json, facts_json) = row?;
-            let facts: Vec<crate::models::DetectedFact> = from_json(facts_json)?;
-            let sibling_remote = facts
-                .iter()
-                .find(|fact| fact.kind == "lineage")
-                .map(|fact| fact.value.clone());
-            let matches = sibling_remote
-                .as_deref()
-                .and_then(crate::git::normalize_remote_url)
-                .as_deref()
-                == Some(normalized.as_str());
-            if !matches {
-                continue;
-            }
+            let (id, display_name, canonical_path, git_json) = row?;
             let git: Option<crate::models::GitSnapshot> = opt_from_json(git_json)?;
             checkouts.push(LineageCheckout {
                 project_id: id,
@@ -1938,212 +2573,6 @@ impl Core {
             normalized_url: Some(normalized),
             checkouts,
         }))
-    }
-
-    pub fn conversation_summary(
-        &self,
-        project_id: &str,
-    ) -> Result<crate::models::ConversationSummary> {
-        crate::ai::conversation_summary(&self.conn, project_id)
-    }
-
-    pub fn clear_conversation(&self, project_id: &str) -> Result<()> {
-        self.get_project(project_id)?;
-        crate::ai::clear_conversation(&self.conn, project_id)
-    }
-
-    pub fn clear_conversation_with_origin(&self, project_id: &str, origin: &str) -> Result<()> {
-        let origin = origin.to_owned();
-        self.with_immediate_transaction(|core| {
-            core.clear_conversation(project_id)?;
-            core.record_audit_event(
-                &origin,
-                "clear_conversation",
-                "conversation",
-                Some(project_id),
-                None,
-                "success",
-            )?;
-            Ok(())
-        })
-    }
-
-    pub fn append_conversation_with_origin(
-        &self,
-        project_id: &str,
-        messages: Vec<crate::models::ChatMessage>,
-        origin: &str,
-        detail: Option<&str>,
-    ) -> Result<()> {
-        let origin = origin.to_owned();
-        let detail = detail.map(str::to_owned);
-        self.with_immediate_transaction(|core| {
-            core.get_project(project_id)?;
-            crate::ai::append_conversation(&core.conn, project_id, messages)?;
-            core.record_project_event(
-                project_id,
-                "ai",
-                "Asked project question",
-                detail.as_deref(),
-            )?;
-            core.record_audit_event(
-                &origin,
-                "ask_project",
-                "project",
-                Some(project_id),
-                None,
-                "success",
-            )?;
-            Ok(())
-        })
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn save_summary_with_origin(
-        &self,
-        project_id: &str,
-        provider_id: Option<&str>,
-        model: Option<&str>,
-        text: &str,
-        evidence: &str,
-        origin: &str,
-        provider_detail: Option<&str>,
-    ) -> Result<crate::models::AiSummary> {
-        let origin = origin.to_owned();
-        let provider_detail = provider_detail.map(str::to_owned);
-        self.with_immediate_transaction(|core| {
-            core.get_project(project_id)?;
-            let summary = crate::ai::save_summary(
-                &core.conn,
-                project_id,
-                provider_id,
-                model,
-                text,
-                evidence,
-            )?;
-            core.record_project_event(
-                project_id,
-                "ai",
-                "Generated AI summary",
-                provider_detail.as_deref(),
-            )?;
-            core.record_audit_event(
-                &origin,
-                "summarize_project",
-                "project",
-                Some(project_id),
-                provider_detail.as_deref(),
-                "success",
-            )?;
-            Ok(summary)
-        })
-    }
-
-    pub fn list_conversation(&self, project_id: &str) -> Result<Vec<crate::models::ChatMessage>> {
-        crate::ai::conversation(&self.conn, project_id)
-    }
-
-    pub fn analysis_plan(
-        &self,
-        project_id: &str,
-        provider_id: &str,
-    ) -> Result<crate::models::AnalysisPlan> {
-        let detail = self.get_project(project_id)?;
-        let profile = crate::ai::get_profile(&self.conn, provider_id)?;
-        let is_local = crate::ai::is_local_provider(&profile);
-        let evidence =
-            crate::ai::evidence_for(&PathBuf::from(detail.project.canonical_path), 8000)?;
-        Ok(crate::models::AnalysisPlan {
-            provider_id: profile.id,
-            provider_name: profile.name,
-            model: profile.model,
-            base_url: profile.base_url,
-            evidence_files: evidence.files,
-            character_count: evidence.character_count,
-            is_local,
-            suspicious_secret_count: evidence.suspicious_secret_count,
-        })
-    }
-
-    pub fn summarize_project(
-        &self,
-        project_id: &str,
-        provider_id: &str,
-        api_key: &str,
-    ) -> Result<crate::models::AiSummary> {
-        let detail = self.get_project(project_id)?;
-        let caller = crate::ai::AiCaller {
-            profile: crate::ai::get_profile(&self.conn, provider_id)?,
-            api_key: api_key.to_string(),
-        };
-        let evidence =
-            crate::ai::evidence_for(&PathBuf::from(detail.project.canonical_path.clone()), 8000)?;
-        let system = "You maintain concise developer notes. Given the evidence below, produce a short project summary covering: what the project is, main languages/stack, how to run, how to build/package, and where key entry points are. Answer in the language of the evidence, plain text, no markdown headers.";
-        let text = caller.chat(
-            system,
-            vec![crate::models::ChatMessage {
-                role: "user".into(),
-                content: evidence.text.clone(),
-            }],
-            900,
-        )?;
-        let summary = crate::ai::save_summary(
-            &self.conn,
-            project_id,
-            Some(provider_id),
-            Some(&caller.profile.model),
-            &text,
-            &evidence.text,
-        )?;
-        let _ = self.record_project_event(
-            project_id,
-            "ai",
-            "Generated AI summary",
-            Some(&caller.profile.name),
-        );
-        Ok(summary)
-    }
-
-    pub fn ask_project(
-        &self,
-        project_id: &str,
-        provider_id: &str,
-        api_key: &str,
-        question: &str,
-    ) -> Result<String> {
-        let detail = self.get_project(project_id)?;
-        let caller = crate::ai::AiCaller {
-            profile: crate::ai::get_profile(&self.conn, provider_id)?,
-            api_key: api_key.to_string(),
-        };
-        let evidence =
-            crate::ai::evidence_for(&PathBuf::from(detail.project.canonical_path), 8000)?;
-        let mut history = crate::ai::conversation(&self.conn, project_id)?;
-        let question = question.trim();
-        if question.is_empty() {
-            return Err(Error::msg("question is empty"));
-        }
-        history.push(crate::models::ChatMessage {
-            role: "user".into(),
-            content: question.into(),
-        });
-        let system = format!(
-            "You are RepoAtlas, a local code-asset assistant. Answer using the provided project evidence. Evidence:\n\n{}\n\nDo not invent files that are not shown.",
-            evidence.text
-        );
-        let answer = caller.chat(&system, history.clone(), 1500)?;
-        let mut to_append = vec![crate::models::ChatMessage {
-            role: "user".into(),
-            content: question.into(),
-        }];
-        to_append.push(crate::models::ChatMessage {
-            role: "assistant".into(),
-            content: answer.clone(),
-        });
-        crate::ai::append_conversation(&self.conn, project_id, to_append)?;
-        let _ =
-            self.record_project_event(project_id, "ai", "Asked project question", Some(question));
-        Ok(answer)
     }
 
     pub fn export_json(&self) -> Result<String> {
@@ -2211,9 +2640,16 @@ impl Core {
         Ok(result)
     }
 
-    fn project_path(&self, project_id: &str) -> Result<PathBuf> {
-        let detail = self.get_project(project_id)?;
-        Ok(PathBuf::from(detail.project.canonical_path))
+    pub fn project_path(&self, project_id: &str) -> Result<PathBuf> {
+        self.conn
+            .query_row(
+                "SELECT canonical_path FROM projects WHERE id = ?1",
+                [project_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .map(PathBuf::from)
+            .ok_or_else(|| Error::NotFound(project_id.into()))
     }
 
     fn upsert_project(
@@ -2225,6 +2661,15 @@ impl Core {
         let canonical = paths::canonicalize(path)?;
         let detection = detect::detect(&canonical);
         let git = git::snapshot(&canonical);
+        let lineage_remote = detection
+            .facts
+            .iter()
+            .find(|fact| fact.kind == "lineage")
+            .map(|fact| fact.value.clone())
+            .or_else(|| git::origin_url(&canonical));
+        let lineage_key = lineage_remote
+            .as_deref()
+            .and_then(git::normalize_remote_url);
         let last_commit_at = git.as_ref().and_then(|snap| snap.last_commit_at.clone());
         let now = now();
         let path_string = paths::path_to_string(&canonical);
@@ -2279,12 +2724,12 @@ impl Core {
             INSERT INTO projects (
                 id, canonical_path, display_name, detected_name, notes, description, vcs_kind, availability,
                 archived, favorite, origin, scan_root_id, languages_json, frameworks_json,
-                package_managers_json, facts_json, tasks_json, dependencies_json, git_json,
+                package_managers_json, facts_json, lineage_key, tasks_json, dependencies_json, git_json,
                 readme_path, readme_excerpt, search_blob, source_mtime, last_commit_at,
                 created_at, updated_at
             ) VALUES (
                 ?1, ?2, ?3, ?4, NULL, ?5, ?6, 'ready', 0, 0, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?21
+                ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?22
             )
             ON CONFLICT(canonical_path) DO UPDATE SET
                 display_name = excluded.display_name,
@@ -2297,6 +2742,7 @@ impl Core {
                 frameworks_json = excluded.frameworks_json,
                 package_managers_json = excluded.package_managers_json,
                 facts_json = excluded.facts_json,
+                lineage_key = excluded.lineage_key,
                 tasks_json = excluded.tasks_json,
                 dependencies_json = excluded.dependencies_json,
                 git_json = excluded.git_json,
@@ -2320,6 +2766,7 @@ impl Core {
                 to_json(&detection.frameworks)?,
                 to_json(&detection.package_managers)?,
                 to_json(&detection.facts)?,
+                lineage_key,
                 to_json(&merged_tasks)?,
                 opt_json(&detection.dependencies)?,
                 opt_json(&git)?,
@@ -2355,16 +2802,72 @@ impl Core {
         Ok(projects)
     }
 
+    fn load_projects_for_query(&self, query: &ProjectQuery) -> Result<Vec<ProjectSummary>> {
+        let mut conditions = Vec::new();
+        match query.section.as_deref() {
+            Some("favorites") => conditions.push("p.favorite = 1 AND p.archived = 0"),
+            Some("recent") => conditions.push("p.last_opened_at IS NOT NULL AND p.archived = 0"),
+            Some("archived") => conditions.push("p.archived = 1"),
+            _ if query.include_archived != Some(true) => conditions.push("p.archived = 0"),
+            _ => {}
+        }
+        let mut parameters = Vec::new();
+        if let Some(collection_id) = query.collection_id.as_ref() {
+            parameters.push(collection_id.clone());
+            conditions.push(
+                "EXISTS (SELECT 1 FROM project_collection_members m WHERE m.collection_id = ?1 AND m.project_id = p.id)",
+            );
+        }
+        let limit_clause = query.limit.map_or_else(String::new, |limit| {
+            parameters.push(limit.clamp(1, 10_000).to_string());
+            format!("LIMIT ?{}", parameters.len())
+        });
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+        let sql = format!(
+            r#"
+            SELECT p.id, p.canonical_path, p.display_name, p.detected_name, p.notes, p.description, p.vcs_kind, p.availability,
+                   p.archived, p.favorite, p.origin, p.scan_root_id, p.languages_json, p.frameworks_json,
+                   p.package_managers_json, p.source_mtime, p.last_commit_at, p.last_opened_at, p.updated_at
+            FROM projects p
+            {where_clause}
+            ORDER BY p.favorite DESC, datetime(COALESCE(p.last_opened_at, p.updated_at)) DESC, p.display_name
+            {limit_clause}
+            "#,
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let mut projects = stmt
+            .query_map(rusqlite::params_from_iter(parameters.iter()), |row| {
+                Ok(row_to_summary(row))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        self.attach_tags(&mut projects)?;
+        Ok(projects)
+    }
+
     fn load_projects_by_ids(&self, ids: &[String]) -> Result<HashMap<String, ProjectSummary>> {
+        Ok(self
+            .load_project_summaries_by_ids(ids)?
+            .into_iter()
+            .map(|project| (project.id.clone(), project))
+            .collect())
+    }
+
+    fn load_project_summaries_by_ids(&self, ids: &[String]) -> Result<Vec<ProjectSummary>> {
         if ids.is_empty() {
-            return Ok(HashMap::new());
+            return Ok(Vec::new());
         }
         let placeholders = (1..=ids.len())
             .map(|index| format!("?{index}"))
             .collect::<Vec<_>>()
             .join(", ");
         let sql = format!(
-            "SELECT id, canonical_path, display_name, detected_name, notes, description, vcs_kind, availability, archived, favorite, origin, scan_root_id, languages_json, frameworks_json, package_managers_json, source_mtime, last_commit_at, last_opened_at, updated_at FROM projects WHERE id IN ({placeholders})"
+            "SELECT id, canonical_path, display_name, detected_name, notes, description, vcs_kind, availability, archived, favorite, origin, scan_root_id, languages_json, frameworks_json, package_managers_json, source_mtime, last_commit_at, last_opened_at, updated_at FROM projects WHERE id IN ({placeholders}) ORDER BY favorite DESC, datetime(COALESCE(last_opened_at, updated_at)) DESC, display_name"
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt
@@ -2376,10 +2879,7 @@ impl Core {
             .into_iter()
             .collect::<std::result::Result<Vec<_>, _>>()?;
         self.attach_tags(&mut projects)?;
-        Ok(projects
-            .into_iter()
-            .map(|project| (project.id.clone(), project))
-            .collect())
+        Ok(projects)
     }
 
     fn attach_tags(&self, projects: &mut [ProjectSummary]) -> Result<()> {
@@ -2387,15 +2887,26 @@ impl Core {
             return Ok(());
         }
         let mut tags = HashMap::<String, Vec<String>>::new();
-        let mut stmt = self
-            .conn
-            .prepare("SELECT project_id, tag FROM project_tags ORDER BY project_id, tag")?;
-        let rows = stmt.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })?;
-        for row in rows {
-            let (project_id, tag) = row?;
-            tags.entry(project_id).or_default().push(tag);
+        let ids = projects
+            .iter()
+            .map(|project| &project.id)
+            .collect::<Vec<_>>();
+        for chunk in ids.chunks(500) {
+            let placeholders = (1..=chunk.len())
+                .map(|index| format!("?{index}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let mut stmt = self.conn.prepare(&format!(
+                "SELECT project_id, tag FROM project_tags WHERE project_id IN ({placeholders}) ORDER BY project_id, tag"
+            ))?;
+            let rows = stmt
+                .query_map(rusqlite::params_from_iter(chunk.iter().copied()), |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?;
+            for row in rows {
+                let (project_id, tag) = row?;
+                tags.entry(project_id).or_default().push(tag);
+            }
         }
         for project in projects {
             project.tags = tags.remove(&project.id).unwrap_or_default();
@@ -3240,8 +3751,94 @@ fn trigram_match_query(query: &str) -> Option<String> {
     }
 }
 
+fn normalize_task_runtime_metadata(task: &mut TaskDefinition) -> Result<()> {
+    task.expected_ports.sort_unstable();
+    task.expected_ports.dedup();
+    if task.expected_ports.contains(&0) {
+        return Err(Error::msg(
+            "expected task ports must be between 1 and 65535",
+        ));
+    }
+    task.dev_url_path = task
+        .dev_url_path
+        .take()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if task
+        .dev_url_path
+        .as_ref()
+        .is_some_and(|path| !path.starts_with('/') || path.starts_with("//"))
+    {
+        return Err(Error::msg("development URL path must start with one slash"));
+    }
+    task.dev_url_scheme = task
+        .dev_url_scheme
+        .take()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty());
+    if task
+        .dev_url_scheme
+        .as_deref()
+        .is_some_and(|scheme| !matches!(scheme, "http" | "https"))
+    {
+        return Err(Error::msg("development URL scheme must be http or https"));
+    }
+    Ok(())
+}
+
+fn attention_severity_rank(severity: &str) -> u8 {
+    match severity {
+        "error" => 3,
+        "action" => 2,
+        "warning" => 1,
+        _ => 0,
+    }
+}
+
+fn validate_collection(upsert: CollectionUpsert) -> Result<(String, Option<String>)> {
+    let name = upsert.name.trim().to_string();
+    if name.is_empty() {
+        return Err(Error::msg("collection name is required"));
+    }
+    if name.chars().count() > 80 {
+        return Err(Error::msg("collection name must be 80 characters or fewer"));
+    }
+    let description = upsert
+        .description
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if description
+        .as_ref()
+        .is_some_and(|value| value.chars().count() > 500)
+    {
+        return Err(Error::msg(
+            "collection description must be 500 characters or fewer",
+        ));
+    }
+    Ok((name, description))
+}
+
+fn map_collection_constraint(error: rusqlite::Error) -> Error {
+    if error.to_string().contains("UNIQUE constraint failed") {
+        Error::msg("a collection with this name already exists")
+    } else {
+        error.into()
+    }
+}
+
 fn now() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
+}
+
+fn stable_fingerprint(value: &str) -> String {
+    // FNV-1a is intentionally simple and deterministic across processes and
+    // Rust releases. This marks a condition version; it is not a cryptographic digest.
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in value.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
 }
 
 fn runtime_lock_path(path: &Path) -> PathBuf {

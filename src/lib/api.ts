@@ -1,9 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
-  AnalysisPlan,
-  AiMemoryItem,
-  AiSummary,
   AppSettings,
   Bootstrap,
   GitCommandResult,
@@ -15,8 +12,6 @@ import type {
   ProjectDetail,
   ProjectPatch,
   ProjectQuery,
-  ChatMessage,
-  ConversationSummary,
   ProjectSummary,
   ReadmeDocument,
   ExternalTools,
@@ -25,9 +20,6 @@ import type {
   PendingApproval,
   ProjectIcon,
   ProjectRemoval,
-  ProviderPreset,
-  ProviderProfile,
-  ProviderUpsert,
   ScanProgress,
   ScanResult,
   ScanRoot,
@@ -35,6 +27,18 @@ import type {
   SearchHit,
   TaskPersistenceFailure,
   TaskRun,
+  TaskRuntimeSnapshot,
+  PortConflict,
+  ProjectCollection,
+  CollectionUpsert,
+  ProjectBrief,
+  AttentionItem,
+  AttentionCenterState,
+  DashboardSnapshot,
+  ProjectDirectoryListing,
+  ProjectFilePreview,
+  ProjectPathIndexStatus,
+  ProjectPathSearchResponse,
 } from "../types";
 export const api = {
   bootstrap: () => invoke<Bootstrap>("bootstrap"),
@@ -45,8 +49,16 @@ export const api = {
   removeScanRoot: (id: string, alsoRemoveRecords = false) =>
     invoke<ScanRootRemoval>("remove_scan_root", { id, alsoRemoveRecords }),
   listProjects: (query: ProjectQuery = {}) => invoke<ProjectSummary[]>("list_projects", { query }),
+  listCollections: () => invoke<ProjectCollection[]>("list_collections"),
+  createCollection: (upsert: CollectionUpsert) => invoke<ProjectCollection>("create_collection", { upsert }),
+  updateCollection: (id: string, upsert: CollectionUpsert) => invoke<ProjectCollection>("update_collection", { id, upsert }),
+  deleteCollection: (id: string) => invoke<void>("delete_collection", { id }),
+  collectionMemberIds: (id: string) => invoke<string[]>("collection_member_ids", { id }),
+  setCollectionMembers: (id: string, projectIds: string[]) => invoke<ProjectCollection>("set_collection_members", { id, projectIds }),
+  saveCollection: (id: string | undefined, upsert: CollectionUpsert, projectIds: string[]) => invoke<ProjectCollection>("save_collection", { id: id ?? null, upsert, projectIds }),
   searchProjects: (query: string) => invoke<SearchHit[]>("search_projects", { query }),
   getProject: (id: string) => invoke<ProjectDetail>("get_project", { id }),
+  getProjectBrief: (projectId: string) => invoke<ProjectBrief>("get_project_brief", { projectId }),
   readProjectReadme: (projectId: string) => invoke<ReadmeDocument>("read_project_readme", { projectId }),
   readProjectDocument: (projectId: string, path: string) => invoke<ReadmeDocument>("read_project_document", { projectId, path }),
   inspectProjectEnvironment: (projectId: string) => invoke<EnvironmentInspection>("inspect_project_environment", { projectId }),
@@ -54,6 +66,19 @@ export const api = {
   setProjectIcon: (projectId: string, path: string) => invoke<ProjectIcon>("set_project_icon", { projectId, path }),
   clearProjectIcon: (projectId: string) => invoke<ProjectIcon>("clear_project_icon", { projectId }),
   readProjectFile: (projectId: string, path: string) => invoke<ReadmeDocument>("read_project_file", { projectId, path }),
+  listProjectDirectory: (projectId: string, path = "", showGenerated = false) =>
+    invoke<ProjectDirectoryListing>("list_project_directory", { projectId, path, showGenerated }),
+  readProjectFilePreview: (projectId: string, path: string) =>
+    invoke<ProjectFilePreview>("read_project_file_preview", { projectId, path }),
+  readProjectImage: (projectId: string, path: string) =>
+    invoke<ArrayBuffer>("read_project_image", { projectId, path }),
+  ensureProjectPathIndex: (projectId: string, includeGenerated = false) =>
+    invoke<ProjectPathIndexStatus>("ensure_project_path_index", { projectId, includeGenerated }),
+  searchProjectPaths: (projectId: string, query: string) =>
+    invoke<ProjectPathSearchResponse>("search_project_paths", { projectId, query }),
+  cancelProjectPathSearch: (projectId: string) => invoke<void>("cancel_project_path_search", { projectId }),
+  cancelProjectPathIndex: (projectId: string) => invoke<void>("cancel_project_path_index", { projectId }),
+  revealProjectPath: (projectId: string, path: string) => invoke<void>("reveal_project_path", { projectId, path }),
   revealProjectFile: (projectId: string, path: string) => invoke<void>("reveal_project_file", { projectId, path }),
   openProjectFile: (projectId: string, path: string) => invoke<void>("open_project_file", { projectId, path }),
   mcpSetupInfo: () => invoke<McpSetupInfo>("mcp_setup_info"),
@@ -68,11 +93,12 @@ export const api = {
   relocateProject: (id: string, path: string) => invoke<ProjectSummary>("relocate_project", { id, path }),
   atlasReport: (projectId: string) => invoke<AtlasReport>("atlas_report", { projectId }),
   exportAtlasReportTo: (projectId: string, path: string) => invoke<void>("export_atlas_report_to", { projectId, path }),
-  listSummaries: (projectId: string) => invoke<AiSummary[]>("list_summaries", { projectId }),
-  getSummary: (summaryId: string) => invoke<AiSummary>("get_summary", { summaryId }),
-  acceptSummaryMemory: (summaryId: string) => invoke<AiMemoryItem>("accept_summary_memory", { summaryId }),
   listPendingApprovals: () => invoke<PendingApproval[]>("list_pending_approvals"),
-  resolvePendingApproval: (approvalId: string, approved: boolean) => invoke<PendingApproval>("resolve_pending_approval", { approvalId, approved }),
+  listAttentionItems: () => invoke<AttentionItem[]>("list_attention_items"),
+  getAttentionCenter: () => invoke<AttentionCenterState>("get_attention_center"),
+  getDashboardSnapshot: () => invoke<DashboardSnapshot>("get_dashboard_snapshot"),
+  acknowledgeAttentionItem: (itemId: string, sourceVersion: string) => invoke<void>("acknowledge_attention_item", { itemId, sourceVersion }),
+  resolvePendingApproval: (approvalId: string, approved: boolean, allowPortConflicts = false) => invoke<PendingApproval>("resolve_pending_approval", { approvalId, approved, allowPortConflicts }),
   startScan: (rootId?: string) => invoke<void>("start_scan", { rootId: rootId ?? null }),
   cancelScan: () => invoke<void>("cancel_scan"),
   gitStatus: (projectId: string) => invoke<GitStatus>("git_status", { projectId }),
@@ -82,8 +108,13 @@ export const api = {
     invoke<GitCommandResult>("git_execute", { projectId, op }),
   listTaskRuns: (projectId: string) => invoke<TaskRun[]>("list_task_runs", { projectId }),
   listActiveTaskRuns: () => invoke<TaskRun[]>("list_active_task_runs"),
+  getTaskRun: (runId: string) => invoke<TaskRun>("get_task_run", { runId }),
   readTaskLog: (runId: string) => invoke<string>("read_task_log", { runId }),
-  startTask: (projectId: string, taskId: string) => invoke<TaskRun>("start_task", { projectId, taskId }),
+  getTaskRuntimeSnapshot: (runId: string) => invoke<TaskRuntimeSnapshot>("get_task_runtime_snapshot", { runId }),
+  getTaskRuntimeSnapshots: (runIds: string[]) => invoke<TaskRuntimeSnapshot[]>("get_task_runtime_snapshots", { runIds }),
+  preflightTaskPorts: (projectId: string, taskId: string) => invoke<PortConflict[]>("preflight_task_ports", { projectId, taskId }),
+  startTask: (projectId: string, taskId: string, allowPortConflicts = false) => invoke<TaskRun>("start_task", { projectId, taskId, allowPortConflicts }),
+  openDevEndpoint: (runId: string, endpoint: string) => invoke<void>("open_dev_endpoint", { runId, endpoint }),
   writeTaskStdin: (runId: string, text: string) => invoke<void>("write_task_stdin", { runId, text }),
   stopTask: (runId: string) => invoke<TaskRun>("stop_task", { runId }),
   resizeTaskRun: (runId: string, cols: number, rows: number) => invoke<void>("resize_task_run", { runId, cols, rows }),
@@ -91,22 +122,6 @@ export const api = {
   openInExplorer: (path: string) => invoke<void>("open_in_explorer", { path }),
   listExternalTools: () => invoke<ExternalTools>("list_external_tools"),
   openInTerminal: (path: string, terminal?: string) => invoke<void>("open_in_terminal", { path, terminal }),
-  listProviderProfiles: () => invoke<ProviderProfile[]>("list_provider_profiles"),
-  upsertProviderProfile: (upsert: ProviderUpsert) => invoke<ProviderProfile>("upsert_provider_profile", { upsert }),
-  deleteProviderProfile: (id: string) => invoke<void>("delete_provider_profile", { id }),
-  providerPresets: () => invoke<ProviderPreset[]>("provider_presets"),
-  listMemory: (projectId: string) => invoke<AiMemoryItem[]>("list_memory", { projectId }),
-  addMemory: (projectId: string, text: string) => invoke<AiMemoryItem>("add_memory", { projectId, text }),
-  deleteMemory: (id: string) => invoke<void>("delete_memory", { id }),
-  latestSummary: (projectId: string) => invoke<AiSummary | null>("latest_summary", { projectId }),
-  conversationSummary: (projectId: string) => invoke<ConversationSummary>("conversation_summary", { projectId }),
-  listConversation: (projectId: string) => invoke<ChatMessage[]>("list_conversation", { projectId }),
-  clearConversation: (projectId: string) => invoke<void>("clear_conversation", { projectId }),
-  analysisPlan: (projectId: string, providerId: string) => invoke<AnalysisPlan>("analysis_plan", { projectId, providerId }),
-  summarizeProject: (projectId: string, providerId: string, apiKey: string) =>
-    invoke<AiSummary>("summarize_project", { projectId, providerId, apiKey }),
-  askProject: (projectId: string, providerId: string, apiKey: string, question: string) =>
-    invoke<string>("ask_project", { projectId, providerId, apiKey, question }),
   exportJson: () => invoke<string>("export_json"),
   exportJsonTo: (path: string) => invoke<void>("export_json_to", { path }),
   importJson: (data: string) => invoke<number>("import_json", { data }),
@@ -136,6 +151,18 @@ export async function onTaskExited(handler: (run: TaskRun) => void): Promise<Unl
   return listen<TaskRun>("task://exited", (event) => handler(event.payload));
 }
 
+export async function onTaskRuntime(handler: (snapshot: TaskRuntimeSnapshot) => void): Promise<UnlistenFn> {
+  return listen<TaskRuntimeSnapshot>("task://runtime", (event) => handler(event.payload));
+}
+
+export async function onAttentionChanged(handler: () => void): Promise<UnlistenFn> {
+  return listen("attention://changed", handler);
+}
+
 export async function onTaskPersistenceFailed(handler: (failure: TaskPersistenceFailure) => void): Promise<UnlistenFn> {
   return listen<TaskPersistenceFailure>("task://persistence-failed", (event) => handler(event.payload));
+}
+
+export async function onFileIndexProgress(handler: (status: ProjectPathIndexStatus) => void): Promise<UnlistenFn> {
+  return listen<ProjectPathIndexStatus>("files://index-progress", (event) => handler(event.payload));
 }

@@ -1,14 +1,13 @@
-import { AnimatePresence, motion } from "framer-motion";
-import { BookOpenText, Brain, CaretDown, Code, Copy, DotsThree, FolderOpen, GitBranch, PencilSimple, Play, Sparkle, Star, TerminalWindow } from "@phosphor-icons/react";
+import { motion } from "framer-motion";
+import { BookOpenText, CaretDown, Code, Copy, DotsThree, Files as FilesIcon, FolderOpen, GitBranch, PencilSimple, Play, Sparkle, Star, TerminalWindow } from "@phosphor-icons/react";
 import { Dialog } from "@base-ui/react/dialog";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { MessageKey } from "../i18n";
-import { api, onTaskExited, onTaskLog, onTaskPersistenceFailed } from "../lib/api";
+import { api, onTaskExited, onTaskPersistenceFailed } from "../lib/api";
 import { stackOf } from "../lib/format";
 import type { GitOp, GitStatus, ProjectDetail, ProjectTab, ReadmeDocument, TaskRun, ToastTone } from "../types";
 import type { EnvironmentInspection, ExternalTool, ProjectFile } from "../types";
-import { AiPanel } from "./AiPanel";
 import { Button } from "./ui/button";
 import { ConfirmDialog } from "./ui/confirm";
 import { Skeleton } from "./ui/feedback";
@@ -18,10 +17,11 @@ import { AgentGlyph, IdeGlyph, TerminalGlyph } from "../lib/project-identity";
 import { OverviewWorkspace } from "./OverviewWorkspace";
 import { GitWorkspace } from "./GitWorkspace";
 import { TaskWorkspace } from "./TaskWorkspace";
+import { FilesWorkspace } from "./FilesWorkspace";
 import { InlineLoadError, MarkdownDocument, statusKey, taskConfirmation } from "./DashboardShared";
-import { rememberStartedRun } from "../lib/task-runs";
+import { getTaskLog, rememberStartedRun, subscribeTaskLog } from "../lib/task-runs";
 
-export function Dashboard({ detail, t, notify, onFavorite, onArchive, onRefresh, onRemove, onOpenExplorer, onOpenTerminal, onOpenIde, onOpenAgent, onOpenSettings, onDescription, onNotes, onTags, onOpenProject, onRelocate }: {
+export function Dashboard({ detail, t, notify, onFavorite, onArchive, onRefresh, onRemove, onOpenExplorer, onOpenTerminal, onOpenIde, onOpenAgent, onDescription, onNotes, onTags, onOpenProject, onRelocate }: {
   detail: ProjectDetail;
   t: (key: MessageKey) => string;
   notify: (tone: ToastTone, title: string, detail?: string) => void;
@@ -33,7 +33,6 @@ export function Dashboard({ detail, t, notify, onFavorite, onArchive, onRefresh,
   onOpenTerminal: (terminal?: string) => void;
   onOpenIde: (ide: string) => void;
   onOpenAgent: (agent: string) => void;
-  onOpenSettings: () => void;
   onDescription: (description: string | null) => void | Promise<void>;
   onNotes: (notes: string) => void;
   onTags: (tags: string[]) => void;
@@ -42,6 +41,7 @@ export function Dashboard({ detail, t, notify, onFavorite, onArchive, onRefresh,
 }) {
   const project = detail.project;
   const [tab, setTab] = useState<ProjectTab>("overview");
+  const [filesActivated, setFilesActivated] = useState(false);
   const [tagDraft, setTagDraft] = useState("");
   const [git, setGit] = useState<GitStatus | null>(null);
   const [gitLoading, setGitLoading] = useState(false);
@@ -113,7 +113,7 @@ export function Dashboard({ detail, t, notify, onFavorite, onArchive, onRefresh,
   }
 
   useEffect(() => {
-    setTab("overview"); setOverviewSection("status"); setGit(null); setGitError(undefined); setRuns([]); setRunsError(undefined); setLogs({}); setCommitMessage(""); setSelectedDiff(undefined); setDiff("");
+    setTab("overview"); setFilesActivated(false); setOverviewSection("status"); setGit(null); setGitError(undefined); setRuns([]); setRunsError(undefined); setLogs({}); setCommitMessage(""); setSelectedDiff(undefined); setDiff("");
     setDescriptionDraft(project.description ?? "");
     setAgents(undefined); setAgentsMissing(false);
     setEnvironment(undefined); setEnvironmentError(undefined);
@@ -148,7 +148,6 @@ export function Dashboard({ detail, t, notify, onFavorite, onArchive, onRefresh,
 
   useEffect(() => {
     const unsubs = Promise.all([
-      onTaskLog((chunk) => { setLogs((current) => ({ ...current, [chunk.runId]: ((current[chunk.runId] ?? "") + chunk.text).slice(-200000) })); }),
       onTaskExited((run) => {
         if (run.projectId !== project.id) return;
         if (run.status === "succeeded") {
@@ -181,7 +180,16 @@ export function Dashboard({ detail, t, notify, onFavorite, onArchive, onRefresh,
       }),
     ]);
     return () => { void unsubs.then((functions) => functions.forEach((unsubscribe) => unsubscribe())); };
-  }, [activeRunId, notify, project.id, t]);
+  }, [notify, project.id, t]);
+
+  useEffect(() => {
+    if (!activeRunId) return;
+    const syncLog = (log: string) => setLogs((current) => (
+      current[activeRunId] === log ? current : { ...current, [activeRunId]: log }
+    ));
+    syncLog(getTaskLog(activeRunId));
+    return subscribeTaskLog(activeRunId, syncLog);
+  }, [activeRunId]);
 
   const stagedCount = git?.files.filter((file) => file.staged).length ?? 0;
 
@@ -189,7 +197,12 @@ export function Dashboard({ detail, t, notify, onFavorite, onArchive, onRefresh,
     const task = detail.tasks.find((item) => item.id === taskId); if (!task) return;
     setTaskBusy(true);
     try {
-      const run = await api.startTask(project.id, task.id);
+      const conflicts = (task.expectedPorts?.length ?? 0) > 0
+        ? await api.preflightTaskPorts(project.id, task.id)
+        : [];
+      const allowPortConflicts = conflicts.length > 0 && window.confirm(`${t("portConflictConfirm")}\n${conflicts.map((item) => `${item.port}${item.processName ? ` · ${item.processName}` : ""}${item.pid ? ` · PID ${item.pid}` : ""}`).join("\n")}`);
+      if (conflicts.length > 0 && !allowPortConflicts) return;
+      const run = await api.startTask(project.id, task.id, allowPortConflicts);
       setPendingTaskId(undefined); setActiveRunId(run.id); setLogs((current) => ({ ...current, [run.id]: "" })); rememberStartedRun(run); await loadRuns(); notify("info", t("taskStarted"), task.name);
     } catch (error) { notify("error", t("taskStartFailed"), String(error)); }
     finally { setTaskBusy(false); }
@@ -313,24 +326,29 @@ export function Dashboard({ detail, t, notify, onFavorite, onArchive, onRefresh,
 
   const tabs = [
     { id: "overview" as const, label: t("overview"), icon: BookOpenText },
+    { id: "files" as const, label: t("files"), icon: FilesIcon },
     ...(project.vcsKind === "git" ? [{ id: "git" as const, label: t("git"), icon: GitBranch }] : []),
     { id: "tasks" as const, label: t("tasks"), icon: Play },
-    { id: "knowledge" as const, label: t("knowledge"), icon: Brain },
   ];
 
   return (
-    <main id="main-content" className={tab === "tasks" ? "main-pane main-pane-tasks" : "main-pane"}>
+    <main id="main-content" className={tab === "tasks" ? "main-pane main-pane-tasks" : tab === "files" ? "main-pane main-pane-files" : "main-pane"}>
       <header className="project-header">
         <div className="atlas-texture" aria-hidden="true" />
         <div className="project-hero">
           <div className="project-identity">
-            <div className="project-kicker">{project.availability !== "ready" && <><span className="project-kicker-warning">{t("unavailable")}</span><span>·</span></>}<span>{project.vcsKind}</span>{git?.snapshot.branch && <><span>·</span><span>{git.snapshot.branch}</span></>}</div>
             <h1>{project.displayName}</h1>
             <button className="hero-path" title={project.canonicalPath} onClick={() => void navigator.clipboard.writeText(project.canonicalPath).then(() => notify("success", t("copied"), project.canonicalPath)).catch((error) => notify("error", t("copyFailed"), String(error)))}><code>{project.canonicalPath}</code><Copy aria-label={t("copyPath")} /></button>
             <button className={`project-description ${project.description ? "has-description" : "is-empty"}`} onClick={() => setDescriptionOpen(true)}><span>{project.description || t("addDescription")}</span><PencilSimple aria-hidden="true" /></button>
-            <div className="hero-badges">{stackOf(project).map((item) => <span className="badge" key={item}>{item}</span>)}</div>
           </div>
-          <div className="hero-actions">
+          <div className="project-hero-side">
+            <dl className="project-quick-facts" aria-label={t("projectBasics")}>
+              <div><dt>{t("projectStatus")}</dt><dd className={project.availability === "ready" ? "is-ready" : "is-warning"}>{t(project.availability === "ready" ? "ready" : "unavailable")}</dd></div>
+              <div><dt>{project.vcsKind === "git" ? "Git" : project.vcsKind.toUpperCase()}</dt><dd>{git?.snapshot.branch ?? detail.git?.branch ?? "—"}</dd></div>
+              <div><dt>{t("projectStack")}</dt><dd title={stackOf(project).join(" · ")}>{stackOf(project).slice(0, 3).join(" · ") || "—"}</dd></div>
+              <div><dt>{t("projectTaskCount")}</dt><dd>{detail.tasks.length}</dd></div>
+            </dl>
+            <div className="hero-actions">
             <ActionMenu trigger={<Button variant="primary" size="md"><Sparkle weight="bold" />{t("openAgent")}<CaretDown /></Button>} items={[
               ...(agentTools.length
                 ? agentTools.map((agent) => ({
@@ -373,11 +391,12 @@ export function Dashboard({ detail, t, notify, onFavorite, onArchive, onRefresh,
               { label: project.archived ? t("unarchive") : t("archive"), onClick: () => void onArchive() },
               { label: t("removeRecord"), onClick: () => setRemoveOpen(true), danger: true },
             ]} />
+            </div>
           </div>
         </div>
         <div className="project-tabs-row">
           <nav className="project-tabs" aria-label={t("projectSections")} role="tablist">
-            {tabs.map((item) => { const Icon = item.icon; const active = tab === item.id; return <button id={`project-tab-${item.id}`} role="tab" aria-selected={active} aria-controls={`project-panel-${item.id}`} tabIndex={active ? 0 : -1} key={item.id} className={active ? "active" : ""} onKeyDown={moveTabFocus} onClick={() => setTab(item.id)}>{active && <motion.span className="tab-indicator" layoutId="project-tab" />}<Icon weight={active ? "fill" : "regular"} /><span>{item.label}</span></button>; })}
+            {tabs.map((item) => { const Icon = item.icon; const active = tab === item.id; return <button id={`project-tab-${item.id}`} role="tab" aria-selected={active} aria-controls={`project-panel-${item.id}`} tabIndex={active ? 0 : -1} key={item.id} className={active ? "active" : ""} onKeyDown={moveTabFocus} onClick={() => { setTab(item.id); if (item.id === "files") setFilesActivated(true); }}>{active && <motion.span className="tab-indicator" layoutId="project-tab" />}<Icon weight={active ? "fill" : "regular"} /><span>{item.label}</span></button>; })}
           </nav>
           {tab === "overview" && (
             <div className="overview-switcher">
@@ -389,14 +408,16 @@ export function Dashboard({ detail, t, notify, onFavorite, onArchive, onRefresh,
           )}
         </div>
       </header>
+      <div id="project-panel-files" role="tabpanel" aria-labelledby="project-tab-files" className="workspace-content workspace-content-files" hidden={tab !== "files"}>
+        {filesActivated && <FilesWorkspace project={project} active={tab === "files"} t={t} notify={notify} />}
+      </div>
       {tab === "tasks" ? (
         <div id="project-panel-tasks" role="tabpanel" aria-labelledby="project-tab-tasks" className="workspace-content workspace-content-tasks">
           <TaskWorkspace tasks={detail.tasks} runs={runs} loading={runsLoading} error={runsError} activeRunId={activeRunId} log={(activeRunId ? logs[activeRunId] : "") ?? ""} t={t} notify={notify} onRetry={() => void loadRuns()} onSaveTasks={async (tasks) => { await api.updateProject(project.id, { tasks }); await onRefresh(); }} onRun={setPendingTaskId} onStopRun={async (runId) => { try { await api.stopTask(runId); await loadRuns(); } catch (error) { notify("error", t("taskStopFailed"), String(error)); } }} onClearLog={() => activeRunId && setLogs((current) => ({ ...current, [activeRunId]: "" }))} onHistory={async (run) => { setActiveRunId(run.id); try { const output = await api.readTaskLog(run.id); setLogs((current) => ({ ...current, [run.id]: output })); } catch (error) { notify("error", t("logLoadFailed"), String(error)); } }} />
         </div>
-      ) : (
+      ) : tab !== "files" ? (
         <div id={`project-panel-${tab}`} role="tabpanel" aria-labelledby={`project-tab-${tab}`} className="workspace-scroll" ref={contentRef}>
-        <AnimatePresence mode="wait" initial={false}>
-          <motion.div className="workspace-content" key={tab} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.16 }}>
+          <div className="workspace-content" key={tab}>
             {tab === "overview" && <OverviewWorkspace detail={detail} git={git} readme={readme} readmeLoading={readmeLoading} readmeError={readmeError} onRetryReadme={() => { readmeSequence.current += 1; setReadmeError(undefined); setReadmeLoading(true); api.readProjectReadme(project.id).then(setReadme).catch((error) => setReadmeError(String(error))).finally(() => setReadmeLoading(false)); }} agents={agents} agentsLoading={agentsLoading} agentsMissing={agentsMissing} onNeedAgents={() => {
               if (agentsRequested.current === project.id || agents || agentsLoading || agentsMissing) return;
               agentsRequested.current = project.id;
@@ -405,11 +426,9 @@ export function Dashboard({ detail, t, notify, onFavorite, onArchive, onRefresh,
               api.readProjectDocument(project.id, "AGENTS.md").then((value) => { if (sequence === agentsSequence.current) setAgents(value); }).catch(() => { if (sequence === agentsSequence.current) setAgentsMissing(true); }).finally(() => { if (sequence === agentsSequence.current) setAgentsLoading(false); });
             }} t={t} tagDraft={tagDraft} setTagDraft={setTagDraft} onNotes={onNotes} onTags={onTags} tasks={detail.tasks} runs={runs} environment={environment} environmentLoading={environmentLoading} environmentError={environmentError} onRetryEnvironment={() => { setEnvironmentError(undefined); setEnvironmentLoading(true); api.inspectProjectEnvironment(project.id).then(setEnvironment).catch((error) => setEnvironmentError(String(error))).finally(() => setEnvironmentLoading(false)); }} onRunTask={setPendingTaskId} onOpenProject={onOpenProject} onPreviewFile={(file) => { setPreviewFile(file); setPreviewError(undefined); setPreviewLoading(true); api.readProjectFile(project.id, file.path).then(setPreviewDoc).catch((error) => { setPreviewDoc(undefined); setPreviewError(String(error)); }).finally(() => setPreviewLoading(false)); }} />}
             {tab === "git" && <GitWorkspace git={git} loading={gitLoading} error={gitError} busy={gitBusy} commitMessage={commitMessage} setCommitMessage={setCommitMessage} stagedCount={stagedCount} selectedDiff={selectedDiff} diff={diff} diffLoading={diffLoading} t={t} onRetry={() => void loadGit()} onGit={setPendingGit} onDiff={loadDiff} />}
-            {tab === "knowledge" && <AiPanel projectId={project.id} t={t} notify={notify} onOpenSettings={onOpenSettings} />}
-          </motion.div>
-        </AnimatePresence>
+          </div>
         </div>
-      )}
+      ) : null}
       <ConfirmDialog open={Boolean(pendingGit)} title={t("confirmGit")} body={t("confirmGitBody")} confirmLabel={t("run")} cancelLabel={t("cancel")} busy={gitBusy} onOpenChange={(open) => !open && !gitBusy && setPendingGit(null)} onConfirm={confirmGit} />
       <ConfirmDialog open={Boolean(pendingTaskId)} title={t("confirmTaskRun")} body={pendingTaskId ? taskConfirmation(detail.tasks.find((item) => item.id === pendingTaskId), project.canonicalPath, t) : ""} confirmLabel={t("run")} cancelLabel={t("cancel")} busy={taskBusy} onOpenChange={(open) => !open && !taskBusy && setPendingTaskId(undefined)} onConfirm={() => pendingTaskId ? runTask(pendingTaskId) : undefined} />
       <ConfirmDialog open={removeOpen} title={t("confirmRemove")} body={t("removeRecordHint")} confirmLabel={t("removeRecord")} cancelLabel={t("cancel")} onOpenChange={setRemoveOpen} onConfirm={() => void onRemove()} />

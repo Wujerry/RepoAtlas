@@ -8,6 +8,7 @@ export interface MenuAction {
   label: string;
   onClick: () => void;
   danger?: boolean;
+  disabled?: boolean;
   icon?: ReactNode;
 }
 
@@ -28,6 +29,7 @@ export function ActionMenu({
               <Menu.Item
                 key={item.label}
                 onClick={item.onClick}
+                disabled={item.disabled}
                 className={cn(
                   "menu-item",
                   item.danger && "menu-item-danger",
@@ -53,7 +55,7 @@ export function ItemContextMenu({
 }) {
   return (
     <ContextMenu.Root>
-      <ContextMenu.Trigger render={trigger} />
+      <ContextMenu.Trigger data-repoatlas-context-menu="true" render={trigger} />
       <ContextMenu.Portal>
         <ContextMenu.Positioner sideOffset={4} className="menu-positioner">
           <ContextMenu.Popup className="menu-popup">

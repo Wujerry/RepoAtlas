@@ -1,20 +1,124 @@
 use repoatlas_core::{
-    launch, scan::ScanEngine, AppSettings, AtlasReport, Broker, Core, ExternalTools, GitDiff,
-    GitOp, GitStatus, LogChunk, PendingApproval, ProjectPatch, ProjectQuery, ProjectRemoval,
-    ProjectSummary, ScanProgress, ScanResult, ScanRoot, ScanRootRemoval, SearchHit, TaskRun,
-    TaskSpec,
+    launch,
+    project_files::{self, ProjectPathIndex, ProjectPathSearchResult},
+    scan::ScanEngine,
+    AppSettings, AtlasReport, AttentionCenterState, Broker, Core, DashboardSnapshot, ExternalTools,
+    GitDiff, GitOp, GitStatus, LogChunk, PendingApproval, PortConflict, ProjectCollection,
+    ProjectPatch, ProjectQuery, ProjectRemoval, ProjectSummary, ScanProgress, ScanResult, ScanRoot,
+    ScanRootRemoval, SearchHit, TaskDefinition, TaskRun, TaskRuntimeRequest, TaskSpec,
 };
 use serde::Serialize;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_opener::OpenerExt;
+
+#[derive(Debug, Clone)]
+struct TaskRuntimeConfig {
+    expected_ports: Vec<u16>,
+    dev_url_scheme: Option<String>,
+    dev_url_path: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct CachedPortPreflight {
+    captured_at: std::time::Instant,
+    conflicts: Vec<PortConflict>,
+}
 
 pub struct AppState {
     pub core: Mutex<Core>,
     pub broker: Broker,
     pub cancel: Arc<AtomicBool>,
+    runtime_configs: Mutex<HashMap<String, TaskRuntimeConfig>>,
+    runtime_sampler_started: AtomicBool,
+    port_preflights: Mutex<HashMap<(String, String), CachedPortPreflight>>,
+    file_indexes: Mutex<HashMap<String, Arc<ProjectFileIndexJob>>>,
+    file_index_build_lock: Arc<Mutex<()>>,
+    file_search_lock: Arc<Mutex<()>>,
+    next_file_index_generation: AtomicU64,
+}
+
+struct ProjectFileIndexJob {
+    project_id: String,
+    generation: u64,
+    include_generated: bool,
+    cancel: Arc<AtomicBool>,
+    scanned: Arc<AtomicUsize>,
+    indexed: Arc<AtomicUsize>,
+    search_cancel: Mutex<Option<Arc<AtomicBool>>>,
+    state: Mutex<ProjectFileIndexJobState>,
+}
+
+enum ProjectFileIndexJobState {
+    Building,
+    Ready(Arc<ProjectPathIndex>),
+    Failed(String),
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectPathIndexStatus {
+    project_id: String,
+    generation: u64,
+    state: &'static str,
+    scanned_count: usize,
+    indexed_count: usize,
+    include_generated: bool,
+    message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectPathSearchResponse {
+    status: ProjectPathIndexStatus,
+    results: Vec<ProjectPathSearchResult>,
+}
+
+impl ProjectFileIndexJob {
+    fn status(&self) -> ProjectPathIndexStatus {
+        let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        match &*state {
+            ProjectFileIndexJobState::Building => ProjectPathIndexStatus {
+                project_id: self.project_id.clone(),
+                generation: self.generation,
+                state: "building",
+                scanned_count: self.scanned.load(Ordering::Relaxed),
+                indexed_count: self.indexed.load(Ordering::Relaxed),
+                include_generated: self.include_generated,
+                message: None,
+            },
+            ProjectFileIndexJobState::Ready(index) => ProjectPathIndexStatus {
+                project_id: self.project_id.clone(),
+                generation: self.generation,
+                state: if index.canceled {
+                    "canceled"
+                } else if index.limited {
+                    "limited"
+                } else {
+                    "ready"
+                },
+                scanned_count: index.scanned_count,
+                indexed_count: index.entries.len(),
+                include_generated: self.include_generated,
+                message: index
+                    .limited
+                    .then(|| "The path index reached its safety limit.".to_string()),
+            },
+            ProjectFileIndexJobState::Failed(error) => ProjectPathIndexStatus {
+                project_id: self.project_id.clone(),
+                generation: self.generation,
+                state: "failed",
+                scanned_count: self.scanned.load(Ordering::Relaxed),
+                indexed_count: self.indexed.load(Ordering::Relaxed),
+                include_generated: self.include_generated,
+                message: Some(error.clone()),
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -68,6 +172,7 @@ pub struct Bootstrap {
     pub settings: AppSettings,
     pub scan_roots: Vec<ScanRoot>,
     pub projects: Vec<ProjectSummary>,
+    pub collections: Vec<ProjectCollection>,
 }
 
 #[derive(Debug, Serialize)]
@@ -132,6 +237,7 @@ fn bootstrap(state: State<Arc<AppState>>) -> Result<Bootstrap, String> {
         projects: core
             .list_projects(ProjectQuery::default())
             .map_err(err_to_string)?,
+        collections: core.list_collections().map_err(err_to_string)?,
     })
 }
 
@@ -156,284 +262,6 @@ fn update_settings(
         .map_err(|err| err.to_string())?
         .update_settings(settings)
         .map_err(err_to_string)
-}
-
-fn resolve_api_key(
-    profile: &repoatlas_core::ProviderProfile,
-    explicit: &str,
-) -> Result<String, String> {
-    if !explicit.trim().is_empty() {
-        return Ok(explicit.trim().to_string());
-    }
-    let stored =
-        repoatlas_core::secrets::load_secret(&profile.id, profile.credential_blob.as_deref())
-            .map_err(err_to_string)?;
-    if !stored.trim().is_empty() {
-        return Ok(stored);
-    }
-    Ok(repoatlas_core::secrets::resolve_legacy_env(
-        &profile.credential_ref,
-    ))
-}
-
-#[tauri::command]
-fn list_provider_profiles(
-    state: State<Arc<AppState>>,
-) -> Result<Vec<repoatlas_core::ProviderProfile>, String> {
-    state
-        .core
-        .lock()
-        .map_err(|e| e.to_string())?
-        .list_provider_profiles()
-        .map_err(err_to_string)
-}
-
-#[tauri::command]
-fn upsert_provider_profile(
-    state: State<Arc<AppState>>,
-    upsert: repoatlas_core::ProviderUpsert,
-) -> Result<repoatlas_core::ProviderProfile, String> {
-    state
-        .core
-        .lock()
-        .map_err(|e| e.to_string())?
-        .upsert_provider_profile(upsert)
-        .map_err(err_to_string)
-}
-
-#[tauri::command]
-fn delete_provider_profile(state: State<Arc<AppState>>, id: String) -> Result<(), String> {
-    state
-        .core
-        .lock()
-        .map_err(|e| e.to_string())?
-        .delete_provider_profile(&id)
-        .map_err(err_to_string)
-}
-
-#[tauri::command]
-fn provider_presets(
-    state: State<Arc<AppState>>,
-) -> Result<Vec<repoatlas_core::ProviderPreset>, String> {
-    Ok(state
-        .core
-        .lock()
-        .map_err(|e| e.to_string())?
-        .provider_presets())
-}
-
-#[tauri::command]
-fn list_memory(
-    state: State<Arc<AppState>>,
-    project_id: String,
-) -> Result<Vec<repoatlas_core::AiMemoryItem>, String> {
-    state
-        .core
-        .lock()
-        .map_err(|e| e.to_string())?
-        .list_memory(&project_id)
-        .map_err(err_to_string)
-}
-
-#[tauri::command]
-fn add_memory(
-    state: State<Arc<AppState>>,
-    project_id: String,
-    text: String,
-) -> Result<repoatlas_core::AiMemoryItem, String> {
-    let core = state.core.lock().map_err(|e| e.to_string())?;
-    core.add_memory_with_origin(&project_id, &text, "desktop")
-        .map_err(err_to_string)
-}
-
-#[tauri::command]
-fn delete_memory(state: State<Arc<AppState>>, id: String) -> Result<(), String> {
-    let core = state.core.lock().map_err(|e| e.to_string())?;
-    core.delete_memory_with_origin(&id, "desktop")
-        .map_err(err_to_string)
-}
-
-#[tauri::command]
-fn latest_summary(
-    state: State<Arc<AppState>>,
-    project_id: String,
-) -> Result<Option<repoatlas_core::AiSummary>, String> {
-    state
-        .core
-        .lock()
-        .map_err(|e| e.to_string())?
-        .latest_summary(&project_id)
-        .map_err(err_to_string)
-}
-
-#[tauri::command]
-fn conversation_summary(
-    state: State<Arc<AppState>>,
-    project_id: String,
-) -> Result<repoatlas_core::ConversationSummary, String> {
-    state
-        .core
-        .lock()
-        .map_err(|e| e.to_string())?
-        .conversation_summary(&project_id)
-        .map_err(err_to_string)
-}
-
-#[tauri::command]
-fn list_conversation(
-    state: State<Arc<AppState>>,
-    project_id: String,
-) -> Result<Vec<repoatlas_core::ChatMessage>, String> {
-    state
-        .core
-        .lock()
-        .map_err(|e| e.to_string())?
-        .list_conversation(&project_id)
-        .map_err(err_to_string)
-}
-
-#[tauri::command]
-fn clear_conversation(state: State<Arc<AppState>>, project_id: String) -> Result<(), String> {
-    let core = state.core.lock().map_err(|e| e.to_string())?;
-    core.clear_conversation_with_origin(&project_id, "desktop")
-        .map_err(err_to_string)
-}
-
-#[tauri::command]
-fn analysis_plan(
-    state: State<Arc<AppState>>,
-    project_id: String,
-    provider_id: String,
-) -> Result<repoatlas_core::AnalysisPlan, String> {
-    state
-        .core
-        .lock()
-        .map_err(|e| e.to_string())?
-        .analysis_plan(&project_id, &provider_id)
-        .map_err(err_to_string)
-}
-
-#[tauri::command]
-async fn summarize_project(
-    state: State<'_, Arc<AppState>>,
-    project_id: String,
-    provider_id: String,
-    api_key: String,
-) -> Result<repoatlas_core::AiSummary, String> {
-    let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        // Read the small, immutable inputs under the Core mutex, then release
-        // it before making the potentially slow external HTTP request.
-        let (profile, evidence) = {
-            let core = state.core.lock().map_err(|err| err.to_string())?;
-            let profile = core
-                .get_provider_profile(&provider_id)
-                .map_err(err_to_string)?;
-            let detail = core.get_project(&project_id).map_err(err_to_string)?;
-            let evidence = repoatlas_core::ai::evidence_for(
-                &PathBuf::from(detail.project.canonical_path),
-                8_000,
-            )
-            .map_err(err_to_string)?;
-            (profile, evidence)
-        };
-        let key = resolve_api_key(&profile, &api_key)?;
-        let caller = repoatlas_core::ai::AiCaller {
-            profile: profile.clone(),
-            api_key: key,
-        };
-        let text = caller
-            .chat(
-                "You maintain concise developer notes. Given the evidence below, produce a short project summary covering: what the project is, main languages/stack, how to run, how to build/package, and where key entry points are. Answer in the language of the evidence, plain text, no markdown headers.",
-                vec![repoatlas_core::ChatMessage {
-                    role: "user".into(),
-                    content: evidence.text.clone(),
-                }],
-                900,
-            )
-            .map_err(err_to_string)?;
-        let core = state.core.lock().map_err(|err| err.to_string())?;
-        core.save_summary_with_origin(
-            &project_id,
-            Some(&provider_id),
-            Some(&caller.profile.model),
-            &text,
-            &evidence.text,
-            "desktop",
-            Some(&caller.profile.name),
-        )
-        .map_err(err_to_string)
-    })
-    .await
-    .map_err(|err| err.to_string())?
-}
-
-#[tauri::command]
-async fn ask_project(
-    state: State<'_, Arc<AppState>>,
-    project_id: String,
-    provider_id: String,
-    api_key: String,
-    question: String,
-) -> Result<String, String> {
-    let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let question = question.trim().to_string();
-        if question.is_empty() {
-            return Err("question is empty".into());
-        }
-        let (profile, evidence, mut history) = {
-            let core = state.core.lock().map_err(|err| err.to_string())?;
-            let profile = core
-                .get_provider_profile(&provider_id)
-                .map_err(err_to_string)?;
-            let detail = core.get_project(&project_id).map_err(err_to_string)?;
-            let evidence = repoatlas_core::ai::evidence_for(
-                &PathBuf::from(detail.project.canonical_path),
-                8_000,
-            )
-            .map_err(err_to_string)?;
-            let history = repoatlas_core::ai::conversation(core.connection(), &project_id)
-                .map_err(err_to_string)?;
-            (profile, evidence, history)
-        };
-        let key = resolve_api_key(&profile, &api_key)?;
-        let caller = repoatlas_core::ai::AiCaller {
-            profile: profile.clone(),
-            api_key: key,
-        };
-        history.push(repoatlas_core::ChatMessage {
-            role: "user".into(),
-            content: question.clone(),
-        });
-        let system = format!(
-            "You are RepoAtlas, a local code-asset assistant. Answer using the provided project evidence. Evidence:\n\n{}\n\nDo not invent files that are not shown.",
-            evidence.text
-        );
-        let answer = caller
-            .chat(&system, history, 1_500)
-            .map_err(err_to_string)?;
-        let core = state.core.lock().map_err(|err| err.to_string())?;
-        core.append_conversation_with_origin(
-            &project_id,
-            vec![
-                repoatlas_core::ChatMessage {
-                    role: "user".into(),
-                    content: question.clone(),
-                },
-                repoatlas_core::ChatMessage {
-                    role: "assistant".into(),
-                    content: answer.clone(),
-                },
-            ],
-            "desktop",
-            Some(&question),
-        )
-        .map_err(err_to_string)?;
-        Ok(answer)
-    })
-    .await
-    .map_err(|err| err.to_string())?
 }
 
 #[tauri::command]
@@ -513,6 +341,92 @@ fn list_projects(
 }
 
 #[tauri::command]
+fn list_collections(state: State<Arc<AppState>>) -> Result<Vec<ProjectCollection>, String> {
+    state
+        .core
+        .lock()
+        .map_err(|error| error.to_string())?
+        .list_collections()
+        .map_err(err_to_string)
+}
+
+#[tauri::command]
+fn create_collection(
+    state: State<Arc<AppState>>,
+    upsert: repoatlas_core::CollectionUpsert,
+) -> Result<ProjectCollection, String> {
+    state
+        .core
+        .lock()
+        .map_err(|error| error.to_string())?
+        .create_collection_with_origin(upsert, "desktop")
+        .map_err(err_to_string)
+}
+
+#[tauri::command]
+fn update_collection(
+    state: State<Arc<AppState>>,
+    id: String,
+    upsert: repoatlas_core::CollectionUpsert,
+) -> Result<ProjectCollection, String> {
+    state
+        .core
+        .lock()
+        .map_err(|error| error.to_string())?
+        .update_collection_with_origin(&id, upsert, "desktop")
+        .map_err(err_to_string)
+}
+
+#[tauri::command]
+fn delete_collection(state: State<Arc<AppState>>, id: String) -> Result<(), String> {
+    state
+        .core
+        .lock()
+        .map_err(|error| error.to_string())?
+        .delete_collection_with_origin(&id, "desktop")
+        .map_err(err_to_string)
+}
+
+#[tauri::command]
+fn collection_member_ids(state: State<Arc<AppState>>, id: String) -> Result<Vec<String>, String> {
+    state
+        .core
+        .lock()
+        .map_err(|error| error.to_string())?
+        .collection_member_ids(&id)
+        .map_err(err_to_string)
+}
+
+#[tauri::command]
+fn set_collection_members(
+    state: State<Arc<AppState>>,
+    id: String,
+    project_ids: Vec<String>,
+) -> Result<ProjectCollection, String> {
+    state
+        .core
+        .lock()
+        .map_err(|error| error.to_string())?
+        .set_collection_members_with_origin(&id, &project_ids, "desktop")
+        .map_err(err_to_string)
+}
+
+#[tauri::command]
+fn save_collection(
+    state: State<Arc<AppState>>,
+    id: Option<String>,
+    upsert: repoatlas_core::CollectionUpsert,
+    project_ids: Vec<String>,
+) -> Result<ProjectCollection, String> {
+    state
+        .core
+        .lock()
+        .map_err(|error| error.to_string())?
+        .save_collection_with_members_with_origin(id.as_deref(), upsert, &project_ids, "desktop")
+        .map_err(err_to_string)
+}
+
+#[tauri::command]
 fn search_projects(state: State<Arc<AppState>>, query: String) -> Result<Vec<SearchHit>, String> {
     state
         .core
@@ -533,6 +447,17 @@ fn get_project(
         .map_err(|err| err.to_string())?
         .get_project(&id)
         .map_err(err_to_string)
+}
+
+#[tauri::command]
+async fn get_project_brief(
+    state: State<'_, Arc<AppState>>,
+    project_id: String,
+) -> Result<repoatlas_core::ProjectBrief, String> {
+    run_blocking(state.inner().clone(), move |core| {
+        core.get_project_brief(&project_id)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -727,42 +652,6 @@ fn export_atlas_report_to(
 }
 
 #[tauri::command]
-fn list_summaries(
-    state: State<Arc<AppState>>,
-    project_id: String,
-) -> Result<Vec<repoatlas_core::AiSummary>, String> {
-    state
-        .core
-        .lock()
-        .map_err(|err| err.to_string())?
-        .list_summaries(&project_id)
-        .map_err(err_to_string)
-}
-
-#[tauri::command]
-fn get_summary(
-    state: State<Arc<AppState>>,
-    summary_id: String,
-) -> Result<repoatlas_core::AiSummary, String> {
-    state
-        .core
-        .lock()
-        .map_err(|err| err.to_string())?
-        .get_summary(&summary_id)
-        .map_err(err_to_string)
-}
-
-#[tauri::command]
-fn accept_summary_memory(
-    state: State<Arc<AppState>>,
-    summary_id: String,
-) -> Result<repoatlas_core::AiMemoryItem, String> {
-    let core = state.core.lock().map_err(|err| err.to_string())?;
-    core.accept_summary_as_memory_with_origin(&summary_id, "desktop")
-        .map_err(err_to_string)
-}
-
-#[tauri::command]
 fn list_pending_approvals(state: State<Arc<AppState>>) -> Result<Vec<PendingApproval>, String> {
     state
         .core
@@ -770,6 +659,55 @@ fn list_pending_approvals(state: State<Arc<AppState>>) -> Result<Vec<PendingAppr
         .map_err(|err| err.to_string())?
         .list_pending_approvals()
         .map_err(err_to_string)
+}
+
+#[tauri::command]
+fn list_attention_items(
+    state: State<Arc<AppState>>,
+) -> Result<Vec<repoatlas_core::AttentionItem>, String> {
+    state
+        .core
+        .lock()
+        .map_err(|error| error.to_string())?
+        .list_attention_items()
+        .map_err(err_to_string)
+}
+
+#[tauri::command]
+fn get_attention_center(state: State<Arc<AppState>>) -> Result<AttentionCenterState, String> {
+    state
+        .core
+        .lock()
+        .map_err(|error| error.to_string())?
+        .attention_center()
+        .map_err(err_to_string)
+}
+
+#[tauri::command]
+fn get_dashboard_snapshot(state: State<Arc<AppState>>) -> Result<DashboardSnapshot, String> {
+    state
+        .core
+        .lock()
+        .map_err(|err| err.to_string())?
+        .dashboard_snapshot()
+        .map_err(err_to_string)
+}
+
+#[tauri::command]
+fn acknowledge_attention_item(
+    app: AppHandle,
+    state: State<Arc<AppState>>,
+    item_id: String,
+    source_version: String,
+) -> Result<(), String> {
+    state
+        .core
+        .lock()
+        .map_err(|error| error.to_string())?
+        .acknowledge_attention_item(&item_id, &source_version)
+        .map_err(err_to_string)?;
+    let _ = app.emit("attention://changed", ());
+    Ok(())
 }
 
 #[tauri::command]
@@ -835,10 +773,12 @@ async fn git_status(
     state: State<'_, Arc<AppState>>,
     project_id: String,
 ) -> Result<GitStatus, String> {
-    run_blocking(state.inner().clone(), move |core| {
-        core.git_status(&project_id)
+    let root = project_root_for_files(state.inner().clone(), project_id).await?;
+    tauri::async_runtime::spawn_blocking(move || {
+        repoatlas_core::git::status(&root).map_err(err_to_string)
     })
     .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -848,10 +788,12 @@ async fn git_diff(
     path: Option<String>,
     staged: bool,
 ) -> Result<GitDiff, String> {
-    run_blocking(state.inner().clone(), move |core| {
-        core.git_diff(&project_id, path.as_deref(), staged)
+    let root = project_root_for_files(state.inner().clone(), project_id).await?;
+    tauri::async_runtime::spawn_blocking(move || {
+        repoatlas_core::git::diff(&root, path.as_deref(), staged).map_err(err_to_string)
     })
     .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -887,6 +829,16 @@ fn list_active_task_runs(state: State<Arc<AppState>>) -> Result<Vec<TaskRun>, St
 }
 
 #[tauri::command]
+fn get_task_run(state: State<Arc<AppState>>, run_id: String) -> Result<TaskRun, String> {
+    state
+        .core
+        .lock()
+        .map_err(|error| error.to_string())?
+        .get_task_run(&run_id)
+        .map_err(err_to_string)
+}
+
+#[tauri::command]
 fn read_task_log(state: State<Arc<AppState>>, run_id: String) -> Result<String, String> {
     state
         .core
@@ -902,16 +854,21 @@ fn start_task(
     state: State<Arc<AppState>>,
     project_id: String,
     task_id: String,
+    allow_port_conflicts: Option<bool>,
 ) -> Result<TaskRun, String> {
-    let spec = {
+    let preflight = state
+        .port_preflights
+        .lock()
+        .map_err(|error| error.to_string())?
+        .remove(&(project_id.clone(), task_id.clone()))
+        .filter(|cached| cached.captured_at.elapsed() < std::time::Duration::from_secs(3))
+        .map(|cached| cached.conflicts);
+    let (spec, runtime_task) = {
         let core = state.core.lock().map_err(|err| err.to_string())?;
-        let detail = core.get_project(&project_id).map_err(err_to_string)?;
-        let task = detail
-            .tasks
-            .iter()
-            .find(|task| task.id == task_id)
-            .ok_or_else(|| format!("task not found: {task_id}"))?;
-        let project_path = PathBuf::from(&detail.project.canonical_path);
+        let (canonical_path, task) = core
+            .task_for_start(&project_id, &task_id)
+            .map_err(err_to_string)?;
+        let project_path = PathBuf::from(canonical_path);
         let cwd = task.cwd.as_deref().map_or_else(
             || project_path.clone(),
             |value| {
@@ -923,22 +880,73 @@ fn start_task(
                 }
             },
         );
-        TaskSpec {
-            project_id,
-            task_id: Some(task.id.clone()),
-            kind: task.kind.clone(),
-            executable: task.executable.clone(),
-            argv: task.argv.clone(),
-            cwd: Some(cwd.to_string_lossy().into_owned()),
-            shell_mode: task.shell_mode,
-        }
+        (
+            TaskSpec {
+                project_id,
+                task_id: Some(task.id.clone()),
+                kind: task.kind.clone(),
+                executable: task.executable.clone(),
+                argv: task.argv.clone(),
+                cwd: Some(cwd.to_string_lossy().into_owned()),
+                shell_mode: task.shell_mode,
+            },
+            task,
+        )
     };
-    start_task_spec(&app, state.inner().as_ref(), spec)
+    start_task_spec(
+        &app,
+        state.inner().as_ref(),
+        spec,
+        allow_port_conflicts.unwrap_or(false),
+        Some(runtime_task),
+        preflight,
+    )
 }
 
-fn start_task_spec(app: &AppHandle, state: &AppState, spec: TaskSpec) -> Result<TaskRun, String> {
+fn start_task_spec(
+    app: &AppHandle,
+    state: &AppState,
+    spec: TaskSpec,
+    allow_port_conflicts: bool,
+    supplied_runtime_metadata: Option<TaskDefinition>,
+    supplied_preflight: Option<Vec<PortConflict>>,
+) -> Result<TaskRun, String> {
     let core = state.core.lock().map_err(|err| err.to_string())?;
+    let runtime_metadata = supplied_runtime_metadata.or_else(|| {
+        spec.task_id.as_deref().and_then(|task_id| {
+            core.get_project(&spec.project_id)
+                .ok()?
+                .tasks
+                .into_iter()
+                .find(|task| task.id == task_id)
+        })
+    });
+    drop(core);
+    if let Some(task) = runtime_metadata.as_ref().filter(|_| !allow_port_conflicts) {
+        let conflicts = match supplied_preflight {
+            Some(conflicts) => conflicts,
+            None => state
+                .broker
+                .preflight_ports(&task.expected_ports)
+                .map_err(err_to_string)?,
+        };
+        if !conflicts.is_empty() {
+            let detail = conflicts
+                .iter()
+                .map(|conflict| match (&conflict.process_name, conflict.pid) {
+                    (Some(name), Some(pid)) => format!("{} ({name}, PID {pid})", conflict.port),
+                    (_, Some(pid)) => format!("{} (PID {pid})", conflict.port),
+                    _ => conflict.port.to_string(),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(format!(
+                "Expected development port is already in use: {detail}"
+            ));
+        }
+    }
     let app_handle = app.clone();
+    let core = state.core.lock().map_err(|err| err.to_string())?;
     let run = state
         .broker
         .start(
@@ -1058,6 +1066,21 @@ fn start_task_spec(app: &AppHandle, state: &AppState, spec: TaskSpec) -> Result<
             },
         )
         .map_err(err_to_string)?;
+    drop(core);
+    let runtime_config = runtime_metadata.map(|task| TaskRuntimeConfig {
+        expected_ports: task.expected_ports,
+        dev_url_scheme: task.dev_url_scheme,
+        dev_url_path: task.dev_url_path,
+    });
+    if let Some(config) = runtime_config.as_ref() {
+        state
+            .runtime_configs
+            .lock()
+            .map_err(|error| error.to_string())?
+            .insert(run.id.clone(), config.clone());
+    }
+    ensure_runtime_sampler(app.clone());
+    let core = state.core.lock().map_err(|err| err.to_string())?;
     if let Err(error) = retry_core_write(|| {
         core.record_project_event(&run.project_id, "task", "Started task", Some(&run.kind))
     }) {
@@ -1095,6 +1118,172 @@ fn start_task_spec(app: &AppHandle, state: &AppState, spec: TaskSpec) -> Result<
         return Err(err_to_string(error));
     }
     Ok(run)
+}
+
+#[tauri::command]
+fn get_task_runtime_snapshot(
+    state: State<Arc<AppState>>,
+    run_id: String,
+) -> Result<repoatlas_core::TaskRuntimeSnapshot, String> {
+    task_runtime_snapshots(state.inner().as_ref(), &[run_id])?
+        .pop()
+        .ok_or_else(|| "task is not running".to_string())
+}
+
+#[tauri::command]
+fn get_task_runtime_snapshots(
+    state: State<Arc<AppState>>,
+    run_ids: Vec<String>,
+) -> Result<Vec<repoatlas_core::TaskRuntimeSnapshot>, String> {
+    task_runtime_snapshots(state.inner().as_ref(), &run_ids)
+}
+
+fn task_runtime_snapshots(
+    state: &AppState,
+    run_ids: &[String],
+) -> Result<Vec<repoatlas_core::TaskRuntimeSnapshot>, String> {
+    let configs = state
+        .runtime_configs
+        .lock()
+        .map_err(|error| error.to_string())?;
+    let requests = run_ids
+        .iter()
+        .map(|run_id| {
+            let config = configs.get(run_id).cloned().unwrap_or(TaskRuntimeConfig {
+                expected_ports: Vec::new(),
+                dev_url_scheme: None,
+                dev_url_path: None,
+            });
+            TaskRuntimeRequest {
+                run_id: run_id.clone(),
+                expected_ports: config.expected_ports,
+                dev_url_scheme: config.dev_url_scheme,
+                dev_url_path: config.dev_url_path,
+            }
+        })
+        .collect::<Vec<_>>();
+    drop(configs);
+    let mut snapshots = state
+        .broker
+        .collect_runtime_snapshots(&requests)
+        .map_err(err_to_string)?;
+    let core = state.core.lock().map_err(|error| error.to_string())?;
+    repoatlas_core::broker::persist_runtime_snapshots(core.connection(), &mut snapshots)
+        .map_err(err_to_string)?;
+    Ok(snapshots)
+}
+
+fn ensure_runtime_sampler(app: AppHandle) {
+    let Some(state) = app.try_state::<Arc<AppState>>() else {
+        return;
+    };
+    if state
+        .runtime_sampler_started
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+        .is_err()
+    {
+        return;
+    }
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(5));
+        let Some(state) = app.try_state::<Arc<AppState>>() else {
+            return;
+        };
+        let active = match state.broker.active() {
+            Ok(runs) => runs.into_iter().collect::<HashSet<_>>(),
+            Err(_) => continue,
+        };
+        let requests = match state.runtime_configs.lock() {
+            Ok(mut configs) => {
+                configs.retain(|run_id, _| active.contains(run_id));
+                configs
+                    .iter()
+                    .map(|(run_id, config)| TaskRuntimeRequest {
+                        run_id: run_id.clone(),
+                        expected_ports: config.expected_ports.clone(),
+                        dev_url_scheme: config.dev_url_scheme.clone(),
+                        dev_url_path: config.dev_url_path.clone(),
+                    })
+                    .collect::<Vec<_>>()
+            }
+            Err(_) => continue,
+        };
+        let Ok(mut snapshots) = state.broker.collect_runtime_snapshots(&requests) else {
+            continue;
+        };
+        if snapshots.is_empty() {
+            continue;
+        }
+        let persisted = state
+            .core
+            .lock()
+            .map_err(|error| error.to_string())
+            .and_then(|core| {
+                repoatlas_core::broker::persist_runtime_snapshots(core.connection(), &mut snapshots)
+                    .map_err(err_to_string)
+            });
+        if persisted.is_ok() {
+            for snapshot in snapshots {
+                let _ = app.emit("task://runtime", snapshot);
+            }
+        }
+    });
+}
+
+#[tauri::command]
+fn preflight_task_ports(
+    state: State<Arc<AppState>>,
+    project_id: String,
+    task_id: String,
+) -> Result<Vec<repoatlas_core::PortConflict>, String> {
+    let task = state
+        .core
+        .lock()
+        .map_err(|error| error.to_string())?
+        .task_for_start(&project_id, &task_id)
+        .map_err(err_to_string)?
+        .1;
+    let conflicts = state
+        .broker
+        .preflight_ports(&task.expected_ports)
+        .map_err(err_to_string)?;
+    let mut preflights = state
+        .port_preflights
+        .lock()
+        .map_err(|error| error.to_string())?;
+    preflights.retain(|_, cached| cached.captured_at.elapsed() < std::time::Duration::from_secs(3));
+    preflights.insert(
+        (project_id, task_id),
+        CachedPortPreflight {
+            captured_at: std::time::Instant::now(),
+            conflicts: conflicts.clone(),
+        },
+    );
+    Ok(conflicts)
+}
+
+#[tauri::command]
+fn open_dev_endpoint(
+    app: AppHandle,
+    state: State<Arc<AppState>>,
+    run_id: String,
+    endpoint: String,
+) -> Result<(), String> {
+    let snapshot = get_task_runtime_snapshot(state, run_id)?;
+    if !snapshot.port_inspection_available
+        || !snapshot.endpoints.iter().any(|value| value == &endpoint)
+    {
+        return Err("development endpoint is no longer owned by this running task".into());
+    }
+    let url = url::Url::parse(&endpoint).map_err(|error| error.to_string())?;
+    if !matches!(url.scheme(), "http" | "https")
+        || !matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "::1"))
+    {
+        return Err("development endpoint must be a local HTTP URL".into());
+    }
+    app.opener()
+        .open_url(endpoint, None::<&str>)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1224,6 +1413,7 @@ fn resolve_pending_approval(
     state: State<Arc<AppState>>,
     approval_id: String,
     approved: bool,
+    allow_port_conflicts: Option<bool>,
 ) -> Result<PendingApproval, String> {
     let (approval, spec) = {
         let core = state.core.lock().map_err(|err| err.to_string())?;
@@ -1231,7 +1421,14 @@ fn resolve_pending_approval(
             .map_err(err_to_string)?
     };
     if let Some(spec) = spec {
-        let run = match start_task_spec(&app, state.inner().as_ref(), spec) {
+        let run = match start_task_spec(
+            &app,
+            state.inner().as_ref(),
+            spec,
+            allow_port_conflicts.unwrap_or(false),
+            None,
+            None,
+        ) {
             Ok(run) => run,
             Err(error) => {
                 let failure = state
@@ -1343,6 +1540,7 @@ fn cleanup_failed_approval_run(broker: &Broker, core: &Core, run_id: &str) -> Op
 
 #[tauri::command]
 async fn inspect_project_environment(
+    app: AppHandle,
     state: State<'_, Arc<AppState>>,
     project_id: String,
 ) -> Result<repoatlas_core::EnvironmentInspection, String> {
@@ -1355,10 +1553,19 @@ async fn inspect_project_environment(
             let core = state.core.lock().map_err(|err| err.to_string())?;
             core.get_project(&project_id).map_err(err_to_string)?
         };
-        Ok(repoatlas_core::environment::inspect_environment(&detail))
+        let inspection = repoatlas_core::environment::inspect_environment(&detail);
+        {
+            let core = state.core.lock().map_err(|err| err.to_string())?;
+            core.record_environment_inspection(&inspection)
+                .map_err(err_to_string)?;
+        }
+        Ok(inspection)
     })
     .await
     .map_err(|err| err.to_string())?
+    .inspect(|_| {
+        let _ = app.emit("attention://changed", ());
+    })
 }
 
 #[tauri::command]
@@ -1407,6 +1614,248 @@ fn read_project_file(
         .map_err(|err| err.to_string())?
         .read_project_file(&project_id, &path)
         .map_err(err_to_string)
+}
+
+async fn project_root_for_files(
+    state: Arc<AppState>,
+    project_id: String,
+) -> Result<PathBuf, String> {
+    run_blocking(state, move |core| core.project_path(&project_id)).await
+}
+
+#[tauri::command]
+async fn list_project_directory(
+    state: State<'_, Arc<AppState>>,
+    project_id: String,
+    path: String,
+    show_generated: bool,
+) -> Result<repoatlas_core::project_files::ProjectDirectoryListing, String> {
+    let root = project_root_for_files(state.inner().clone(), project_id).await?;
+    tauri::async_runtime::spawn_blocking(move || {
+        project_files::list_directory(&root, &path, show_generated).map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn read_project_file_preview(
+    state: State<'_, Arc<AppState>>,
+    project_id: String,
+    path: String,
+) -> Result<repoatlas_core::project_files::ProjectFilePreview, String> {
+    let root = project_root_for_files(state.inner().clone(), project_id).await?;
+    tauri::async_runtime::spawn_blocking(move || {
+        project_files::read_preview(&root, &path).map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn read_project_image(
+    state: State<'_, Arc<AppState>>,
+    project_id: String,
+    path: String,
+) -> Result<tauri::ipc::Response, String> {
+    let root = project_root_for_files(state.inner().clone(), project_id).await?;
+    let bytes = tauri::async_runtime::spawn_blocking(move || {
+        project_files::read_image(&root, &path).map_err(err_to_string)
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+#[tauri::command]
+async fn ensure_project_path_index(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    project_id: String,
+    include_generated: bool,
+) -> Result<ProjectPathIndexStatus, String> {
+    let app_state = state.inner().clone();
+    if let Some(existing) = app_state
+        .file_indexes
+        .lock()
+        .map_err(|error| error.to_string())?
+        .get(&project_id)
+        .filter(|job| job.include_generated == include_generated)
+        .cloned()
+    {
+        let status = existing.status();
+        if status.state != "failed" && status.state != "canceled" {
+            return Ok(status);
+        }
+    }
+
+    let root = project_root_for_files(app_state.clone(), project_id.clone()).await?;
+    let generation = app_state
+        .next_file_index_generation
+        .fetch_add(1, Ordering::Relaxed)
+        + 1;
+    let job = Arc::new(ProjectFileIndexJob {
+        project_id: project_id.clone(),
+        generation,
+        include_generated,
+        cancel: Arc::new(AtomicBool::new(false)),
+        scanned: Arc::new(AtomicUsize::new(0)),
+        indexed: Arc::new(AtomicUsize::new(0)),
+        search_cancel: Mutex::new(None),
+        state: Mutex::new(ProjectFileIndexJobState::Building),
+    });
+    {
+        let mut indexes = app_state
+            .file_indexes
+            .lock()
+            .map_err(|error| error.to_string())?;
+        if let Some(previous) = indexes.insert(project_id, job.clone()) {
+            previous.cancel.store(true, Ordering::Relaxed);
+            if let Ok(mut search) = previous.search_cancel.lock() {
+                if let Some(cancel) = search.take() {
+                    cancel.store(true, Ordering::Relaxed);
+                }
+            }
+        }
+    }
+
+    let monitor_job = job.clone();
+    let monitor_app = app.clone();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        let status = monitor_job.status();
+        let building = status.state == "building";
+        let _ = monitor_app.emit("files://index-progress", status);
+        if !building {
+            break;
+        }
+    });
+
+    let build_job = job.clone();
+    let build_lock = app_state.file_index_build_lock.clone();
+    tauri::async_runtime::spawn(async move {
+        let cancel = build_job.cancel.clone();
+        let scanned = build_job.scanned.clone();
+        let indexed = build_job.indexed.clone();
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            let _guard = build_lock
+                .lock()
+                .map_err(|_| repoatlas_core::Error::msg("file index build lock was poisoned"))?;
+            project_files::build_path_index(&root, include_generated, cancel, scanned, indexed)
+        })
+        .await;
+        let next_state = match result {
+            Ok(Ok(index)) => ProjectFileIndexJobState::Ready(Arc::new(index)),
+            Ok(Err(error)) => ProjectFileIndexJobState::Failed(error.to_string()),
+            Err(error) => ProjectFileIndexJobState::Failed(error.to_string()),
+        };
+        if let Ok(mut current) = build_job.state.lock() {
+            *current = next_state;
+        }
+        let _ = app.emit("files://index-progress", build_job.status());
+    });
+
+    Ok(job.status())
+}
+
+#[tauri::command]
+async fn search_project_paths(
+    state: State<'_, Arc<AppState>>,
+    project_id: String,
+    query: String,
+) -> Result<ProjectPathSearchResponse, String> {
+    let job = state
+        .file_indexes
+        .lock()
+        .map_err(|error| error.to_string())?
+        .get(&project_id)
+        .cloned()
+        .ok_or_else(|| "path index has not been started".to_string())?;
+    let status = job.status();
+    let index = {
+        let current = job.state.lock().map_err(|error| error.to_string())?;
+        match &*current {
+            ProjectFileIndexJobState::Ready(index) => Some(index.clone()),
+            _ => None,
+        }
+    };
+    let results = if let Some(index) = index {
+        let cancel = Arc::new(AtomicBool::new(false));
+        if let Ok(mut active) = job.search_cancel.lock() {
+            if let Some(previous) = active.replace(cancel.clone()) {
+                previous.store(true, Ordering::Relaxed);
+            }
+        }
+        let search_lock = state.file_search_lock.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let _guard = search_lock.lock().ok();
+            project_files::search_path_index_cancellable(&index, &query, 200, &cancel)
+        })
+        .await
+        .map_err(|error| error.to_string())?
+    } else {
+        Vec::new()
+    };
+    Ok(ProjectPathSearchResponse { status, results })
+}
+
+#[tauri::command]
+fn cancel_project_path_search(
+    state: State<Arc<AppState>>,
+    project_id: String,
+) -> Result<(), String> {
+    if let Some(job) = state
+        .file_indexes
+        .lock()
+        .map_err(|error| error.to_string())?
+        .get(&project_id)
+        .cloned()
+    {
+        if let Ok(mut search) = job.search_cancel.lock() {
+            if let Some(cancel) = search.take() {
+                cancel.store(true, Ordering::Relaxed);
+            }
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn cancel_project_path_index(
+    state: State<Arc<AppState>>,
+    project_id: String,
+) -> Result<(), String> {
+    if let Some(job) = state
+        .file_indexes
+        .lock()
+        .map_err(|error| error.to_string())?
+        .remove(&project_id)
+    {
+        job.cancel.store(true, Ordering::Relaxed);
+        if let Ok(mut search) = job.search_cancel.lock() {
+            if let Some(cancel) = search.take() {
+                cancel.store(true, Ordering::Relaxed);
+            }
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn reveal_project_path(
+    state: State<'_, Arc<AppState>>,
+    project_id: String,
+    path: String,
+) -> Result<(), String> {
+    let root = project_root_for_files(state.inner().clone(), project_id).await?;
+    let validated_root = root.clone();
+    let reveal_target = tauri::async_runtime::spawn_blocking(move || {
+        project_files::validate_existing_path(&validated_root, &path)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+    .map_err(err_to_string)?;
+    reveal_path(&reveal_target)
 }
 
 #[tauri::command]
@@ -1506,12 +1955,26 @@ fn walk_scan_root(
         cancel,
         on_progress: &emit,
     };
-    let (discovered, visited, errors, cancelled) = engine.walk().map_err(err_to_string)?;
-    let unavailable = {
+    let (discovered, visited, errors, walk_cancelled) = engine.walk().map_err(err_to_string)?;
+    let mut found_ids = HashSet::new();
+    let mut cancelled = walk_cancelled;
+    for item in &discovered {
+        if cancel.load(Ordering::Relaxed) {
+            cancelled = true;
+            break;
+        }
         let core = state.core.lock().map_err(|err| err.to_string())?;
-        core.ingest_scan(root_id, &discovered, cancelled)
-            .map_err(err_to_string)?
-    };
+        found_ids.insert(
+            core.ingest_scan_project(root_id, item)
+                .map_err(err_to_string)?,
+        );
+    }
+    let unavailable = state
+        .core
+        .lock()
+        .map_err(|err| err.to_string())?
+        .finalize_scan_ingest(root_id, &found_ids, cancelled)
+        .map_err(err_to_string)?;
     emit(ScanProgress {
         scan_id: scan_id.clone(),
         root_path: root_path.to_string(),
@@ -1560,6 +2023,13 @@ pub fn run() {
                 core: Mutex::new(core),
                 broker,
                 cancel: Arc::new(AtomicBool::new(false)),
+                runtime_configs: Mutex::new(HashMap::new()),
+                runtime_sampler_started: AtomicBool::new(false),
+                port_preflights: Mutex::new(HashMap::new()),
+                file_indexes: Mutex::new(HashMap::new()),
+                file_index_build_lock: Arc::new(Mutex::new(())),
+                file_search_lock: Arc::new(Mutex::new(())),
+                next_file_index_generation: AtomicU64::new(0),
             }));
             let handle = app.handle().clone();
             std::thread::spawn(move || {
@@ -1583,8 +2053,16 @@ pub fn run() {
             add_scan_root,
             remove_scan_root,
             list_projects,
+            list_collections,
+            create_collection,
+            update_collection,
+            delete_collection,
+            collection_member_ids,
+            set_collection_members,
+            save_collection,
             search_projects,
             get_project,
+            get_project_brief,
             read_project_readme,
             read_project_document,
             inspect_project_environment,
@@ -1592,6 +2070,14 @@ pub fn run() {
             set_project_icon,
             clear_project_icon,
             read_project_file,
+            list_project_directory,
+            read_project_file_preview,
+            read_project_image,
+            ensure_project_path_index,
+            search_project_paths,
+            cancel_project_path_search,
+            cancel_project_path_index,
+            reveal_project_path,
             reveal_project_file,
             open_project_file,
             mcp_setup_info,
@@ -1604,30 +2090,17 @@ pub fn run() {
             relocate_project,
             atlas_report,
             export_atlas_report_to,
-            list_summaries,
-            get_summary,
-            accept_summary_memory,
             list_pending_approvals,
+            list_attention_items,
+            get_attention_center,
+            get_dashboard_snapshot,
+            acknowledge_attention_item,
             resolve_pending_approval,
             export_json,
             export_json_to,
             import_json,
             import_json_from,
             backup_db,
-            list_provider_profiles,
-            upsert_provider_profile,
-            delete_provider_profile,
-            provider_presets,
-            list_memory,
-            add_memory,
-            delete_memory,
-            latest_summary,
-            conversation_summary,
-            list_conversation,
-            clear_conversation,
-            analysis_plan,
-            summarize_project,
-            ask_project,
             start_scan,
             cancel_scan,
             git_status,
@@ -1635,7 +2108,12 @@ pub fn run() {
             git_execute,
             list_task_runs,
             list_active_task_runs,
+            get_task_run,
             read_task_log,
+            get_task_runtime_snapshot,
+            get_task_runtime_snapshots,
+            preflight_task_ports,
+            open_dev_endpoint,
             start_task,
             write_task_stdin,
             stop_task,

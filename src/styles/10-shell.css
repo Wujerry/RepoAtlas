@@ -1,5 +1,5 @@
 .app-shell { height: 100%; display: grid; grid-template-rows: 48px minmax(0, 1fr); background: var(--bg); }
-.titlebar { display: grid; grid-template-columns: minmax(210px, 1fr) auto auto auto auto; align-items: center; min-width: 0; padding-left: 14px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--bg-subtle) 94%, transparent); user-select: none; }
+.titlebar { display: grid; grid-template-columns: minmax(210px, 1fr) auto auto auto; align-items: center; min-width: 0; padding-left: 14px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--bg-subtle) 94%, transparent); user-select: none; }
 .brand { display: flex; align-items: center; gap: 9px; min-width: 0; width: max-content; padding: 3px 5px 3px 0; border: 0; border-radius: 9px; background: transparent; color: var(--text); text-align: left; }
 .brand:hover { background: var(--bg-hover); }
 .brand-mark { width: 26px; height: 26px; border-radius: 8px; box-shadow: 0 0 22px var(--accent-wash); }
@@ -11,9 +11,6 @@
 .titlebar-command svg { width: 14px; }
 .titlebar-command span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .titlebar-command kbd { padding: 2px 5px; border: 1px solid var(--line); border-radius: 5px; color: var(--muted); font-size: 10px; }
-.titlebar-status { display: flex; align-items: center; gap: 6px; margin-left: 14px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
-.titlebar-status > span { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 4px var(--ok-wash); }
-.titlebar-status.is-active > span { background: var(--accent-fill); box-shadow: 0 0 0 4px var(--accent-wash); animation: status-pulse 1.4s ease-in-out infinite; }
 .window-controls { display: flex; align-self: stretch; margin-left: 12px; }
 .window-controls button { display: grid; width: 42px; border: 0; place-items: center; background: transparent; color: var(--muted); transition: background .14s ease, color .14s ease; }
 .window-controls button svg { width: 14px; height: 14px; }
@@ -34,6 +31,13 @@ html.is-pane-resizing .pane-resizer { pointer-events: auto; }
 .list-heading { flex: 1 1 auto; min-width: 0; }
 .list-heading > div { display: flex; align-items: baseline; gap: 8px; }
 .list-header h1 { margin: 0; font-size: 23px; font-weight: 660; letter-spacing: -.04em; }
+.collection-controls { display: flex; flex: 0 0 40px; min-width: 40px; }
+.collection-trigger { position: relative; display: grid; width: 40px; height: 40px; padding: 0; place-items: center; border: 1px solid var(--line); border-radius: 9px; background: transparent; color: var(--muted); transition: border-color .14s ease, background .14s ease, color .14s ease, transform .14s ease; }
+.collection-trigger:hover, .collection-trigger[data-popup-open] { border-color: var(--line-strong); background: var(--bg-hover); color: var(--text); }
+.collection-trigger.is-active { border-color: color-mix(in srgb, var(--accent) 34%, var(--line)); background: color-mix(in srgb, var(--accent-wash) 52%, transparent); color: var(--text-soft); }
+.collection-trigger:active { transform: translateY(1px) scale(.98); }
+.collection-trigger > svg { width: 17px; height: 17px; color: currentColor; }
+.collection-trigger.is-active::after { position: absolute; right: 6px; bottom: 6px; width: 4px; height: 4px; border-radius: 50%; content: ""; background: var(--accent); }
 .project-count { color: var(--muted); font-family: var(--font-mono); font-size: 10px; font-variant-numeric: tabular-nums; }
 .list-toolbar { display: grid; grid-template-columns: minmax(0, 1fr); gap: 9px; padding: 0 14px 13px; }
 .search-field { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--muted); transition: border .15s ease, background .15s ease; }
@@ -49,15 +53,14 @@ html.is-pane-resizing .pane-resizer { pointer-events: auto; }
 .scan-status { position: relative; display: grid; grid-template-columns: 1fr auto; gap: 8px; margin: 0 12px 10px; padding: 11px 11px 10px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--line)); border-radius: 11px; background: var(--accent-wash); }
 .scan-status.is-active { animation: scan-in .18s cubic-bezier(.2,.8,.2,1); }
 .scan-status-copy code { transition: opacity .16s cubic-bezier(.2,.8,.2,1); }
-.titlebar-status.is-done > span { animation: scan-done .32s cubic-bezier(.2,.8,.2,1); }
 .scan-sweep { position: absolute; inset: 0; opacity: .32; background: linear-gradient(100deg, transparent 25%, color-mix(in srgb, var(--accent) 24%, transparent), transparent 72%); transform: translateX(-100%); animation: scan-sweep 2.1s ease-in-out infinite; }
 .scan-status-copy { position: relative; display: grid; min-width: 0; }
 .scan-status-copy strong { font-size: 12px; font-weight: 650; }
 .scan-status-copy span { color: var(--text-soft); font-size: 10px; font-variant-numeric: tabular-nums; }
 .scan-status-copy code { margin-top: 4px; overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .project-scroll { min-height: 0; overflow-x: hidden; overflow-y: auto; padding-top: 6px; scroll-padding: 8px 0; outline: none; }
-.project-scroll:focus:not(:focus-visible) { box-shadow: none !important; border-color: transparent !important; }
-.project-scroll:focus-visible { box-shadow: var(--focus); border-color: transparent !important; }
+.project-scroll:focus:not(:focus-visible) { box-shadow: none !important; border-color: transparent !important; outline: none; }
+.project-scroll:focus-visible { box-shadow: none; border-color: transparent !important; outline: none; }
 .virtual-list { position: relative; width: 100%; }
 .project-row { position: relative; display: block; width: 100%; min-height: 0; padding: 9px 10px; overflow: hidden; border: 1px solid transparent; border-radius: 10px; background: transparent; color: var(--text); text-align: left; transition: background .16s cubic-bezier(.2,.8,.2,1), border-color .16s cubic-bezier(.2,.8,.2,1), box-shadow .16s cubic-bezier(.2,.8,.2,1), transform .16s cubic-bezier(.2,.8,.2,1); }
 .project-row:hover { border-color: color-mix(in srgb, var(--line) 72%, transparent); background: color-mix(in srgb, var(--bg-hover) 76%, transparent); }

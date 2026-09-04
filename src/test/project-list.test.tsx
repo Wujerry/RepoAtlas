@@ -53,27 +53,26 @@ function project(id: string, canonicalPath: string): ProjectSummary {
 
 function renderList(overrides: Partial<React.ComponentProps<typeof ProjectList>> = {}) {
   const projects = [project("atlas", "C:\\code\\atlas"), project("portal", "C:\\code\\portal")];
-  return render(
-    <ProjectList
-      projects={projects}
-      allProjects={projects}
-      selectedId="atlas"
-      onSelect={vi.fn()}
-      query=""
-      onQuery={vi.fn()}
-      filters={{ language: "", tag: "" }}
-      onFilters={vi.fn()}
-      scanning={false}
-      progress={null}
-      t={t}
-      empty="Empty"
-      onAddRoot={vi.fn()}
-      onRegister={vi.fn()}
-      onScan={vi.fn()}
-      onCancelScan={vi.fn()}
-      {...overrides}
-    />,
-  );
+  const props = {
+    projects,
+    allProjects: projects,
+    selectedId: "atlas",
+    onSelect: vi.fn(),
+    query: "",
+    onQuery: vi.fn(),
+    filters: { language: "", tag: "" },
+    onFilters: vi.fn(),
+    scanning: false,
+    progress: null,
+    t,
+    empty: "Empty",
+    onAddRoot: vi.fn(),
+    onRegister: vi.fn(),
+    onScan: vi.fn(),
+    onCancelScan: vi.fn(),
+    ...overrides,
+  };
+  return { ...render(<ProjectList {...props} />), props, projects };
 }
 
 function rect(height: number): DOMRect {
@@ -109,6 +108,15 @@ describe("ProjectList tree", () => {
     fireEvent.keyDown(tree, { key: "ArrowDown" });
     fireEvent.keyDown(tree, { key: "ArrowDown" });
     expect(tree).toHaveAttribute("aria-activedescendant", "project:atlas");
+  });
+
+  it("expands groups that only appear after the first async project load", () => {
+    const view = renderList({ projects: [], allProjects: [] });
+    expect(screen.queryByRole("treeitem")).not.toBeInTheDocument();
+
+    view.rerender(<ProjectList {...view.props} projects={view.projects} allProjects={view.projects} />);
+
+    expect(screen.getByRole("treeitem", { name: /code/ })).toHaveAttribute("aria-expanded", "true");
   });
 
   it("keeps project icons decorative and out of the accessible name", async () => {
@@ -221,6 +229,43 @@ describe("ProjectList tree", () => {
     fireEvent.click(screen.getByRole("tab", { name: t("archived") }));
     expect(onScope).toHaveBeenCalledWith("archived");
   });
+
+  it("adds and removes projects through collection-aware context actions", async () => {
+    const onAddToCollection = vi.fn();
+    const onRemoveFromCollection = vi.fn();
+    const collections = [{ id: "daily", name: "Daily work", description: null, projectCount: 0, createdAt: "2026-09-02T00:00:00Z", updatedAt: "2026-09-02T00:00:00Z" }];
+    const view = renderList({ collections, onAddToCollection });
+    let option = await screen.findByRole("treeitem", { name: "atlas" });
+    fireEvent.contextMenu(within(option).getByRole("button", { name: "atlas" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: `${t("addToCollection")} · Daily work` }));
+    expect(onAddToCollection).toHaveBeenCalledWith("atlas", "daily");
+
+    view.rerender(<ProjectList
+      projects={[project("atlas", "C:\\code\\atlas"), project("portal", "C:\\code\\portal")]}
+      allProjects={[project("atlas", "C:\\code\\atlas"), project("portal", "C:\\code\\portal")]}
+      selectedId="atlas"
+      onSelect={vi.fn()}
+      query=""
+      onQuery={vi.fn()}
+      filters={{ language: "", tag: "" }}
+      onFilters={vi.fn()}
+      scanning={false}
+      progress={null}
+      t={t}
+      empty="Empty"
+      onAddRoot={vi.fn()}
+      onRegister={vi.fn()}
+      onScan={vi.fn()}
+      onCancelScan={vi.fn()}
+      collections={collections}
+      selectedCollectionId="daily"
+      onRemoveFromCollection={onRemoveFromCollection}
+    />);
+    option = await screen.findByRole("treeitem", { name: "atlas" });
+    fireEvent.contextMenu(within(option).getByRole("button", { name: "atlas" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("removeFromCollection") }));
+    expect(onRemoveFromCollection).toHaveBeenCalledWith("atlas", "daily");
+  });
   it("uses listbox options in flat mode without treeitem semantics", async () => {
     renderList();
     await waitFor(() => expect(screen.getByRole("treeitem", { name: "atlas" })).toBeInTheDocument());
@@ -248,12 +293,23 @@ describe("ProjectList tree", () => {
     await waitFor(() => expect(container.querySelectorAll(".virtual-row").length).toBeGreaterThan(0));
     expect(container.querySelectorAll(".virtual-row").length).toBeLessThan(projects.length);
   });
-  it("keeps a scan status slot and does not wrap the add-root action into the footer", async () => {
-    const { container, rerender } = renderList();
+  it("groups common project actions under one add menu and keeps the scan status slot", async () => {
+    const onRegister = vi.fn();
+    const onAddRoot = vi.fn();
+    const onScan = vi.fn();
+    const { container, rerender } = renderList({ onRegister, onAddRoot, onScan });
     await waitFor(() => expect(screen.getByRole("treeitem", { name: "atlas" })).toBeInTheDocument());
     expect(container.querySelector(".scan-status")).toBeTruthy();
-    expect(container.querySelector(".list-header-actions")?.textContent).toContain(t("addRootShort"));
-    expect(container.querySelector(".list-header-actions")?.textContent).toContain(t("discoverShort"));
+    expect(container.querySelector(".list-header-actions")?.textContent).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: t("projectActions") }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("register") }));
+    expect(onRegister).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: t("projectActions") }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("addRoot") }));
+    expect(onAddRoot).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: t("projectActions") }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("scanAll") }));
+    expect(onScan).toHaveBeenCalledOnce();
     expect(container.querySelector(".list-footer")?.textContent).not.toContain(t("addRootShort"));
     expect(container.querySelector(".list-footer")?.textContent).not.toContain(t("discoverProjects"));
 

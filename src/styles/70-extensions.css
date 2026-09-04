@@ -11,7 +11,13 @@
 .list-header { grid-row: 1; }
 .list-header-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; min-width: 0; }
 .list-header-actions .button { min-width: 0; overflow: hidden; white-space: nowrap; }
+.library-actions-trigger { display: grid; width: 36px; height: 36px; padding: 0; border: 1px solid var(--line); border-radius: 9px; place-items: center; background: var(--bg-subtle); color: var(--text-soft); transition: border-color .14s ease, background .14s ease, color .14s ease, transform .14s ease; }
+.library-actions-trigger:hover, .library-actions-trigger[data-popup-open] { border-color: var(--line-strong); background: var(--bg-elevated); color: var(--text); }
+.library-actions-trigger:active { transform: translateY(1px) scale(.97); }
+.library-actions-trigger svg { width: 16px; height: 16px; }
 .list-toolbar { grid-row: 2; }
+.list-toolbar-primary { display: flex; align-items: stretch; gap: 6px; min-width: 0; }
+.list-toolbar-primary .scope-tabs { flex: 1 1 auto; min-width: 0; }
 .scan-status { grid-row: 3; }
 .project-scroll { grid-row: 4; }
 .list-footer { grid-row: 5; }
@@ -31,19 +37,21 @@
 .path-tree-group-count { min-width: 18px; padding: 0 4px; color: var(--muted); font-family: var(--font-mono); font-size: 9.5px; text-align: right; }
 .virtual-row-project-content { position: relative; }
 .path-tree-project-row, .path-tree-project-row.active { border: 0; background: transparent; box-shadow: none; }
+.path-tree-group-row[data-tree-active] { background: color-mix(in srgb, var(--bg-hover) 70%, transparent); }
+.path-tree-project-row[data-tree-active] .project-row:not(.active) { border-color: color-mix(in srgb, var(--line) 72%, transparent); background: color-mix(in srgb, var(--bg-hover) 76%, transparent); }
 .project-blurb { display: block; min-width: 0; overflow: hidden; margin: 0; color: var(--text-soft); font-size: 11px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
 .list-toolbar-meta { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
-.list-view-tools { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; }
-.sort-trigger { display: flex; max-width: 190px; height: 36px; padding: 0 10px 0 9px; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-subtle); color: var(--text-soft); font-size: 11px; transition: color .14s ease, background .14s ease, border-color .14s ease; }
+.list-view-tools { display: flex; flex: 0 0 auto; align-items: center; gap: 5px; }
+.sort-trigger { display: grid; width: 36px; height: 36px; padding: 0; place-items: center; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--muted); transition: color .14s ease, background .14s ease, border-color .14s ease; }
 .sort-trigger:hover { background: var(--bg-elevated); border-color: var(--line-strong); color: var(--text); }
 .sort-trigger svg { flex: 0 0 auto; width: 14px; height: 14px; }
-.sort-trigger span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .list-view-toggle { display: flex; margin-left: auto; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-subtle); }
 .list-view-toggle button { display: grid; width: 30px; height: 32px; padding: 0; border: 0; border-radius: 6px; place-items: center; background: transparent; color: var(--muted); }
 .list-view-toggle button.active { background: var(--bg-elevated); color: var(--text); box-shadow: var(--shadow-soft); }
 .scope-tabs { display: flex; gap: 3px; padding: 3px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg-subtle); }
-.scope-tabs button { flex: 1 1 0; min-width: 0; min-height: 32px; padding: 0 4px; overflow: hidden; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-size: 10.5px; white-space: nowrap; text-overflow: ellipsis; }
+.scope-tabs button { display: grid; flex: 1 1 0; min-width: 0; min-height: 32px; padding: 0; overflow: hidden; border: 0; border-radius: 7px; place-items: center; background: transparent; color: var(--muted); }
 .scope-tabs button.active { background: var(--bg-elevated); color: var(--text); box-shadow: var(--shadow-soft); }
+.scope-tabs button svg { width: 16px; height: 16px; }
 .list-view-toggle svg { width: 14px; height: 14px; }
 .facet-row { flex: 1 1 0; min-width: 0; }
 .project-card-editor { display: grid; gap: 8px; width: 100%; padding: 9px 10px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--bg-elevated); box-shadow: 0 6px 18px color-mix(in srgb, var(--bg) 18%, transparent); }

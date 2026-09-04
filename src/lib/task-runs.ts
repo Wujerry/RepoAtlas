@@ -5,6 +5,7 @@ export const MAX_RECENT_RUNS = 20;
 export const MAX_TERMINALS = 4;
 
 type Listener = () => void;
+type LogListener = (log: string) => void;
 
 type TaskRunState = {
   runs: TaskRun[];
@@ -17,6 +18,10 @@ type TaskRunState = {
 };
 
 const listeners = new Set<Listener>();
+const metadataListeners = new Set<Listener>();
+const logListeners = new Map<string, Set<LogListener>>();
+const pendingLogChunks = new Map<string, string[]>();
+let logFlushTimer: ReturnType<typeof setTimeout> | undefined;
 let state: TaskRunState = {
   runs: [],
   recent: [],
@@ -28,6 +33,40 @@ let started = false;
 
 function emit() {
   listeners.forEach((listener) => listener());
+}
+
+function emitMetadata() {
+  metadataListeners.forEach((listener) => listener());
+  emit();
+}
+
+function notifyLog(runId: string) {
+  const log = state.logs[runId] ?? "";
+  logListeners.get(runId)?.forEach((listener) => listener(log));
+}
+
+function flushPendingLogs() {
+  logFlushTimer = undefined;
+  if (pendingLogChunks.size === 0) return;
+  const logs = { ...state.logs };
+  const changed: string[] = [];
+  pendingLogChunks.forEach((chunks, runId) => {
+    logs[runId] = ((logs[runId] ?? "") + chunks.join("")).slice(-200000);
+    changed.push(runId);
+  });
+  pendingLogChunks.clear();
+  state = { ...state, logs };
+  emit();
+  changed.forEach(notifyLog);
+}
+
+function enqueueLogChunk(chunk: LogChunk) {
+  const chunks = pendingLogChunks.get(chunk.runId) ?? [];
+  chunks.push(chunk.text);
+  pendingLogChunks.set(chunk.runId, chunks);
+  if (logFlushTimer === undefined) {
+    logFlushTimer = setTimeout(flushPendingLogs, 50);
+  }
 }
 
 function upsertRun(run: TaskRun) {
@@ -44,6 +83,11 @@ function upsertRun(run: TaskRun) {
       ? state.selectedId
       : run.id,
   };
+  const retained = new Set([...state.runs, ...state.recent].map((item) => item.id));
+  state = {
+    ...state,
+    logs: Object.fromEntries(Object.entries(state.logs).filter(([id]) => retained.has(id))),
+  };
 }
 
 export function getTaskRunSnapshot(): TaskRunState {
@@ -53,6 +97,29 @@ export function getTaskRunSnapshot(): TaskRunState {
 export function subscribeTaskRuns(listener: Listener) {
   listeners.add(listener);
   return () => listeners.delete(listener);
+}
+
+export function getActiveTaskRunsSnapshot(): TaskRun[] {
+  return state.runs;
+}
+
+export function subscribeActiveTaskRuns(listener: Listener) {
+  metadataListeners.add(listener);
+  return () => metadataListeners.delete(listener);
+}
+
+export function getTaskLog(runId: string): string {
+  return state.logs[runId] ?? "";
+}
+
+export function subscribeTaskLog(runId: string, listener: LogListener) {
+  const listenersForRun = logListeners.get(runId) ?? new Set<LogListener>();
+  listenersForRun.add(listener);
+  logListeners.set(runId, listenersForRun);
+  return () => {
+    listenersForRun.delete(listener);
+    if (listenersForRun.size === 0) logListeners.delete(runId);
+  };
 }
 
 export function selectTaskRun(id?: string) {
@@ -70,13 +137,18 @@ export function setInputOwner(runId?: string) {
   emit();
 }
 
-export async function refreshTaskRuns() {
+export async function refreshTaskRuns(options: { hydrateLogs?: boolean; refreshProjectNames?: boolean } = {}) {
+  const refreshNames = options.refreshProjectNames || Object.keys(state.projectNames).length === 0;
   const [runs, projects] = await Promise.all([
     api.listActiveTaskRuns(),
-    api.listProjects({ includeArchived: true }),
+    refreshNames ? api.listProjects({ includeArchived: true }) : Promise.resolve(undefined),
   ]);
-  const names = Object.fromEntries(projects.map((project) => [project.id, project.displayName]));
-  const tails = await Promise.all(runs.map(async (run) => [run.id, await api.readTaskLog(run.id)] as const));
+  const names = projects
+    ? Object.fromEntries(projects.map((project) => [project.id, project.displayName]))
+    : state.projectNames;
+  const tails = options.hydrateLogs
+    ? await Promise.all(runs.map(async (run) => [run.id, await api.readTaskLog(run.id)] as const))
+    : [];
   state = {
     ...state,
     runs,
@@ -84,13 +156,29 @@ export async function refreshTaskRuns() {
     logs: { ...state.logs, ...Object.fromEntries(tails) },
     selectedId: state.selectedId && runs.some((run) => run.id === state.selectedId) ? state.selectedId : runs[0]?.id ?? state.selectedId,
   };
-  emit();
+  emitMetadata();
+  tails.forEach(([runId]) => notifyLog(runId));
 }
 
 export function rememberStartedRun(run: TaskRun) {
   upsertRun(run);
   state = { ...state, logs: { ...state.logs, [run.id]: state.logs[run.id] ?? "" } };
-  emit();
+  emitMetadata();
+  notifyLog(run.id);
+}
+
+export async function openTaskRun(runId: string) {
+  const [run, output] = await Promise.all([api.getTaskRun(runId), api.readTaskLog(runId)]);
+  upsertRun(run);
+  state = {
+    ...state,
+    recent: [run, ...state.recent.filter((item) => item.id !== run.id)].slice(0, MAX_RECENT_RUNS),
+    logs: { ...state.logs, [run.id]: output },
+    selectedId: run.id,
+    layout: "focus",
+  };
+  emitMetadata();
+  notifyLog(run.id);
 }
 
 export async function startTaskRunListeners() {
@@ -98,13 +186,10 @@ export async function startTaskRunListeners() {
   started = true;
   await Promise.all([
     onTaskLog((chunk: LogChunk) => {
-      state = {
-        ...state,
-        logs: { ...state.logs, [chunk.runId]: ((state.logs[chunk.runId] ?? "") + chunk.text).slice(-200000) },
-      };
-      emit();
+      enqueueLogChunk(chunk);
     }),
     onTaskExited(async (run) => {
+      flushPendingLogs();
       upsertRun(run);
       try {
         const output = await api.readTaskLog(run.id);
@@ -112,12 +197,13 @@ export async function startTaskRunListeners() {
       } catch {
         /* keep streamed log */
       }
-      emit();
+      emitMetadata();
+      notifyLog(run.id);
     }),
     onTaskPersistenceFailed((failure) => {
       if (failure.run) upsertRun(failure.run);
-      emit();
+      emitMetadata();
     }),
   ]);
-  await refreshTaskRuns();
+  await refreshTaskRuns({ hydrateLogs: true, refreshProjectNames: true });
 }

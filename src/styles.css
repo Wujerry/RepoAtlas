@@ -1,10 +1,13 @@
 @import "tailwindcss";
+@import "katex/dist/katex.min.css";
 @import "./styles/00-foundation.css";
 @import "./styles/10-shell.css";
+@import "./styles/15-dashboard.css";
 @import "./styles/20-overview.css";
 @import "./styles/30-content-git.css";
+@import "./styles/35-files.css";
 @import "./styles/40-tasks.css";
-@import "./styles/50-knowledge-settings.css";
+@import "./styles/50-feedback-settings.css";
 @import "./styles/60-command-dialog.css";
 @import "./styles/70-extensions.css";
 @import "./styles/80-help-settings.css";

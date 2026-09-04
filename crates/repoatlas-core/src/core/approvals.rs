@@ -76,6 +76,11 @@ impl Core {
             cwd,
             task_id: spec.task_id,
             shell_mode: spec.shell_mode,
+            expected_ports: task
+                .map(|task| task.expected_ports.clone())
+                .unwrap_or_default(),
+            dev_url_path: task.and_then(|task| task.dev_url_path.clone()),
+            dev_url_scheme: task.and_then(|task| task.dev_url_scheme.clone()),
             status: "pending".into(),
             origin: if origin.trim().is_empty() {
                 "desktop".into()
@@ -88,9 +93,10 @@ impl Core {
             resolved_at: None,
         };
         let argv_json = to_json(&approval.argv)?;
+        let expected_ports_json = to_json(&approval.expected_ports)?;
         self.with_immediate_transaction(|core| {
             core.conn.execute(
-                "INSERT INTO pending_approvals (id, project_id, kind, title, detail, executable, argv_json, cwd, task_id, shell_mode, status, origin, run_id, error, created_at, resolved_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                "INSERT INTO pending_approvals (id, project_id, kind, title, detail, executable, argv_json, cwd, task_id, shell_mode, status, origin, run_id, error, created_at, resolved_at, expected_ports_json, dev_url_path, dev_url_scheme) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
                 params![
                     approval.id,
                     approval.project_id,
@@ -108,6 +114,9 @@ impl Core {
                     approval.error,
                     approval.created_at,
                     approval.resolved_at
+                    ,expected_ports_json
+                    ,approval.dev_url_path
+                    ,approval.dev_url_scheme
                 ],
             )?;
             core.record_audit_event(
@@ -125,7 +134,7 @@ impl Core {
 
     pub fn list_pending_approvals(&self) -> Result<Vec<PendingApproval>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, project_id, kind, title, detail, executable, argv_json, cwd, task_id, shell_mode, status, origin, run_id, error, created_at, resolved_at FROM pending_approvals WHERE status = 'pending' ORDER BY datetime(created_at) DESC",
+            "SELECT id, project_id, kind, title, detail, executable, argv_json, cwd, task_id, shell_mode, status, origin, run_id, error, created_at, resolved_at, expected_ports_json, dev_url_path, dev_url_scheme FROM pending_approvals WHERE status = 'pending' ORDER BY datetime(created_at) DESC",
         )?;
         let rows = stmt.query_map([], approval_from_row)?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -135,7 +144,7 @@ impl Core {
     pub fn get_pending_approval(&self, id: &str) -> Result<PendingApproval> {
         self.conn
             .query_row(
-                "SELECT id, project_id, kind, title, detail, executable, argv_json, cwd, task_id, shell_mode, status, origin, run_id, error, created_at, resolved_at FROM pending_approvals WHERE id = ?1",
+                "SELECT id, project_id, kind, title, detail, executable, argv_json, cwd, task_id, shell_mode, status, origin, run_id, error, created_at, resolved_at, expected_ports_json, dev_url_path, dev_url_scheme FROM pending_approvals WHERE id = ?1",
                 params![id],
                 approval_from_row,
             )
@@ -266,7 +275,10 @@ impl Core {
             || task.executable != approval.executable.clone().unwrap_or_default()
             || task.argv != approval.argv
             || current_cwd != approved_cwd
-            || task.shell_mode != approval.shell_mode)
+            || task.shell_mode != approval.shell_mode
+            || task.expected_ports != approval.expected_ports
+            || task.dev_url_path != approval.dev_url_path
+            || task.dev_url_scheme != approval.dev_url_scheme)
     }
 
     pub fn mark_task_approval_started(&self, id: &str, run_id: &str) -> Result<PendingApproval> {
@@ -345,6 +357,7 @@ impl Core {
 
 fn approval_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PendingApproval> {
     let argv_json: String = row.get(6)?;
+    let expected_ports_json: String = row.get(16)?;
     Ok(PendingApproval {
         id: row.get(0)?,
         project_id: row.get(1)?,
@@ -362,6 +375,9 @@ fn approval_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PendingApprova
         error: row.get(13)?,
         created_at: row.get(14)?,
         resolved_at: row.get(15)?,
+        expected_ports: serde_json::from_str(&expected_ports_json).unwrap_or_default(),
+        dev_url_path: row.get(17)?,
+        dev_url_scheme: row.get(18)?,
     })
 }
 

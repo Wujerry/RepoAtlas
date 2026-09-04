@@ -255,7 +255,8 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     seed_project_events(&tx, now)?;
-    seed_ai_knowledge(&tx, now)?;
+    seed_collections(&tx, now)?;
+    seed_environment_observations(&tx, now)?;
     seed_approvals(&tx, &showcase, now)?;
     seed_task_runs(&tx, &log_dir, &showcase, now)?;
     seed_audit_events(&tx, now)?;
@@ -267,7 +268,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         paths::path_to_string(&showcase),
     );
     println!("Database: {}", paths::path_to_string(&db_path));
-    println!("Task runs: 5 | events: 8 | pending approvals: 2 | AI summaries: 2 | AI memory: 3");
+    println!(
+        "Collections: 2 | task runs: 5 | events: 8 | environment observations: 2 | pending approvals: 2"
+    );
     Ok(())
 }
 
@@ -372,10 +375,14 @@ fn clear_demo_records(conn: &Connection) -> Result<(), Box<dyn Error>> {
     for table in [
         "project_fts_unicode",
         "project_fts_trigram",
+        "project_collection_members",
+        "project_collections",
         "project_tags",
         "task_runs",
         "project_events",
         "pending_approvals",
+        "environment_observations",
+        "attention_acknowledgements",
         "ai_memory",
         "ai_summaries",
         "project_conversations",
@@ -418,17 +425,38 @@ fn demo_tasks(slug: &str) -> Vec<TaskDefinition> {
                 cwd: None,
                 inferred: false,
                 shell_mode: false,
+                expected_ports: Vec::new(),
+                dev_url_path: None,
+                dev_url_scheme: None,
             }
         };
+    let preview_task = |id: &str, name: &str, description: &str, port: u16| {
+        let mut value = task(
+            id,
+            "dev",
+            name,
+            description,
+            "python",
+            &[
+                "-m",
+                "http.server",
+                &port.to_string(),
+                "--bind",
+                "127.0.0.1",
+            ],
+        );
+        value.expected_ports = vec![port];
+        value.dev_url_path = Some("/".into());
+        value.dev_url_scheme = Some("http".into());
+        value
+    };
     match slug {
         "atlas-dashboard" => vec![
-            task(
+            preview_task(
                 "dev",
-                "dev",
-                "Start preview",
-                "Open the local dashboard preview.",
-                "pnpm",
-                &["dev"],
+                "Start local preview",
+                "Serve the fictional dashboard on localhost so the runtime monitor can show its process tree and port.",
+                4173,
             ),
             task(
                 "test",
@@ -586,13 +614,11 @@ fn demo_tasks(slug: &str) -> Vec<TaskDefinition> {
             ),
         ],
         "ops-playbook" => vec![
-            task(
+            preview_task(
                 "preview",
-                "dev",
                 "Preview playbook",
-                "Serve the operational notes locally.",
-                "python",
-                &["-m", "http.server", "4173"],
+                "Serve the operational notes on a second localhost port for the cross-Project task workbench.",
+                4174,
             ),
             task(
                 "check",
@@ -703,52 +729,103 @@ fn seed_project_events(
     Ok(())
 }
 
-fn seed_ai_knowledge(conn: &Connection, now: chrono::DateTime<Utc>) -> Result<(), Box<dyn Error>> {
-    let summaries = [
+fn seed_collections(conn: &Connection, now: chrono::DateTime<Utc>) -> Result<(), Box<dyn Error>> {
+    let collections = [
         (
-            "demo-summary-atlas",
-            "11111111-1111-4111-8111-111111111111",
-            "The dashboard is a small React/Vite surface organized around a fast discovery loop. Start with the Library, inspect the README and stack facts, then run the focused test or build task. The project is a good candidate for a reusable product shell because its task definitions are explicit and its evidence remains local.",
-            r#"{"files":["package.json","README.md","src/App.tsx"],"characterCount":482,"source":"demo snapshot"}"#,
+            "demo-collection-release",
+            "Release train",
+            "Projects with a build, package, or release handoff this week.",
+            &[
+                "11111111-1111-4111-8111-111111111111",
+                "22222222-2222-4222-8222-222222222222",
+                "44444444-4444-4444-8444-444444444444",
+            ][..],
         ),
         (
-            "demo-summary-pulse",
-            "88888888-8888-4888-8888-888888888888",
-            "Pulse Mobile is a compact TypeScript product surface with a healthy task set and a deliberately visible Git change. Review the staged release note separately from the unstaged status update before committing, then use the build task as the final handoff check.",
-            r#"{"files":["package.json","README.md","src/status.ts"],"characterCount":391,"source":"demo snapshot"}"#,
+            "demo-collection-field",
+            "Field products",
+            "Mobile and field-facing Projects that share one delivery window.",
+            &[
+                "66666666-6666-4666-8666-666666666666",
+                "88888888-8888-4888-8888-888888888888",
+            ][..],
         ),
     ];
-    for (index, (id, project_id, text, evidence)) in summaries.into_iter().enumerate() {
+    for (collection_index, (id, name, description, project_ids)) in
+        collections.into_iter().enumerate()
+    {
+        let created_at =
+            stamp(now - Duration::days(1) + Duration::minutes(collection_index as i64));
         conn.execute(
-            "INSERT INTO ai_summaries (id, project_id, provider_id, model, evidence_snapshot, text, created_at) VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6)",
-            params![id, project_id, "local-demo-snapshot", evidence, text, stamp(now - Duration::hours((index + 1) as i64))],
+            "INSERT INTO project_collections (id, name, description, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)",
+            params![id, name, description, created_at],
         )?;
+        for (member_index, project_id) in project_ids.iter().enumerate() {
+            conn.execute(
+                "INSERT INTO project_collection_members (collection_id, project_id, created_at) VALUES (?1, ?2, ?3)",
+                params![id, project_id, stamp(now - Duration::hours((member_index + 1) as i64))],
+            )?;
+        }
     }
+    Ok(())
+}
 
-    let memories = [
-        ("demo-memory-atlas", "11111111-1111-4111-8111-111111111111", "Keep the Library entry point lightweight: discovery should remain useful even when network-dependent AI features are unavailable."),
-        ("demo-memory-signal", "22222222-2222-4222-8222-222222222222", "Release builds require the desktop shell and the shared Rust core to stay on the same version."),
-        ("demo-memory-pulse", "88888888-8888-4888-8888-888888888888", "Review staged and unstaged changes independently before committing a mobile release."),
+fn seed_environment_observations(
+    conn: &Connection,
+    now: chrono::DateTime<Utc>,
+) -> Result<(), Box<dyn Error>> {
+    let observations = [
+        (
+            "11111111-1111-4111-8111-111111111111",
+            serde_json::json!({
+                "projectId": "11111111-1111-4111-8111-111111111111",
+                "runtimes": [{
+                    "ecosystem": "node",
+                    "label": "Node.js",
+                    "constraint": ">=20",
+                    "source": "package.json#engines.node",
+                    "localVersion": "24.11.0",
+                    "matchState": "match"
+                }],
+                "files": [
+                    { "kind": "manifest", "path": "package.json", "source": "package.json" },
+                    { "kind": "lockfile", "path": "pnpm-lock.yaml", "source": "pnpm-lock.yaml" }
+                ]
+            }),
+            "demo-node-20-match",
+        ),
+        (
+            "33333333-3333-4333-8333-333333333333",
+            serde_json::json!({
+                "projectId": "33333333-3333-4333-8333-333333333333",
+                "runtimes": [{
+                    "ecosystem": "python",
+                    "label": "Python",
+                    "constraint": ">=4.0",
+                    "source": "pyproject.toml#project.requires-python",
+                    "localVersion": "3.13.7",
+                    "matchState": "mismatch"
+                }],
+                "files": [
+                    { "kind": "manifest", "path": "pyproject.toml", "source": "pyproject.toml" },
+                    { "kind": "lockfile", "path": "uv.lock", "source": "uv.lock" }
+                ]
+            }),
+            "demo-python-4-mismatch",
+        ),
     ];
-    for (index, (id, project_id, text)) in memories.into_iter().enumerate() {
+    for (index, (project_id, inspection, condition_version)) in observations.into_iter().enumerate()
+    {
         conn.execute(
-            "INSERT INTO ai_memory (id, project_id, text, created_at) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO environment_observations (project_id, inspection_json, observed_at, condition_version) VALUES (?1, ?2, ?3, ?4)",
             params![
-                id,
                 project_id,
-                text,
-                stamp(now - Duration::days((index + 1) as i64))
+                serde_json::to_string(&inspection)?,
+                stamp(now - Duration::minutes((index * 5 + 4) as i64)),
+                condition_version,
             ],
         )?;
     }
-    conn.execute(
-        "INSERT INTO project_conversations (project_id, messages, updated_at) VALUES (?1, ?2, ?3)",
-        params![
-            "11111111-1111-4111-8111-111111111111",
-            r#"[{"role":"user","content":"What should I inspect first?"},{"role":"assistant","content":"Start with the README, then run the focused test task. The local evidence points to a small, healthy React/Vite surface."}]"#,
-            stamp(now - Duration::minutes(37)),
-        ],
-    )?;
     Ok(())
 }
 
@@ -804,21 +881,36 @@ fn seed_task_runs(
     let signal = paths::path_to_string(&showcase.join("signal-console"));
     let pulse = paths::path_to_string(&showcase.join("pulse-mobile"));
     let runs = [
-        ("demo-run-atlas-build", "11111111-1111-4111-8111-111111111111", "build", "pnpm", r#"["build"]"#, atlas.clone(), "succeeded", Some(0_i64), "Build complete\n  dist/index.html  42.8 kB\n  ✓ 128 modules transformed\n"),
-        ("demo-run-atlas-test", "11111111-1111-4111-8111-111111111111", "test", "pnpm", r#"["test","--","--run"]"#, atlas, "succeeded", Some(0_i64), " RUN  v4.1.11\n ✓ src/lib/search.test.ts (8 tests)\n Test Files  1 passed\n"),
-        ("demo-run-signal-check", "22222222-2222-4222-8222-222222222222", "check", "cargo", r#"["clippy","--all-targets"]"#, signal, "failed", Some(1_i64), "Checking signal-console v0.1.0\nwarning: unused import\nerror: clippy found 1 warning as error\n"),
-        ("demo-run-pulse-test", "88888888-8888-4888-8888-888888888888", "test", "pnpm", r#"["test","--","--run"]"#, pulse.clone(), "succeeded", Some(0_i64), " RUN  v4.1.11\n ✓ src/status.test.ts (12 tests)\n Test Files  1 passed\n"),
-        ("demo-run-pulse-build", "88888888-8888-4888-8888-888888888888", "build", "pnpm", r#"["build"]"#, pulse, "succeeded", Some(0_i64), "vite v7.0.4 building for production...\n✓ built in 1.24s\n"),
+        ("demo-run-atlas-build", "11111111-1111-4111-8111-111111111111", "build", "pnpm", r#"["build"]"#, atlas.clone(), "succeeded", Some(0_i64), Some(38.4_f64), Some(224_395_264_i64), "[]", "Build complete\n  dist/index.html  42.8 kB\n  ✓ 128 modules transformed\n"),
+        ("demo-run-atlas-test", "11111111-1111-4111-8111-111111111111", "test", "pnpm", r#"["test","--","--run"]"#, atlas, "succeeded", Some(0_i64), Some(24.1_f64), Some(183_500_800_i64), "[]", " RUN  v4.1.11\n ✓ src/lib/search.test.ts (8 tests)\n Test Files  1 passed\n"),
+        ("demo-run-signal-check", "22222222-2222-4222-8222-222222222222", "check", "cargo", r#"["clippy","--all-targets"]"#, signal, "failed", Some(1_i64), Some(61.7_f64), Some(318_767_104_i64), "[]", "Checking signal-console v0.1.0\nwarning: unused import\nerror: clippy found 1 warning as error\n"),
+        ("demo-run-pulse-test", "88888888-8888-4888-8888-888888888888", "test", "pnpm", r#"["test","--","--run"]"#, pulse.clone(), "succeeded", Some(0_i64), Some(19.3_f64), Some(165_675_008_i64), "[]", " RUN  v4.1.11\n ✓ src/status.test.ts (12 tests)\n Test Files  1 passed\n"),
+        ("demo-run-pulse-build", "88888888-8888-4888-8888-888888888888", "build", "pnpm", r#"["build"]"#, pulse, "succeeded", Some(0_i64), Some(42.8_f64), Some(251_658_240_i64), "[]", "vite v7.0.4 building for production...\n✓ built in 1.24s\n"),
     ];
-    for (index, (id, project_id, task_id, executable, argv, cwd, status, exit_code, log)) in
-        runs.into_iter().enumerate()
+    for (
+        index,
+        (
+            id,
+            project_id,
+            task_id,
+            executable,
+            argv,
+            cwd,
+            status,
+            exit_code,
+            peak_cpu,
+            peak_memory,
+            observed_ports,
+            log,
+        ),
+    ) in runs.into_iter().enumerate()
     {
         let log_path = log_dir.join(format!("{id}.log"));
         fs::write(&log_path, log)?;
         conn.execute(
             r#"INSERT INTO task_runs
-               (id, project_id, task_id, kind, executable, argv_json, cwd, shell_mode, status, exit_code, log_path, started_at, finished_at)
-               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, ?9, ?10, ?11, ?12)"#,
+               (id, project_id, task_id, kind, executable, argv_json, cwd, shell_mode, status, exit_code, log_path, started_at, finished_at, peak_cpu_percent, peak_memory_bytes, observed_ports_json)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)"#,
             params![
                 id,
                 project_id,
@@ -832,6 +924,9 @@ fn seed_task_runs(
                 paths::path_to_string(&log_path),
                 stamp(now - Duration::hours((index + 1) as i64)),
                 stamp(now - Duration::hours(index as i64)),
+                peak_cpu,
+                peak_memory,
+                observed_ports,
             ],
         )?;
     }
@@ -860,13 +955,6 @@ fn seed_audit_events(conn: &Connection, now: chrono::DateTime<Utc>) -> Result<()
             "task_approval",
             "pending",
             "MCP request is waiting for desktop approval.",
-        ),
-        (
-            "demo-audit-memory",
-            "add_memory",
-            "memory",
-            "success",
-            "User-controlled demo memory is available for review.",
         ),
     ];
     for (index, (id, action, target_type, outcome, detail)) in events.into_iter().enumerate() {
@@ -926,5 +1014,36 @@ mod tests {
                 project.slug
             );
         }
+    }
+
+    #[test]
+    fn atlas_preview_task_declares_a_safe_local_endpoint() {
+        let task = demo_tasks("atlas-dashboard")
+            .into_iter()
+            .find(|task| task.id == "dev")
+            .expect("atlas preview task");
+        assert_eq!(task.executable, "python");
+        assert_eq!(task.expected_ports, vec![4173]);
+        assert_eq!(task.dev_url_scheme.as_deref(), Some("http"));
+        assert_eq!(task.dev_url_path.as_deref(), Some("/"));
+        assert!(!task.shell_mode);
+    }
+
+    #[test]
+    fn workbench_showcase_previews_use_distinct_local_ports() {
+        let atlas = demo_tasks("atlas-dashboard")
+            .into_iter()
+            .find(|task| task.id == "dev")
+            .expect("atlas preview task");
+        let playbook = demo_tasks("ops-playbook")
+            .into_iter()
+            .find(|task| task.id == "preview")
+            .expect("playbook preview task");
+
+        assert_eq!(atlas.expected_ports, vec![4173]);
+        assert_eq!(playbook.expected_ports, vec![4174]);
+        assert_eq!(playbook.dev_url_scheme.as_deref(), Some("http"));
+        assert_eq!(playbook.dev_url_path.as_deref(), Some("/"));
+        assert!(!playbook.shell_mode);
     }
 }

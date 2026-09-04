@@ -12,24 +12,25 @@
 @keyframes menu-out { to { opacity: 0; transform: scale(.97); } }
 @keyframes toast-out { to { opacity: 0; transform: translateY(8px) scale(.98); } }
 @keyframes scan-in { from { opacity: 0; transform: translateY(-6px); } }
-@keyframes scan-done { 0%,100% { transform: scale(1); } 50% { transform: scale(1.35); } }
 
 @media (min-width: 1280px) {
 }
 
 @media (max-width: 1279px) {
   .workspace { grid-template-columns: 320px minmax(0, 1fr); }.workspace-settings, .workspace-help { grid-template-columns: minmax(0, 1fr); }
-  .titlebar-command { width: 250px; }.project-hero { gap: 18px; padding-right: 18px; padding-left: 18px; }.hero-actions { max-width: 340px; }.workspace-content { padding-right: 18px; padding-left: 18px; }.overview-layout, .knowledge-layout { grid-template-columns: 1fr; }.overview-facts, .overview-readme, .overview-notes, .summary-card, .qa-card, .memory-card { grid-column: 1; grid-row: auto; }
+  .titlebar-command { width: 250px; }.project-hero { gap: 18px; padding-right: 18px; padding-left: 18px; }.hero-actions { max-width: 340px; }.workspace-content { padding-right: 18px; padding-left: 18px; }.overview-layout { grid-template-columns: 1fr; }.overview-facts, .overview-readme, .overview-notes { grid-column: 1; grid-row: auto; }
 }
 
 @media (max-width: 1099px) {
   .workspace { grid-template-columns: 300px minmax(0, 1fr); }
   .workspace-settings, .workspace-help { grid-template-columns: minmax(0, 1fr); }
-  .titlebar { grid-template-columns: minmax(180px, 1fr) auto auto auto auto; }
+  .titlebar { grid-template-columns: minmax(180px, 1fr) auto auto auto; }
   .titlebar-command { width: 190px; }
   .titlebar-command span { display: none; }
   .titlebar-command kbd { margin-left: auto; }
   .project-hero { flex-direction: column; gap: 14px; }
+  .project-hero-side { width: 100%; min-width: 0; flex: 0 0 auto; align-content: start; justify-items: start; }
+  .project-quick-facts { width: 100%; grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .hero-actions { max-width: none; justify-content: flex-start; }
   .metric-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .metric:nth-child(2) { border-right: 0; }

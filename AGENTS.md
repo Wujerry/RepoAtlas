@@ -13,7 +13,7 @@ Work is complete when the implementation, its focused tests, and the applicable 
 
 - `src/`: React 19 and TypeScript desktop UI. `src/lib/api.ts` is the typed Tauri boundary.
 - `src-tauri/`: Tauri commands and desktop integration. Commands delegate product behavior to the shared Rust core.
-- `crates/repoatlas-core/`: authoritative application core for SQLite, scanning, Git, tasks, audit, import/export, and AI-provider behavior.
+- `crates/repoatlas-core/`: authoritative application core for SQLite, scanning, Git, tasks, approvals, audit, and import/export.
 - `crates/repoatlas-mcp/`: newline-delimited stdio MCP adapter. It must reuse `repoatlas-core`; it does not create parallel persistence or policy paths.
 - `src/test/` and `crates/repoatlas-core/tests/`: frontend and Rust integration coverage.
 
@@ -28,8 +28,8 @@ Keep business rules in `repoatlas-core` when both desktop and MCP need them. Kee
 - Structured execution: normal tasks use a program plus an argument vector through the Rust Command Broker. Shell evaluation is an explicit higher-risk mode.
 - External execution: MCP task requests become pending desktop approvals. MCP cannot perform Git writes, shell-mode evaluation, arbitrary command execution, or filesystem deletion.
 - Conservative Git: use typed operations, system Git credentials, fast-forward-only pulls, and file-granularity staging. Exclude destructive checkout and reset behavior.
-- Bounded AI: preview an Analysis Plan before sending selected project evidence externally. Never upload a whole project implicitly, fail over providers silently, or write AI Memory without user confirmation.
-- Provider ownership: manage RepoAtlas provider profiles without rewriting other tools' configuration. Third-party plugin loading remains out of first-release scope.
+- External Agent boundary: RepoAtlas launches installed coding agents and exposes typed MCP project/task context, but does not host model providers, model credentials, project chat, generated summaries, or AI Memory. The Agent client owns model interaction and any decision to read project files.
+- Agent execution: protected task requests from MCP become desktop Pending Approvals. External agents never gain Git writes, Shell Mode, arbitrary command execution, filesystem deletion, or a parallel policy path.
 - SVN scope: keep SVN support read-only for the first-release beta.
 - Secret-free storage and logs: persist credential references rather than secrets; keep audit events useful without exposing sensitive values.
 - Platform scope: Windows and macOS are first-release targets. Treat path syntax, launch behavior, title bars, and packaging as cross-platform concerns.

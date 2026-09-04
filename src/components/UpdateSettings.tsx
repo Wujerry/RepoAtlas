@@ -117,7 +117,7 @@ export function UpdateSettings({ state, locale, t, notify, onCheck, onDownload, 
   return (
     <section className="settings-card settings-updater" aria-busy={isBusy}>
       <div className="settings-card-heading">
-        <div><p className="eyebrow">04</p><h2>{t("appUpdates")}</h2></div>
+        <div><p className="eyebrow">03</p><h2>{t("appUpdates")}</h2></div>
         <div className="settings-card-action"><p>{t("appUpdatesHint")}</p><Button variant="quiet" loading={busy === "check" || state.status === "checking"} disabled={isBusy} onClick={() => void check()}><ArrowClockwise aria-hidden="true" />{t("checkForUpdates")}</Button></div>
       </div>
 

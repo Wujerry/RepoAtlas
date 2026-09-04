@@ -11,7 +11,10 @@ pub(crate) fn tool_schemas() -> Vec<Value> {
         "argv": { "type": "array", "items": { "type": "string" } },
         "cwd": { "type": ["string", "null"] },
         "inferred": { "type": "boolean" },
-        "shellMode": { "type": "boolean" }
+        "shellMode": { "type": "boolean" },
+        "expectedPorts": { "type": "array", "items": { "type": "integer", "minimum": 1, "maximum": 65535 }, "uniqueItems": true },
+        "devUrlPath": { "type": ["string", "null"] },
+        "devUrlScheme": { "type": ["string", "null"], "enum": ["http", "https", null] }
     });
     vec![
         tool_schema(
@@ -19,8 +22,44 @@ pub(crate) fn tool_schemas() -> Vec<Value> {
             "List managed projects with optional scope and search filters.",
             object_schema(json!({
                 "section": { "type": "string", "enum": ["projects", "favorites", "recent", "archived"] },
-                "search": { "type": "string" }
+                "search": { "type": "string" },
+                "collectionId": { "type": "string", "minLength": 1 }
             }), &[]),
+        ),
+        tool_schema(
+            "list_collections",
+            "List user-defined project collections and their project counts.",
+            object_schema(json!({}), &[]),
+        ),
+        tool_schema(
+            "create_collection",
+            "Create a project collection. This only changes RepoAtlas metadata.",
+            object_schema(json!({
+                "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+                "description": { "type": ["string", "null"], "maxLength": 500 }
+            }), &["name"]),
+        ),
+        tool_schema(
+            "update_collection",
+            "Rename or describe a project collection.",
+            object_schema(json!({
+                "id": { "type": "string", "minLength": 1 },
+                "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+                "description": { "type": ["string", "null"], "maxLength": 500 }
+            }), &["id", "name"]),
+        ),
+        tool_schema(
+            "delete_collection",
+            "Delete a collection record. Projects and their directories are unchanged.",
+            object_schema(json!({ "id": { "type": "string", "minLength": 1 } }), &["id"]),
+        ),
+        tool_schema(
+            "set_collection_members",
+            "Replace a collection's project membership. Project records and directories are unchanged.",
+            object_schema(json!({
+                "id": { "type": "string", "minLength": 1 },
+                "projectIds": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true }
+            }), &["id", "projectIds"]),
         ),
         tool_schema(
             "search_projects",
@@ -31,6 +70,11 @@ pub(crate) fn tool_schemas() -> Vec<Value> {
             "get_project",
             "Get project detail including path, detected technology, README excerpt, tasks, environment, lineage, events, and Git snapshot.",
             object_schema(json!({ "id": { "type": "string", "minLength": 1 } }), &["id"]),
+        ),
+        tool_schema(
+            "get_project_brief",
+            "Get the structured local project brief, including detected facts, environment, tasks, recent runs, and activity.",
+            object_schema(json!({ "projectId": { "type": "string", "minLength": 1 } }), &["projectId"]),
         ),
         tool_schema(
             "register_project",
@@ -133,7 +177,10 @@ pub(crate) fn tool_schemas() -> Vec<Value> {
                     "executable": { "type": "string", "minLength": 1 },
                     "argv": { "type": "array", "items": { "type": "string" } },
                     "cwd": { "type": ["string", "null"] },
-                    "shellMode": { "type": "boolean" }
+                    "shellMode": { "type": "boolean" },
+                    "expectedPorts": { "type": "array", "items": { "type": "integer", "minimum": 1, "maximum": 65535 }, "uniqueItems": true },
+                    "devUrlPath": { "type": ["string", "null"] },
+                    "devUrlScheme": { "type": ["string", "null"], "enum": ["http", "https", null] }
                 }),
                 &["projectId", "taskId"],
             ),
@@ -209,11 +256,6 @@ pub(crate) fn tool_schemas() -> Vec<Value> {
             object_schema(json!({ "projectId": { "type": "string", "minLength": 1 } }), &["projectId"]),
         ),
         tool_schema(
-            "read_project_file",
-            "Read one detected text file inside a project. Only detected files are allowed and large files are truncated.",
-            read_project_file_schema(),
-        ),
-        tool_schema(
             "list_project_events",
             "List system-generated activity events for a project. Events are read-only.",
             object_schema(
@@ -230,68 +272,17 @@ pub(crate) fn tool_schemas() -> Vec<Value> {
             object_schema(json!({ "projectId": { "type": "string", "minLength": 1 } }), &["projectId"]),
         ),
         tool_schema(
-            "list_memory",
-            "List user-controlled AI memory items for a project.",
-            object_schema(json!({ "projectId": { "type": "string", "minLength": 1 } }), &["projectId"]),
-        ),
-        tool_schema(
-            "add_memory",
-            "Add one user-controlled AI memory item to a project.",
-            object_schema(
-                json!({
-                    "projectId": { "type": "string", "minLength": 1 },
-                    "text": { "type": "string", "minLength": 1 }
-                }),
-                &["projectId", "text"],
-            ),
-        ),
-        tool_schema(
-            "delete_memory",
-            "Delete one user-controlled AI memory item. This never touches project files.",
-            object_schema(json!({ "memoryId": { "type": "string", "minLength": 1 } }), &["memoryId"]),
-        ),
-        tool_schema(
-            "list_summaries",
-            "List saved AI summaries and their evidence snapshots for a project.",
-            object_schema(json!({ "projectId": { "type": "string", "minLength": 1 } }), &["projectId"]),
-        ),
-        tool_schema(
-            "get_summary",
-            "Get one saved AI summary including its evidence snapshot.",
-            object_schema(json!({ "summaryId": { "type": "string", "minLength": 1 } }), &["summaryId"]),
-        ),
-        tool_schema(
-            "delete_summary",
-            "Delete one saved AI summary. This only changes RepoAtlas local data.",
-            object_schema(json!({ "summaryId": { "type": "string", "minLength": 1 } }), &["summaryId"]),
-        ),
-        tool_schema(
-            "accept_summary_memory",
-            "Copy one saved AI summary into user-controlled project memory.",
-            object_schema(json!({ "summaryId": { "type": "string", "minLength": 1 } }), &["summaryId"]),
-        ),
-        tool_schema(
-            "conversation_summary",
-            "Get the count and last update time for a project's AI conversation.",
-            object_schema(json!({ "projectId": { "type": "string", "minLength": 1 } }), &["projectId"]),
-        ),
-        tool_schema(
-            "list_conversation",
-            "List the saved AI conversation for a project.",
-            object_schema(json!({ "projectId": { "type": "string", "minLength": 1 } }), &["projectId"]),
-        ),
-        tool_schema(
-            "clear_conversation",
-            "Clear the saved AI conversation for a project.",
-            object_schema(json!({ "projectId": { "type": "string", "minLength": 1 } }), &["projectId"]),
-        ),
-        tool_schema(
             "list_audit_events",
             "List RepoAtlas audit events. Audit records are system-generated and read-only.",
             object_schema(
                 json!({ "limit": { "type": "integer", "minimum": 1, "maximum": 500 } }),
                 &[],
             ),
+        ),
+        tool_schema(
+            "list_attention_items",
+            "List unresolved approvals, failed runs, unavailable projects, environment mismatches, and system failures.",
+            object_schema(json!({}), &[]),
         ),
         tool_schema(
             "git_status",
@@ -326,21 +317,5 @@ fn object_schema(properties: Value, required: &[&str]) -> Value {
     if !required.is_empty() {
         schema["required"] = json!(required);
     }
-    schema
-}
-
-fn read_project_file_schema() -> Value {
-    let mut schema = object_schema(
-        json!({
-            "projectId": { "type": "string", "minLength": 1 },
-            "relativePath": { "type": "string", "minLength": 1 },
-            "path": { "type": "string", "minLength": 1 }
-        }),
-        &["projectId"],
-    );
-    schema["oneOf"] = json!([
-        { "required": ["relativePath"] },
-        { "required": ["path"] }
-    ]);
     schema
 }

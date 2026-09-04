@@ -1,13 +1,18 @@
-import { AnimatePresence, motion } from "framer-motion";
 import { Play, Square, TerminalWindow, X } from "@phosphor-icons/react";
-import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { api, onTaskRuntime } from "../lib/api";
 import type { MessageKey } from "../i18n";
 import { formatCommand, statusKey } from "./DashboardShared";
 import { Button } from "./ui/button";
 import { TaskTerminal } from "./TaskTerminal";
 import { getTaskRunSnapshot, MAX_TERMINALS, refreshTaskRuns, selectTaskRun, setTaskLayout, subscribeTaskRuns } from "../lib/task-runs";
-import { fadeMotion, MOTION, MOTION_EASE } from "../lib/motion";
-import type { TaskRun } from "../types";
+import type { TaskRun, TaskRuntimeSnapshot } from "../types";
+
+function formatBytes(value: number): string {
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
+  if (value < 1024 * 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
+  return `${(value / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
 
 function elapsedLabel(startedAt: string | undefined, now: number): string {
   if (!startedAt) return "";
@@ -25,6 +30,7 @@ function elapsedLabel(startedAt: string | undefined, now: number): string {
 export function TaskWorkbench({
   open,
   t,
+  theme,
   nowTick,
   stoppingRunId,
   stoppingAll,
@@ -32,9 +38,11 @@ export function TaskWorkbench({
   onStop,
   onStopAll,
   onJump,
+  onPreviewError,
 }: {
   open: boolean;
   t: (key: MessageKey) => string;
+  theme: "dark" | "light";
   nowTick: number;
   stoppingRunId?: string;
   stoppingAll: boolean;
@@ -42,16 +50,37 @@ export function TaskWorkbench({
   onStop: (runId: string) => void;
   onStopAll: () => void;
   onJump: (projectId: string) => void;
+  onPreviewError: (error: unknown) => void;
 }) {
   const snapshot = useSyncExternalStore(subscribeTaskRuns, getTaskRunSnapshot, getTaskRunSnapshot);
+  const [runtime, setRuntime] = useState<Record<string, TaskRuntimeSnapshot>>({});
+  const [openingEndpoint, setOpeningEndpoint] = useState<string>();
   const visible = snapshot.layout === "focus" && snapshot.selectedId
     ? [snapshot.runs.find((run) => run.id === snapshot.selectedId) ?? snapshot.recent.find((run) => run.id === snapshot.selectedId)].filter(Boolean) as TaskRun[]
     : snapshot.runs.slice(0, MAX_TERMINALS);
 
   useEffect(() => {
     if (!open) return;
-    void refreshTaskRuns();
+    void refreshTaskRuns({ hydrateLogs: true, refreshProjectNames: true });
   }, [open]);
+
+  useEffect(() => {
+    const unlisten = onTaskRuntime((next) => setRuntime((current) => ({ ...current, [next.runId]: next })));
+    return () => { void unlisten.then((dispose) => dispose()); };
+  }, []);
+
+  useEffect(() => {
+    if (!open || snapshot.runs.length === 0) return;
+    let active = true;
+    void api.getTaskRuntimeSnapshots(snapshot.runs.map((run) => run.id)).then((snapshots) => {
+      if (!active) return;
+      setRuntime((current) => ({
+        ...current,
+        ...Object.fromEntries(snapshots.map((snapshot) => [snapshot.runId, snapshot])),
+      }));
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [open, snapshot.runs]);
 
   useEffect(() => {
     if (!open) return;
@@ -73,20 +102,35 @@ export function TaskWorkbench({
     return "is-four";
   }, [visible.length]);
 
+  async function openPreview(runId: string, endpoint: string) {
+    const key = `${runId}:${endpoint}`;
+    setOpeningEndpoint(key);
+    try {
+      await api.openDevEndpoint(runId, endpoint);
+    } catch (error) {
+      onPreviewError(error);
+    } finally {
+      setOpeningEndpoint((current) => current === key ? undefined : current);
+    }
+  }
+
   if (!open) return null;
 
   return (
-    <motion.section className="task-workbench" {...fadeMotion} aria-label={t("activeTasks")} aria-keyshortcuts="Escape">
+    <section className="task-workbench" aria-label={t("activeTasks")} aria-keyshortcuts={"Escape Control+`"}>
       <aside className="task-workbench-list">
         <header>
           <div>
             <p className="eyebrow">{t("activeTasks")}</p>
             <h2>{t("taskWorkbench")}</h2>
           </div>
-          <Button size="icon" variant="quiet" aria-label={t("close")} title={`${t("close")} (Esc)`} onClick={onClose}><X /></Button>
+          <Button size="icon" variant="quiet" aria-label={t("close")} title={`${t("close")} (Ctrl + \`)`} onClick={onClose}><X /></Button>
         </header>
         <div className="task-workbench-actions">
-          <Button variant="quiet" onClick={() => setTaskLayout("tiles")}>{t("allOutputs")}</Button>
+          <div className="task-layout-toggle" role="group" aria-label={t("outputLayout")}>
+            <Button variant="quiet" aria-pressed={snapshot.layout === "focus"} onClick={() => selectTaskRun(snapshot.selectedId ?? snapshot.runs[0]?.id ?? snapshot.recent[0]?.id)}>{t("singleOutput")}</Button>
+            <Button variant="quiet" aria-pressed={snapshot.layout === "tiles"} onClick={() => setTaskLayout("tiles")}>{t("tiledOutputs")}</Button>
+          </div>
           {snapshot.runs.length > 0 && <Button variant="danger" loading={stoppingAll} onClick={onStopAll}>{t("stopAll")}</Button>}
         </div>
         <section>
@@ -111,15 +155,10 @@ export function TaskWorkbench({
         </section>
       </aside>
       <div className={"task-workbench-grid " + gridClass}>
-        <AnimatePresence initial={false}>
           {visible.map((run) => (
-            <motion.article
+            <article
               key={run.id}
               className={"task-terminal-pane" + (snapshot.selectedId === run.id ? " is-focused" : "")}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: MOTION.press, ease: MOTION_EASE }}
             >
               <header>
                 <div>
@@ -132,10 +171,19 @@ export function TaskWorkbench({
                   {(run.status === "running" || run.status === "starting") && <Button variant="danger" loading={stoppingRunId === run.id} onClick={() => onStop(run.id)}><Square weight="fill" />{t("stop")}</Button>}
                 </div>
               </header>
-              <TaskTerminal run={run} log={snapshot.logs[run.id] ?? ""} interactive={snapshot.inputOwner === run.id || visible.length === 1} />
-            </motion.article>
+              {runtime[run.id] && <div className="task-runtime-strip" aria-label={t("runtimeMonitor")}>
+                <span className="runtime-cpu"><b>{t("cpuUsage")}</b>{runtime[run.id].cpuPercent.toFixed(1)}%</span>
+                <span className="runtime-cpu"><b>{t("peakCpuUsage")}</b>{runtime[run.id].peakCpuPercent.toFixed(1)}%</span>
+                <span className="runtime-memory"><b>{t("memoryUsage")}</b>{formatBytes(runtime[run.id].memoryBytes)}</span>
+                <span className="runtime-memory"><b>{t("peakMemoryUsage")}</b>{formatBytes(runtime[run.id].peakMemoryBytes)}</span>
+                <span className="runtime-process"><b>{t("processCount")}</b>{runtime[run.id].processCount}</span>
+                <span className="runtime-ports"><b>{t("listeningPorts")}</b>{!runtime[run.id].portInspectionAvailable ? t("portInspectionUnavailable") : runtime[run.id].ports.length ? runtime[run.id].ports.join(", ") : t("noListeningPorts")}</span>
+                {runtime[run.id].conflicts.length > 0 && <span className="runtime-conflict"><b>{t("portConflicts")}</b>{runtime[run.id].conflicts.map((item) => item.port).join(", ")}</span>}
+                {runtime[run.id].endpoints.map((endpoint) => <Button key={endpoint} size="sm" variant="quiet" loading={openingEndpoint === `${run.id}:${endpoint}`} onClick={() => void openPreview(run.id, endpoint)}>{t("openPreview")} · {endpoint}</Button>)}
+              </div>}
+              <TaskTerminal run={run} log={snapshot.logs[run.id] ?? ""} interactive={snapshot.inputOwner === run.id || visible.length === 1} theme={theme} />
+            </article>
           ))}
-        </AnimatePresence>
         {visible.length === 0 && (
           <div className="task-workbench-empty">
             <span className="task-workbench-empty-mark" aria-hidden="true">
@@ -148,6 +196,6 @@ export function TaskWorkbench({
           </div>
         )}
       </div>
-    </motion.section>
+    </section>
   );
 }

@@ -1483,6 +1483,9 @@ fn described_task(
         cwd: None,
         inferred: true,
         shell_mode: false,
+        expected_ports: Vec::new(),
+        dev_url_path: None,
+        dev_url_scheme: None,
     }
 }
 

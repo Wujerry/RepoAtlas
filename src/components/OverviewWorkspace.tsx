@@ -137,10 +137,10 @@ export function OverviewWorkspace(props: {
       )}
     </section>
     <section id="overview-readme" className="content-card overview-readme"><div className="section-heading"><div><p className="eyebrow">{readme?.path ?? detail.readmePath ?? "README"}</p><h2>{t("readme")}</h2></div>{readme?.truncated && <span className="status-warning">{t("readmeTruncated")}</span>}</div>
-      {readmeLoading ? <Skeleton className="skeleton-code" /> : readmeError ? <InlineLoadError title={t("readmeLoadFailed")} detail={readmeError} retryLabel={t("retry")} onRetry={onRetryReadme} /> : readme?.content || detail.readmeExcerpt ? <MarkdownDocument content={readme?.content ?? detail.readmeExcerpt ?? ""} /> : <p className="muted-copy">{t("noReadme")}</p>}
+      {readmeLoading ? <Skeleton className="skeleton-code" /> : readmeError ? <InlineLoadError title={t("readmeLoadFailed")} detail={readmeError} retryLabel={t("retry")} onRetry={onRetryReadme} /> : readme?.content || detail.readmeExcerpt ? <MarkdownDocument content={readme?.content ?? detail.readmeExcerpt ?? ""} projectId={detail.project.id} documentPath={readme?.path ?? detail.readmePath ?? "README.md"} /> : <p className="muted-copy">{t("noReadme")}</p>}
     </section>
     <section id="overview-agents" className="content-card overview-readme"><div className="section-heading"><div><p className="eyebrow">{agents?.path ?? "AGENTS.md"}</p><h2>{t("agentsGuide")}</h2></div>{agents?.truncated && <span className="status-warning">{t("readmeTruncated")}</span>}</div>
-      {agentsLoading ? <Skeleton className="skeleton-code" /> : agents?.content ? <MarkdownDocument content={agents.content} /> : <p className="muted-copy">{t("noAgentsGuide")}</p>}
+      {agentsLoading ? <Skeleton className="skeleton-code" /> : agents?.content ? <MarkdownDocument content={agents.content} projectId={detail.project.id} documentPath={agents.path} /> : <p className="muted-copy">{t("noAgentsGuide")}</p>}
     </section>
     <section id="overview-profile" className="content-card overview-facts"><div className="section-heading"><div><p className="eyebrow">{t("detectedEvidence")}</p><h2>{t("projectProfile")}</h2></div><span>{groups.length}</span></div>
       {groups.length === 0 ? <p className="muted-copy">{t("noFacts")}</p> : <div className="profile-groups">{groups.map((group) => <div className="profile-group" key={group.label}><span>{group.label}</span><div>{group.values.map((value, index) => <span className="badge" title={group.sources?.[index]} key={group.label + "-" + value}>{value}</span>)}</div></div>)}</div>}

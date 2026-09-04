@@ -145,6 +145,7 @@ export function sortProjects(projects: readonly ProjectSummary[], sort: ProjectS
 
 export function buildProjectTree(projects: readonly ProjectSummary[], sort: ProjectSort = "default"): ProjectPathGroup[] {
   const roots = new Map<string, ProjectPathGroup>();
+  const childMaps = new Map<string, Map<string, ProjectPathGroup>>();
 
   for (const project of projects) {
     const parsed = parsePath(project.canonicalPath);
@@ -160,14 +161,11 @@ export function buildProjectTree(projects: readonly ProjectSummary[], sort: Proj
       if (!group) {
         group = makeGroup(id, segment, currentPath, index + 1);
         currentMap.set(id, group);
+        childMaps.set(id, new Map());
         if (parent) parent.children.push(group);
       }
       parent = group;
-      currentMap = new Map(group.children.map((child) => [child.id, child]));
-      // Keep the map backed by the actual array. This avoids exposing Map in the UI data shape.
-      if (group.children.length > 0 || index < groupSegments.length - 1) {
-        for (const child of group.children) currentMap.set(child.id, child);
-      }
+      currentMap = childMaps.get(id)!;
       if (index === 0 && !roots.has(id)) roots.set(id, group);
     });
 

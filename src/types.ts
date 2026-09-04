@@ -1,6 +1,6 @@
 export type AppView = "library" | "settings" | "help";
 export type ProjectScope = "projects" | "favorites" | "recent" | "archived";
-export type ProjectTab = "overview" | "git" | "tasks" | "knowledge";
+export type ProjectTab = "overview" | "files" | "git" | "tasks";
 
 export type ToastTone = "info" | "success" | "warning" | "error";
 
@@ -58,6 +58,9 @@ export interface TaskDefinition {
   cwd: string | null;
   inferred: boolean;
   shellMode: boolean;
+  expectedPorts?: number[];
+  devUrlPath?: string | null;
+  devUrlScheme?: "http" | "https" | null;
 }
 
 export interface GitSnapshot {
@@ -137,6 +140,29 @@ export interface TaskRun {
   logPath: string;
   startedAt: string;
   finishedAt: string | null;
+  peakCpuPercent?: number | null;
+  peakMemoryBytes?: number | null;
+  observedPorts?: number[];
+}
+
+export interface PortConflict {
+  port: number;
+  pid: number | null;
+  processName: string | null;
+}
+
+export interface TaskRuntimeSnapshot {
+  runId: string;
+  capturedAt: string;
+  cpuPercent: number;
+  peakCpuPercent: number;
+  memoryBytes: number;
+  peakMemoryBytes: number;
+  processCount: number;
+  ports: number[];
+  portInspectionAvailable: boolean;
+  endpoints: string[];
+  conflicts: PortConflict[];
 }
 
 export interface TaskSpec {
@@ -181,7 +207,13 @@ export interface RuntimeStatus {
   constraint: string | null;
   source: string | null;
   localVersion: string | null;
-  matchState: "match" | "mismatch" | "undeclared" | "missing" | "unknown" | string;
+  matchState:
+    | "match"
+    | "mismatch"
+    | "undeclared"
+    | "missing"
+    | "unknown"
+    | string;
 }
 
 export interface EnvironmentInspection {
@@ -283,6 +315,9 @@ export interface PendingApproval {
   cwd: string | null;
   taskId: string | null;
   shellMode?: boolean;
+  expectedPorts?: number[];
+  devUrlPath?: string | null;
+  devUrlScheme?: string | null;
   status: string;
   origin?: string;
   runId?: string | null;
@@ -305,6 +340,105 @@ export interface ProjectQuery {
   section?: string | null;
   search?: string | null;
   includeArchived?: boolean;
+  collectionId?: string | null;
+  limit?: number;
+}
+
+export interface ProjectCollection {
+  id: string;
+  name: string;
+  description: string | null;
+  projectCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CollectionUpsert {
+  name: string;
+  description?: string | null;
+}
+
+export interface ProjectBrief {
+  project: ProjectSummary;
+  facts: DetectedFact[];
+  environment: EnvironmentInspection;
+  git: GitSnapshot | null;
+  readmePath: string | null;
+  projectFiles: ProjectFile[];
+  startHere: StartHereTask[];
+  tasks: TaskDefinition[];
+  recentRuns: TaskRun[];
+  recentActivity: ProjectEvent[];
+}
+
+export interface AttentionItem {
+  id: string;
+  kind: string;
+  severity: "action" | "warning" | "error" | string;
+  projectId: string | null;
+  runId: string | null;
+  approvalId: string | null;
+  title: string;
+  detail: string;
+  occurredAt: string;
+  sourceVersion: string;
+  acknowledgeable: boolean;
+}
+
+export interface AttentionCenterState {
+  approvals: PendingApproval[];
+  items: AttentionItem[];
+}
+
+export interface DashboardTaskRunSummary {
+  kind: string;
+  status: string;
+  startedAt: string;
+  finishedAt: string | null;
+}
+
+export interface DashboardProjectItem {
+  project: ProjectSummary;
+  git: GitSnapshot | null;
+  latestRun: DashboardTaskRunSummary | null;
+}
+
+export interface DashboardTaskRunItem {
+  run: TaskRun;
+  projectName: string;
+}
+
+export interface DashboardCollectionSummary {
+  id: string;
+  name: string;
+  description: string | null;
+  projectCount: number;
+  archivedProjectCount: number;
+  activeRunCount: number;
+  attentionCount: number;
+  lastActivityAt: string | null;
+}
+
+export interface DashboardTaskRunStats {
+  total: number;
+  succeeded: number;
+  failed: number;
+  cancelled: number;
+}
+
+export interface DashboardSnapshot {
+  generatedAt: string;
+  projectCount: number;
+  availableProjectCount: number;
+  unavailableProjectCount: number;
+  collectionCount: number;
+  activeRunCount: number;
+  attentionCount: number;
+  sevenDayRuns: DashboardTaskRunStats;
+  collections: DashboardCollectionSummary[];
+  recentProjects: DashboardProjectItem[];
+  recentRuns: DashboardTaskRunItem[];
+  attentionPreview: AttentionItem[];
 }
 
 export interface ScanProgress {
@@ -350,7 +484,13 @@ export interface ExternalTools {
   terminals: ExternalTool[];
 }
 
-export type UpdateStatus = "idle" | "checking" | "available" | "downloading" | "ready" | "error";
+export type UpdateStatus =
+  | "idle"
+  | "checking"
+  | "available"
+  | "downloading"
+  | "ready"
+  | "error";
 
 export type UpdateErrorStage = "check" | "download" | "install" | "restart";
 
@@ -374,12 +514,67 @@ export interface Bootstrap {
   settings: AppSettings;
   scanRoots: ScanRoot[];
   projects: ProjectSummary[];
+  collections: ProjectCollection[];
 }
 
 export interface ReadmeDocument {
   path: string;
   content: string;
   truncated: boolean;
+}
+
+export type ProjectFileEntryKind = "file" | "directory" | "symlink" | "other";
+
+export interface ProjectDirectoryEntry {
+  name: string;
+  path: string;
+  kind: ProjectFileEntryKind;
+  generated: boolean;
+}
+
+export interface ProjectDirectoryListing {
+  path: string;
+  entries: ProjectDirectoryEntry[];
+  skippedCount: number;
+}
+
+export type ProjectFilePreviewKind = "markdown" | "code" | "text" | "image" | "unsupported";
+
+export interface ProjectFilePreview {
+  path: string;
+  kind: ProjectFilePreviewKind;
+  size: number;
+  mime: string | null;
+  language: string | null;
+  content: string | null;
+  truncated: boolean;
+  width: number | null;
+  height: number | null;
+  message: string | null;
+}
+
+export type ProjectPathIndexState = "idle" | "building" | "ready" | "limited" | "failed" | "canceled";
+
+export interface ProjectPathIndexStatus {
+  projectId: string;
+  generation: number;
+  state: ProjectPathIndexState;
+  scannedCount: number;
+  indexedCount: number;
+  includeGenerated: boolean;
+  message: string | null;
+}
+
+export interface ProjectPathSearchResult {
+  name: string;
+  path: string;
+  kind: ProjectFileEntryKind;
+  score: number;
+}
+
+export interface ProjectPathSearchResponse {
+  status: ProjectPathIndexStatus;
+  results: ProjectPathSearchResult[];
 }
 
 export interface McpSetupInfo {
@@ -389,71 +584,4 @@ export interface McpSetupInfo {
   binaryPath: string | null;
   binaryOrigin?: "installed" | "development" | null;
   workspacePath: string | null;
-}
-
-export interface ProviderProfile {
-  id: string;
-  name: string;
-  protocol: string;
-  baseUrl: string | null;
-  model: string;
-  hasCredential: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface ProviderPreset {
-  name: string;
-  protocol: string;
-  baseUrl: string | null;
-  defaultModel: string;
-  credentialRef: string;
-}
-
-export interface ProviderUpsert {
-  id?: string | null;
-  name: string;
-  protocol: string;
-  baseUrl?: string | null;
-  model: string;
-  apiKey?: string;
-}
-
-export interface AiMemoryItem {
-  id: string;
-  projectId: string;
-  text: string;
-  createdAt: string;
-}
-
-export interface AiSummary {
-  id: string;
-  projectId: string;
-  providerId: string | null;
-  model: string | null;
-  evidenceSnapshot?: string | null;
-  text: string;
-  createdAt: string;
-}
-
-export interface AnalysisPlan {
-  providerId: string;
-  providerName: string;
-  model: string;
-  baseUrl: string | null;
-  evidenceFiles: string[];
-  characterCount: number;
-  isLocal: boolean;
-  suspiciousSecretCount: number;
-}
-
-export interface ChatMessage {
-  role: string;
-  content: string;
-}
-
-export interface ConversationSummary {
-  projectId: string;
-  messageCount: number;
-  updatedAt: string;
 }

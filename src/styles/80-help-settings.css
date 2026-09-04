@@ -1,4 +1,4 @@
-.help-page { min-width: 0; min-height: 0; overflow: auto; padding: 34px clamp(26px, 5vw, 78px) 64px; }
+.help-page { min-width: 0; min-height: 0; height: 100%; overflow: auto; padding: 34px clamp(26px, 5vw, 78px) 64px; }
 .help-header, .help-content { max-width: 980px; margin-right: auto; margin-left: auto; }
 .help-header { margin-bottom: 26px; }
 .help-header h1 { margin: 0; font-size: 36px; letter-spacing: -.05em; }
@@ -27,9 +27,9 @@
 .settings-card-action p { max-width: 34ch; margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .settings-card-action .button { flex: 0 0 auto; white-space: nowrap; }
 
-.knowledge-error-state, .settings-error-state { display: grid; justify-items: start; gap: 10px; padding: 18px; border: 1px solid color-mix(in srgb, var(--danger) 26%, var(--line)); border-radius: 12px; background: var(--danger-wash); }
-.knowledge-error-state strong, .settings-error-state strong { color: var(--danger); }
-.knowledge-error-detail, .settings-error-detail { max-width: 100%; margin: 0; overflow-wrap: anywhere; color: var(--muted); font-family: var(--font-mono); font-size: 10px; line-height: 1.5; }
+.settings-error-state { display: grid; justify-items: start; gap: 10px; padding: 18px; border: 1px solid color-mix(in srgb, var(--danger) 26%, var(--line)); border-radius: 12px; background: var(--danger-wash); }
+.settings-error-state strong { color: var(--danger); }
+.settings-error-detail { max-width: 100%; margin: 0; overflow-wrap: anywhere; color: var(--muted); font-family: var(--font-mono); font-size: 10px; line-height: 1.5; }
 .inline-load-error { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; min-height: 120px; padding: 18px; border: 1px solid color-mix(in srgb, var(--danger) 22%, var(--line)); border-radius: 12px; background: color-mix(in srgb, var(--danger-wash) 70%, var(--surface)); }
 .inline-load-error > div { display: grid; gap: 7px; min-width: 0; }
 .inline-load-error strong { color: var(--text); font-size: 13px; }

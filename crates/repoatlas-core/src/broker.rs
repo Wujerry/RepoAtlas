@@ -1,14 +1,15 @@
 use crate::error::{Error, Result};
-use crate::models::{LogChunk, TaskRun, TaskSpec};
+use crate::models::{LogChunk, PortConflict, TaskRun, TaskRuntimeSnapshot, TaskSpec};
 use crate::paths;
 use chrono::{SecondsFormat, Utc};
 use portable_pty::{CommandBuilder, MasterPty, PtySize};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -18,6 +19,14 @@ const DEFAULT_CONCURRENCY: usize = 4;
 const MAX_LOG_BYTES: u64 = 10 * 1024 * 1024;
 const DEFAULT_PTY_COLS: u16 = 80;
 const DEFAULT_PTY_ROWS: u16 = 24;
+
+#[derive(Debug, Clone)]
+pub struct TaskRuntimeRequest {
+    pub run_id: String,
+    pub expected_ports: Vec<u16>,
+    pub dev_url_scheme: Option<String>,
+    pub dev_url_path: Option<String>,
+}
 
 /// Format a start failure with enough structured context to fix the task.
 /// Environment variables are intentionally omitted because they may contain
@@ -53,12 +62,14 @@ struct BrokerInner {
     log_dir: PathBuf,
     max_concurrency: usize,
     runs: Vec<LiveRun>,
+    system: sysinfo::System,
 }
 
 struct LiveRun {
     id: String,
     project_id: String,
     kind: String,
+    root_pid: u32,
     child: Box<dyn portable_pty::Child + Send + Sync>,
     writer: Option<Box<dyn Write + Send>>,
     master: Option<Box<dyn MasterPty + Send>>,
@@ -74,6 +85,7 @@ impl Broker {
                 log_dir,
                 max_concurrency: DEFAULT_CONCURRENCY,
                 runs: Vec::new(),
+                system: sysinfo::System::new_all(),
             })),
         })
     }
@@ -162,6 +174,9 @@ impl Broker {
             log_path: paths::path_to_string(&log_path),
             started_at: started_at.clone(),
             finished_at: None,
+            peak_cpu_percent: None,
+            peak_memory_bytes: None,
+            observed_ports: Vec::new(),
         };
         insert_run(conn, &run)?;
 
@@ -253,12 +268,14 @@ impl Broker {
             }
             job
         };
+        let root_pid = child.process_id().unwrap_or(0);
         {
             let mut inner = self.inner.lock().map_err(|_| Error::msg("broker lock"))?;
             inner.runs.push(LiveRun {
                 id: id.clone(),
                 project_id: spec.project_id.clone(),
                 kind: spec.kind.clone(),
+                root_pid,
                 child,
                 writer: Some(writer),
                 master: Some(pair.master),
@@ -355,6 +372,135 @@ impl Broker {
         }
         self.reap(run_id)?;
         get_run(conn, run_id)
+    }
+
+    pub fn preflight_ports(&self, expected_ports: &[u16]) -> Result<Vec<PortConflict>> {
+        if expected_ports.is_empty() {
+            return Ok(Vec::new());
+        }
+        let listeners = listening_ports()
+            .ok_or_else(|| Error::msg("TCP listener inspection is unavailable"))?;
+        let mut inner = self.inner.lock().map_err(|_| Error::msg("broker lock"))?;
+        inner
+            .system
+            .refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+        let names = process_names(&inner.system, &listeners);
+        Ok(port_conflicts(
+            expected_ports,
+            &listeners,
+            &HashSet::new(),
+            &names,
+        ))
+    }
+
+    pub fn runtime_snapshot(
+        &self,
+        conn: &Connection,
+        run_id: &str,
+        expected_ports: &[u16],
+        dev_url_scheme: Option<&str>,
+        dev_url_path: Option<&str>,
+    ) -> Result<TaskRuntimeSnapshot> {
+        let mut snapshots = self.collect_runtime_snapshots(&[TaskRuntimeRequest {
+            run_id: run_id.to_string(),
+            expected_ports: expected_ports.to_vec(),
+            dev_url_scheme: dev_url_scheme.map(str::to_string),
+            dev_url_path: dev_url_path.map(str::to_string),
+        }])?;
+        persist_runtime_snapshots(conn, &mut snapshots)?;
+        snapshots
+            .pop()
+            .ok_or_else(|| Error::msg("task is not running"))
+    }
+
+    pub fn collect_runtime_snapshots(
+        &self,
+        requests: &[TaskRuntimeRequest],
+    ) -> Result<Vec<TaskRuntimeSnapshot>> {
+        if requests.is_empty() {
+            return Ok(Vec::new());
+        }
+        let listeners = listening_ports();
+        let port_inspection_available = listeners.is_some();
+        let listeners = listeners.unwrap_or_default();
+        let captured_at = now();
+        let mut inner = self.inner.lock().map_err(|_| Error::msg("broker lock"))?;
+        inner
+            .system
+            .refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+        let cpu_count = inner.system.cpus().len().max(1) as f32;
+        let roots = inner
+            .runs
+            .iter()
+            .map(|run| (run.id.as_str(), run.root_pid))
+            .collect::<HashMap<_, _>>();
+        let process_names = listeners
+            .iter()
+            .filter_map(|(_, pid)| {
+                inner
+                    .system
+                    .process(sysinfo::Pid::from_u32(*pid))
+                    .map(|process| (*pid, process.name().to_string_lossy().into_owned()))
+            })
+            .collect::<HashMap<_, _>>();
+        let mut process_children = HashMap::<u32, Vec<u32>>::new();
+        for (pid, process) in inner.system.processes() {
+            if let Some(parent) = process.parent() {
+                process_children
+                    .entry(parent.as_u32())
+                    .or_default()
+                    .push(pid.as_u32());
+            }
+        }
+        let mut snapshots = Vec::with_capacity(requests.len());
+        for request in requests {
+            let Some(root_pid) = roots.get(request.run_id.as_str()).copied() else {
+                continue;
+            };
+            let process_ids = process_tree(&process_children, root_pid);
+            let cpu_percent = (process_ids
+                .iter()
+                .filter_map(|pid| inner.system.process(sysinfo::Pid::from_u32(*pid)))
+                .map(sysinfo::Process::cpu_usage)
+                .sum::<f32>()
+                / cpu_count)
+                .clamp(0.0, 100.0);
+            let memory_bytes = process_ids
+                .iter()
+                .filter_map(|pid| inner.system.process(sysinfo::Pid::from_u32(*pid)))
+                .map(sysinfo::Process::memory)
+                .sum::<u64>();
+            let mut ports = listeners
+                .iter()
+                .filter(|(_, pid)| process_ids.contains(pid))
+                .map(|(port, _)| *port)
+                .collect::<Vec<_>>();
+            ports.sort_unstable();
+            ports.dedup();
+            snapshots.push(TaskRuntimeSnapshot {
+                run_id: request.run_id.clone(),
+                captured_at: captured_at.clone(),
+                cpu_percent,
+                peak_cpu_percent: cpu_percent,
+                memory_bytes,
+                peak_memory_bytes: memory_bytes,
+                process_count: process_ids.len(),
+                port_inspection_available,
+                endpoints: build_endpoints(
+                    &ports,
+                    request.dev_url_scheme.as_deref(),
+                    request.dev_url_path.as_deref(),
+                ),
+                conflicts: port_conflicts(
+                    &request.expected_ports,
+                    &listeners,
+                    &process_ids,
+                    &process_names,
+                ),
+                ports,
+            });
+        }
+        Ok(snapshots)
     }
 
     pub fn active(&self) -> Result<Vec<String>> {
@@ -688,6 +834,149 @@ fn terminate_process_tree(pid: u32) -> bool {
     }
 }
 
+fn process_tree(children: &HashMap<u32, Vec<u32>>, root_pid: u32) -> HashSet<u32> {
+    let mut process_ids = HashSet::from([root_pid]);
+    let mut pending = vec![root_pid];
+    while let Some(parent) = pending.pop() {
+        if let Some(descendants) = children.get(&parent) {
+            for child in descendants {
+                if process_ids.insert(*child) {
+                    pending.push(*child);
+                }
+            }
+        }
+    }
+    process_ids
+}
+
+fn process_names(system: &sysinfo::System, listeners: &[(u16, u32)]) -> HashMap<u32, String> {
+    listeners
+        .iter()
+        .filter_map(|(_, pid)| {
+            system
+                .process(sysinfo::Pid::from_u32(*pid))
+                .map(|process| (*pid, process.name().to_string_lossy().into_owned()))
+        })
+        .collect()
+}
+
+fn port_conflicts(
+    expected_ports: &[u16],
+    listeners: &[(u16, u32)],
+    owned_processes: &HashSet<u32>,
+    names: &HashMap<u32, String>,
+) -> Vec<PortConflict> {
+    expected_ports
+        .iter()
+        .filter_map(|port| {
+            listeners
+                .iter()
+                .find(|(candidate, pid)| candidate == port && !owned_processes.contains(pid))
+                .map(|(_, pid)| PortConflict {
+                    port: *port,
+                    pid: (*pid != 0).then_some(*pid),
+                    process_name: names.get(pid).cloned(),
+                })
+        })
+        .collect()
+}
+
+fn build_endpoints(ports: &[u16], scheme: Option<&str>, path: Option<&str>) -> Vec<String> {
+    let scheme = match scheme {
+        Some("https") => "https",
+        _ => "http",
+    };
+    let path = path
+        .filter(|path| path.starts_with('/') && !path.starts_with("//"))
+        .unwrap_or("/");
+    ports
+        .iter()
+        .map(|port| format!("{scheme}://localhost:{port}{path}"))
+        .collect()
+}
+
+#[cfg(windows)]
+fn listening_ports() -> Option<Vec<(u16, u32)>> {
+    let mut command = Command::new(windows_system_tool("netstat.exe"));
+    command.args(["-ano", "-p", "tcp"]);
+    crate::process::suppress_console_window(&mut command);
+    let output = command_output_with_timeout(command, std::time::Duration::from_millis(1500))?;
+    Some(parse_windows_listeners(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
+}
+
+#[cfg(any(windows, test))]
+fn parse_windows_listeners(output: &str) -> Vec<(u16, u32)> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let columns = line.split_whitespace().collect::<Vec<_>>();
+            if columns.len() < 5 || columns[0] != "TCP" || columns[3] != "LISTENING" {
+                return None;
+            }
+            let port = columns[1].rsplit_once(':')?.1.parse::<u16>().ok()?;
+            let pid = columns[4].parse::<u32>().ok()?;
+            Some((port, pid))
+        })
+        .collect()
+}
+
+#[cfg(unix)]
+fn listening_ports() -> Option<Vec<(u16, u32)>> {
+    let executable = ["/usr/sbin/lsof", "/usr/bin/lsof"]
+        .into_iter()
+        .find(|path| Path::new(path).is_file())?;
+    let mut command = Command::new(executable);
+    command.args(["-nP", "-iTCP", "-sTCP:LISTEN"]);
+    let output = command_output_with_timeout(command, std::time::Duration::from_millis(1500))?;
+    Some(parse_lsof_listeners(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
+}
+
+fn command_output_with_timeout(
+    mut command: Command,
+    timeout: std::time::Duration,
+) -> Option<Output> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command.spawn().ok()?;
+    let started = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return child.wait_with_output().ok(),
+            Ok(None) if started.elapsed() < timeout => {
+                thread::sleep(std::time::Duration::from_millis(20));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+}
+
+#[cfg(any(unix, test))]
+fn parse_lsof_listeners(output: &str) -> Vec<(u16, u32)> {
+    output
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            let columns = line.split_whitespace().collect::<Vec<_>>();
+            let pid = columns.get(1)?.parse::<u32>().ok()?;
+            let tail = line.rsplit_once(':')?.1;
+            let port = tail
+                .chars()
+                .take_while(char::is_ascii_digit)
+                .collect::<String>()
+                .parse::<u16>()
+                .ok()?;
+            Some((port, pid))
+        })
+        .collect()
+}
+
 #[cfg(windows)]
 fn windows_system_tool(name: &str) -> PathBuf {
     let root = std::env::var_os("SystemRoot")
@@ -717,7 +1006,7 @@ pub fn finish_run(
 
 pub fn list_runs(conn: &Connection, project_id: &str) -> Result<Vec<TaskRun>> {
     let mut stmt = conn.prepare(
-        "SELECT id, project_id, task_id, kind, executable, argv_json, cwd, shell_mode, status, exit_code, log_path, started_at, finished_at FROM task_runs WHERE project_id = ?1 ORDER BY datetime(started_at) DESC LIMIT 50",
+        "SELECT id, project_id, task_id, kind, executable, argv_json, cwd, shell_mode, status, exit_code, log_path, started_at, finished_at, peak_cpu_percent, peak_memory_bytes, observed_ports_json FROM task_runs WHERE project_id = ?1 ORDER BY datetime(started_at) DESC LIMIT 50",
     )?;
     let rows = stmt
         .query_map(params![project_id], row_to_run)?
@@ -727,7 +1016,7 @@ pub fn list_runs(conn: &Connection, project_id: &str) -> Result<Vec<TaskRun>> {
 
 pub fn list_active_runs(conn: &Connection) -> Result<Vec<TaskRun>> {
     let mut stmt = conn.prepare(
-        "SELECT id, project_id, task_id, kind, executable, argv_json, cwd, shell_mode, status, exit_code, log_path, started_at, finished_at FROM task_runs WHERE status IN ('running', 'starting') ORDER BY datetime(started_at) ASC",
+        "SELECT id, project_id, task_id, kind, executable, argv_json, cwd, shell_mode, status, exit_code, log_path, started_at, finished_at, peak_cpu_percent, peak_memory_bytes, observed_ports_json FROM task_runs WHERE status IN ('running', 'starting') ORDER BY datetime(started_at) ASC",
     )?;
     let rows = stmt
         .query_map([], row_to_run)?
@@ -735,13 +1024,68 @@ pub fn list_active_runs(conn: &Connection) -> Result<Vec<TaskRun>> {
     Ok(rows)
 }
 
+pub fn list_dashboard_runs(conn: &Connection, limit: usize) -> Result<Vec<TaskRun>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, project_id, task_id, kind, executable, argv_json, cwd, shell_mode, status, exit_code, log_path, started_at, finished_at, peak_cpu_percent, peak_memory_bytes, observed_ports_json
+         FROM task_runs
+         ORDER BY CASE WHEN status IN ('running', 'starting') THEN 0 ELSE 1 END,
+                  CASE WHEN status IN ('running', 'starting') THEN datetime(started_at) END ASC,
+                  CASE WHEN status NOT IN ('running', 'starting') THEN datetime(started_at) END DESC,
+                  id DESC
+         LIMIT ?1",
+    )?;
+    let rows = stmt
+        .query_map(params![limit.clamp(1, 50) as i64], row_to_run)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
 pub fn get_run(conn: &Connection, run_id: &str) -> Result<TaskRun> {
     conn.query_row(
-        "SELECT id, project_id, task_id, kind, executable, argv_json, cwd, shell_mode, status, exit_code, log_path, started_at, finished_at FROM task_runs WHERE id = ?1",
+        "SELECT id, project_id, task_id, kind, executable, argv_json, cwd, shell_mode, status, exit_code, log_path, started_at, finished_at, peak_cpu_percent, peak_memory_bytes, observed_ports_json FROM task_runs WHERE id = ?1",
         params![run_id],
         row_to_run,
     )
     .map_err(|_| Error::NotFound(run_id.into()))
+}
+
+pub fn persist_runtime_snapshots(
+    conn: &Connection,
+    snapshots: &mut [TaskRuntimeSnapshot],
+) -> Result<()> {
+    if snapshots.is_empty() {
+        return Ok(());
+    }
+    let transaction = conn.unchecked_transaction()?;
+    {
+        let mut read_peaks = transaction
+            .prepare("SELECT peak_cpu_percent, peak_memory_bytes FROM task_runs WHERE id = ?1")?;
+        let mut update = transaction.prepare(
+            "UPDATE task_runs SET peak_cpu_percent = ?1, peak_memory_bytes = ?2, observed_ports_json = ?3 WHERE id = ?4",
+        )?;
+        for snapshot in snapshots {
+            let previous = read_peaks
+                .query_row([&snapshot.run_id], |row| {
+                    Ok((row.get::<_, Option<f32>>(0)?, row.get::<_, Option<i64>>(1)?))
+                })
+                .optional()?
+                .ok_or_else(|| Error::msg("task run not found"))?;
+            snapshot.peak_cpu_percent = previous.0.unwrap_or(0.0).max(snapshot.cpu_percent);
+            snapshot.peak_memory_bytes = previous
+                .1
+                .map(|value| value as u64)
+                .unwrap_or(0)
+                .max(snapshot.memory_bytes);
+            update.execute(params![
+                snapshot.peak_cpu_percent,
+                snapshot.peak_memory_bytes as i64,
+                serde_json::to_string(&snapshot.ports).unwrap_or_else(|_| "[]".into()),
+                snapshot.run_id,
+            ])?;
+        }
+    }
+    transaction.commit()?;
+    Ok(())
 }
 
 pub fn read_log(run: &TaskRun, max_bytes: usize) -> Result<String> {
@@ -760,7 +1104,7 @@ pub fn read_log(run: &TaskRun, max_bytes: usize) -> Result<String> {
 
 fn insert_run(conn: &Connection, run: &TaskRun) -> Result<()> {
     conn.execute(
-        "INSERT INTO task_runs (id, project_id, task_id, kind, executable, argv_json, cwd, shell_mode, status, exit_code, log_path, started_at, finished_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        "INSERT INTO task_runs (id, project_id, task_id, kind, executable, argv_json, cwd, shell_mode, status, exit_code, log_path, started_at, finished_at, peak_cpu_percent, peak_memory_bytes, observed_ports_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
         params![
             run.id,
             run.project_id,
@@ -774,7 +1118,10 @@ fn insert_run(conn: &Connection, run: &TaskRun) -> Result<()> {
             run.exit_code,
             run.log_path,
             run.started_at,
-            run.finished_at
+            run.finished_at,
+            run.peak_cpu_percent,
+            run.peak_memory_bytes.map(|value| value as i64),
+            serde_json::to_string(&run.observed_ports).unwrap_or_else(|_| "[]".into())
         ],
     )?;
     Ok(())
@@ -796,6 +1143,9 @@ fn row_to_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRun> {
         log_path: row.get(10)?,
         started_at: row.get(11)?,
         finished_at: row.get(12)?,
+        peak_cpu_percent: row.get(13)?,
+        peak_memory_bytes: row.get::<_, Option<i64>>(14)?.map(|value| value as u64),
+        observed_ports: serde_json::from_str(&row.get::<_, String>(15)?).unwrap_or_default(),
     })
 }
 
@@ -814,8 +1164,13 @@ fn pump<T: std::io::Read>(
     // file itself is capped below.
     // PTY output is a mixed byte stream of text, ANSI, and in-place progress
     // updates, so keep the original bytes instead of waiting for newlines.
-    let mut reader = BufReader::new(stream);
-    let mut buffer = [0_u8; 4096];
+    let mut reader = BufReader::with_capacity(32 * 1024, stream);
+    let mut buffer = [0_u8; 32 * 1024];
+    let mut log_file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)
+        .ok();
     while let Ok(read) = reader.read(&mut buffer) {
         if read == 0 {
             break;
@@ -831,7 +1186,7 @@ fn pump<T: std::io::Read>(
         {
             on_cursor_query();
         }
-        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(log_path) {
+        if let Some(file) = log_file.as_mut() {
             let _ = file.write_all(bytes);
         }
         on_chunk(LogChunk {
@@ -1041,9 +1396,29 @@ fn encode_cmd_command_line(executable: &str, argv: &[String]) -> Result<String> 
 #[cfg(test)]
 mod tests {
     use super::{
-        cmd_script_token, display_command, encode_cmd_command_line, resolve_task_command,
-        start_error, validate_cmd_value,
+        build_endpoints, cmd_script_token, display_command, encode_cmd_command_line,
+        parse_lsof_listeners, parse_windows_listeners, resolve_task_command, start_error,
+        validate_cmd_value,
     };
+
+    #[test]
+    fn parses_listener_ownership_and_builds_safe_local_urls() {
+        let windows = "  TCP    0.0.0.0:5173    0.0.0.0:0    LISTENING    4242\n  TCP    [::]:3000       [::]:0       LISTENING    77";
+        assert_eq!(
+            parse_windows_listeners(windows),
+            vec![(5173, 4242), (3000, 77)]
+        );
+        let lsof = "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nnode 4242 me 20u IPv4 0 0t0 TCP *:5173 (LISTEN)";
+        assert_eq!(parse_lsof_listeners(lsof), vec![(5173, 4242)]);
+        assert_eq!(
+            build_endpoints(&[5173], Some("https"), Some("/admin")),
+            vec!["https://localhost:5173/admin"]
+        );
+        assert_eq!(
+            build_endpoints(&[3000], Some("file"), Some("//evil")),
+            vec!["http://localhost:3000/"]
+        );
+    }
     use crate::models::TaskSpec;
     use std::path::Path;
 
