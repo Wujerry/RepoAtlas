@@ -469,7 +469,13 @@ export default function App() {
       const selected = await open({ directory: true, multiple: false });
       if (typeof selected !== "string") return;
       if (register) { const project = await api.registerProject(selected); notify("success", t("projectRegistered"), project.displayName); await reload(project.id); }
-      else { await api.addScanRoot(selected); notify("success", t("rootAdded"), selected); await reload(); }
+      else {
+        const root = await api.addScanRoot(selected);
+        notify("success", t("rootAdded"), selected);
+        await reload();
+        if (scanningRef.current) notify("warning", t("scanAlreadyRunning"));
+        else void startScan(root.id);
+      }
     } catch (error) { notify("error", register ? t("registerFailed") : t("rootAddFailed"), String(error)); }
   }
 
