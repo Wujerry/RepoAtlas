@@ -339,7 +339,7 @@ export function Dashboard({ detail, t, notify, onFavorite, onArchive, onRefresh,
           <div className="project-identity">
             <h1>{project.displayName}</h1>
             <button className="hero-path" title={project.canonicalPath} onClick={() => void navigator.clipboard.writeText(project.canonicalPath).then(() => notify("success", t("copied"), project.canonicalPath)).catch((error) => notify("error", t("copyFailed"), String(error)))}><code>{project.canonicalPath}</code><Copy aria-label={t("copyPath")} /></button>
-            <button className={`project-description ${project.description ? "has-description" : "is-empty"}`} onClick={() => setDescriptionOpen(true)}><span>{project.description || t("addDescription")}</span><PencilSimple aria-hidden="true" /></button>
+            <button className={`project-description ${project.description ? "has-description" : "is-empty"}`} onClick={() => { setDescriptionDraft(project.description ?? ""); setDescriptionOpen(true); }}><span>{project.description || t("addDescription")}</span><PencilSimple aria-hidden="true" /></button>
           </div>
           <div className="project-hero-side">
             <dl className="project-quick-facts" aria-label={t("projectBasics")}>

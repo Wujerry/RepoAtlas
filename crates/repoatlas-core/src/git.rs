@@ -239,13 +239,17 @@ fn parse_porcelain(raw: &[u8]) -> Vec<GitFileStatus> {
         if matches!(staged_code, 'R' | 'C') && index < records.len() {
             index += 1;
         }
-        let staged = staged_code != ' ' && staged_code != '?';
-        let code = if staged { staged_code } else { unstaged_code };
-        files.push(GitFileStatus {
-            path: String::from_utf8_lossy(&path).into_owned(),
-            status: status_name(code),
-            staged,
-        });
+        // Index and working-tree changes are independent (e.g. MM or AM).
+        for (code, staged) in [(staged_code, true), (unstaged_code, false)] {
+            if code == ' ' || (staged && code == '?') {
+                continue;
+            }
+            files.push(GitFileStatus {
+                path: String::from_utf8_lossy(&path).into_owned(),
+                status: status_name(code),
+                staged,
+            });
+        }
     }
     files
 }
@@ -339,10 +343,13 @@ struct RawGitCommandResult {
 }
 
 fn git_run_raw(path: &Path, args: &[String]) -> Result<RawGitCommandResult> {
+    // Porcelain paths are always relative to the checkout root, including
+    // Projects explicitly registered at a directory inside that checkout.
+    let root = repository_root(path).unwrap_or_else(|| path.to_path_buf());
     let mut command = Command::new("git");
     command
         .args(args)
-        .current_dir(path)
+        .current_dir(root)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -446,10 +453,28 @@ pub fn origin_url(path: &Path) -> Option<String> {
     git_optional(path, &["remote", "get-url", "origin"])
         .or_else(|| git_optional(path, &["config", "--get", "remote.origin.url"]))
         .and_then(empty_to_none)
+        .map(|value| sanitize_remote_url(&value))
+}
+
+/// Public repository identity must never carry transport credentials. Query
+/// strings and fragments are not repository identity and may contain tokens.
+pub fn sanitize_remote_url(raw: &str) -> String {
+    let value = raw.trim();
+    let Some((scheme, rest)) = value.split_once("://") else {
+        return value.to_string(); // Ordinary SCP-style git@host:path.
+    };
+    let rest = rest.split(['?', '#']).next().unwrap_or_default();
+    let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
+    let host = authority.rsplit('@').next().unwrap_or_default();
+    format!(
+        "{scheme}://{host}{}{path}",
+        if rest.contains('/') { "/" } else { "" }
+    )
 }
 
 pub fn normalize_remote_url(raw: &str) -> Option<String> {
-    let value = raw.trim();
+    let sanitized = sanitize_remote_url(raw);
+    let value = sanitized.trim();
     if value.is_empty() {
         return None;
     }
@@ -513,5 +538,44 @@ mod tests {
         assert_eq!(files[0].path, "src/main.rs");
         assert_eq!(files[0].status, "modified");
         assert!(!files[0].staged);
+    }
+
+    #[test]
+    fn retains_both_states_for_added_modified_and_renamed_modified_files() {
+        for input in [
+            b"AM new.txt\0".as_slice(),
+            b"MM new.txt\0",
+            b"RM new.txt\0old.txt\0",
+        ] {
+            let files = parse_porcelain(input);
+            assert_eq!(files.len(), 2);
+            assert!(files[0].staged);
+            assert!(!files[1].staged);
+            assert_eq!(files[1].status, "modified");
+            assert!(files.iter().all(|item| item.path == "new.txt"));
+        }
+        assert_eq!(parse_porcelain(b"?? new.txt\0").len(), 1);
+    }
+
+    #[test]
+    fn public_remote_identity_removes_credentials_without_changing_repository_paths() {
+        for raw in [
+            "https://user:secret@host/team/repo.git?token=secret#secret",
+            "https://token@host/team/repo.git",
+            "ssh://git@host/team/repo.git",
+        ] {
+            let value = super::sanitize_remote_url(raw);
+            assert!(!value.contains('@'));
+            assert!(!value.contains("secret"));
+            assert!(value.ends_with("host/team/repo.git"));
+        }
+        assert_eq!(
+            super::sanitize_remote_url("git@host:team/repo.git"),
+            "git@host:team/repo.git"
+        );
+        assert_eq!(
+            super::sanitize_remote_url("https://user:pass@[::1]:8443/repo.git"),
+            "https://[::1]:8443/repo.git"
+        );
     }
 }

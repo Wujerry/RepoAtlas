@@ -511,6 +511,7 @@ export interface UpdateState {
 }
 
 export interface Bootstrap {
+  dataVersion: number;
   settings: AppSettings;
   scanRoots: ScanRoot[];
   projects: ProjectSummary[];

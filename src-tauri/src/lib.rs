@@ -12,9 +12,12 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
+
+#[cfg(test)]
+mod audit_tests;
 
 #[derive(Debug, Clone)]
 struct TaskRuntimeConfig {
@@ -40,6 +43,7 @@ pub struct AppState {
     file_index_build_lock: Arc<Mutex<()>>,
     file_search_lock: Arc<Mutex<()>>,
     next_file_index_generation: AtomicU64,
+    git_write_locks: Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>,
 }
 
 struct ProjectFileIndexJob {
@@ -169,6 +173,7 @@ fn emit_task_persistence_failure(
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Bootstrap {
+    pub data_version: i64,
     pub settings: AppSettings,
     pub scan_roots: Vec<ScanRoot>,
     pub projects: Vec<ProjectSummary>,
@@ -274,6 +279,7 @@ mod mcp_setup_tests {
 fn bootstrap(state: State<Arc<AppState>>) -> Result<Bootstrap, String> {
     let core = state.core.lock().map_err(|err| err.to_string())?;
     Ok(Bootstrap {
+        data_version: core.data_version().map_err(err_to_string)?,
         settings: core.settings().map_err(err_to_string)?,
         scan_roots: core.list_scan_roots().map_err(err_to_string)?,
         projects: core
@@ -281,6 +287,11 @@ fn bootstrap(state: State<Arc<AppState>>) -> Result<Bootstrap, String> {
             .map_err(err_to_string)?,
         collections: core.list_collections().map_err(err_to_string)?,
     })
+}
+
+#[tauri::command]
+async fn get_data_version(state: State<'_, Arc<AppState>>) -> Result<i64, String> {
+    run_blocking(state.inner().clone(), |core| core.data_version()).await
 }
 
 #[tauri::command]
@@ -849,10 +860,51 @@ async fn git_execute(
     project_id: String,
     op: GitOp,
 ) -> Result<repoatlas_core::GitCommandResult, String> {
-    run_blocking(state.inner().clone(), move |core| {
-        core.git_execute(&project_id, op)
-    })
-    .await
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || execute_git_operation(&state, &project_id, op))
+        .await
+        .map_err(err_to_string)?
+}
+
+fn execute_git_operation(
+    state: &AppState,
+    project_id: &str,
+    op: GitOp,
+) -> Result<repoatlas_core::GitCommandResult, String> {
+    let operation = state
+        .core
+        .lock()
+        .map_err(err_to_string)?
+        .prepare_git_operation(project_id, op)
+        .map_err(err_to_string)?;
+    let root = repoatlas_core::git::repository_root(operation.path())
+        .ok_or_else(|| "project is not a Git checkout".to_string())?;
+    let operation_lock = {
+        let mut locks = state.git_write_locks.lock().map_err(err_to_string)?;
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        match locks.get(&root).and_then(Weak::upgrade) {
+            Some(lock) => lock,
+            None => {
+                let lock = Arc::new(Mutex::new(()));
+                locks.insert(root, Arc::downgrade(&lock));
+                lock
+            }
+        }
+    };
+    let _guard = operation_lock.lock().map_err(err_to_string)?;
+    state
+        .core
+        .lock()
+        .map_err(err_to_string)?
+        .validate_git_operation(&operation)
+        .map_err(err_to_string)?;
+    let outcome = operation.execute();
+    state
+        .core
+        .lock()
+        .map_err(err_to_string)?
+        .finish_git_operation(&operation, outcome)
+        .map_err(err_to_string)
 }
 
 #[tauri::command]
@@ -1959,7 +2011,7 @@ fn reveal_path(path: &std::path::Path) -> Result<(), String> {
     }
 }
 
-fn err_to_string(err: repoatlas_core::Error) -> String {
+fn err_to_string(err: impl std::fmt::Display) -> String {
     err.to_string()
 }
 
@@ -2077,6 +2129,7 @@ pub fn run() {
                 file_index_build_lock: Arc::new(Mutex::new(())),
                 file_search_lock: Arc::new(Mutex::new(())),
                 next_file_index_generation: AtomicU64::new(0),
+                git_write_locks: Mutex::new(HashMap::new()),
             }));
             let handle = app.handle().clone();
             std::thread::spawn(move || {
@@ -2094,6 +2147,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             bootstrap,
+            get_data_version,
             get_settings,
             update_settings,
             list_scan_roots,

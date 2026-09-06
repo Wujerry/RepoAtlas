@@ -1,3 +1,5 @@
 # Require desktop approval for external execution
 
 External clients may perform typed reads and low-risk metadata management, while MCP task requests create a pending approval and require an explicit desktop approval before the shared command broker starts them. Git writes, shell-mode evaluation, and filesystem deletion stay unavailable to MCP so a published adapter cannot become an unattended shell. MCP can directly manage project records, tasks, icons, knowledge, and Scan Root records; that authority never extends to real project files.
+
+Pending Approvals expire 15 minutes after creation, including requests created by earlier application versions. Core excludes expired requests from pending and attention views without writing during a read. Looking up an expired request reports its effective `expired` status. Attempting to resolve it atomically persists expiry and its Audit Event, returns an error, and never produces a TaskSpec. Only requests approved before expiry may enter the starting lifecycle.

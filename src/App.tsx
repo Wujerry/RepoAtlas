@@ -19,6 +19,7 @@ import { api, onAttentionChanged, onScanCompleted, onScanFailed, onScanProgress,
 import { getActiveTaskRunsSnapshot, openTaskRun, refreshTaskRuns, startTaskRunListeners, subscribeActiveTaskRuns } from "./lib/task-runs";
 import { isSameOrAncestorPath, scanRootsUnderPath, type ProjectSort } from "./lib/project-tree";
 import { updaterService } from "./lib/updater";
+import { useLibrarySync } from "./lib/library-sync";
 import { buildAgentScanInstruction } from "./lib/mcp-setup";
 import { readOnboardingState, resolveOnboardingVisibility, useOnboardingProjectWatch, writeOnboardingState } from "./lib/onboarding";
 import type { AppSettings, AppView, AttentionItem, McpSetupInfo, PendingApproval, ProjectCollection, ProjectDetail, ProjectQuery, ProjectScope, ProjectSummary, ScanProgress, ScanRoot, ToastMessage, ToastTone } from "./types";
@@ -69,6 +70,8 @@ export default function App() {
   const [progress, setProgress] = useState<ScanProgress | null>(null);
   const [booting, setBooting] = useState(true);
   const [bootError, setBootError] = useState<string>();
+  const [libraryVersion, setLibraryVersion] = useState<number | null>(null);
+  const [libraryRevision, setLibraryRevision] = useState(0);
   const [splashDone, setSplashDone] = useState(false);
   const [projectLoading, setProjectLoading] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -117,14 +120,16 @@ export default function App() {
 
   const loadProjectDetail = useCallback(async (id?: string) => {
     const sequence = ++detailSequence.current;
-    if (!id) { setSelectedId(undefined); setDetail(null); setProjectLoading(false); return; }
+    if (!id) { setSelectedId(undefined); setDetail(null); setProjectLoading(false); return true; }
     setSelectedId(id);
     setProjectLoading(true);
     try {
       const next = await api.getProject(id);
       if (sequence === detailSequence.current) setDetail(next);
+      return sequence === detailSequence.current;
     } catch (error) {
       if (sequence === detailSequence.current) { setDetail(null); notify("error", t("projectLoadFailed"), String(error)); }
+      return false;
     } finally {
       if (sequence === detailSequence.current) setProjectLoading(false);
     }
@@ -134,26 +139,41 @@ export default function App() {
   const reload = useCallback(async (nextSelected?: string, collectionOverride?: string | null) => {
     const sequence = ++querySequence.current;
     try {
-      const effectiveCollectionId = collectionOverride === undefined ? selectedCollectionId : collectionOverride ?? undefined;
+      let effectiveCollectionId = collectionOverride === undefined ? selectedCollectionId : collectionOverride ?? undefined;
       const baseQuery = queryForScope(scope, "", effectiveCollectionId);
-      const [nextRoots, nextScopeProjects, nextCollections] = await Promise.all([
+      let [nextRoots, nextScopeProjects, nextCollections] = await Promise.all([
         api.listScanRoots(), api.listProjects(baseQuery), api.listCollections(),
       ]);
+      const collectionRemoved = effectiveCollectionId && !nextCollections.some((item) => item.id === effectiveCollectionId);
+      if (collectionRemoved) {
+        effectiveCollectionId = undefined;
+        nextScopeProjects = await api.listProjects(queryForScope(scope));
+      }
       const nextProjects = query.trim()
         ? await api.listProjects(queryForScope(scope, query, effectiveCollectionId))
         : nextScopeProjects;
-      if (sequence !== querySequence.current) return;
+      if (sequence !== querySequence.current) return false;
+      if (collectionRemoved) setSelectedCollectionId(undefined);
+      setLibraryRevision((current) => current + 1);
       scopeCache.current = { scope, collectionId: effectiveCollectionId, projects: nextScopeProjects };
       setScanRoots(nextRoots); setScopeProjects(nextScopeProjects); setProjects(nextProjects); setCollections(nextCollections);
       if (nextSelected) {
         setLibrarySurface("project");
-        await loadProjectDetail(nextSelected);
+        if (!await loadProjectDetail(nextSelected)) return false;
       } else if (librarySurface === "project") {
         const id = nextProjects.some((project) => project.id === selectedId) ? selectedId : nextProjects[0]?.id;
-        await loadProjectDetail(id);
+        if (!await loadProjectDetail(id)) return false;
       }
-    } catch (error) { notify("error", t("reloadFailed"), String(error)); }
+      return true;
+    } catch (error) { notify("error", t("reloadFailed"), String(error)); return false; }
   }, [librarySurface, loadProjectDetail, notify, query, scope, selectedCollectionId, selectedId, t]);
+
+  useLibrarySync({
+    initialVersion: booting || bootError ? null : libraryVersion,
+    checkVersion: api.getDataVersion,
+    onChange: () => reload(),
+    onError: (error) => notify("error", t("reloadFailed"), String(error)),
+  });
 
   const updateCollectionMembership = useCallback(async (projectId: string, collectionId: string, include: boolean) => {
     try {
@@ -189,6 +209,7 @@ export default function App() {
     setBooting(true); setBootError(undefined);
     try {
       const boot = await api.bootstrap();
+      setLibraryVersion(boot.dataVersion ?? null);
       setSettings(boot.settings); setScanRoots(boot.scanRoots); setProjects(boot.projects); setScopeProjects(boot.projects); setCollections(boot.collections ?? []);
       scopeCache.current = { scope: "projects", projects: boot.projects };
       setLibrarySurface("dashboard");
@@ -480,14 +501,7 @@ export default function App() {
   }
 
   async function jumpToProject(id: string) {
-    scopeCache.current = undefined;
-    setSelectedCollectionId(undefined);
-    setScope("projects");
-    setQuery("");
-    setFilters(emptyFilters);
-    setView("library");
-    setLibrarySurface("project");
-    await loadProjectDetail(id);
+    await openProjectFromPalette(id);
   }
 
   async function openCollectionFromDashboard(collectionId: string) {
@@ -627,10 +641,19 @@ export default function App() {
   });
   function selectProject(id: string) { if (id === selectedId && librarySurface === "project") return; setView("library"); setLibrarySurface("project"); void loadProjectDetail(id); void api.markOpened(id).catch(() => undefined); }
   async function openProjectFromPalette(id: string) {
+    const queryRequest = ++querySequence.current;
+    const detailRequest = ++detailSequence.current;
     try {
       const next = await api.getProject(id);
-      detailSequence.current += 1;
-      setView("library"); setScope(next.project.archived ? "archived" : "projects"); setQuery(""); setFilters(emptyFilters);
+      const nextScope = next.project.archived ? "archived" : "projects";
+      const nextProjects = await api.listProjects(queryForScope(nextScope));
+      if (queryRequest !== querySequence.current || detailRequest !== detailSequence.current) return;
+      // Commit the unfiltered list and selection together. Otherwise the old
+      // Collection's selection effect can replace this global search target.
+      scopeCache.current = { scope: nextScope, projects: nextProjects };
+      setSelectedCollectionId(undefined);
+      setScopeProjects(nextProjects); setProjects(nextProjects);
+      setView("library"); setScope(nextScope); setQuery(""); setFilters(emptyFilters);
       setLibrarySurface("project");
       setSelectedId(id); setDetail(next); setProjectLoading(false);
       try { await api.markOpened(id); } catch { /* non-blocking */ }
@@ -692,6 +715,7 @@ export default function App() {
     ...visibleProjects.map((project) => ({ id: `jump:${project.id}`, title: `${t("jump")} · ${project.displayName}`, run: () => void selectProject(project.id) })),
   ];
   const dashboardRefreshKey = [
+    libraryRevision,
     ...projects.map((project) => `${project.id}:${project.updatedAt}`),
     ...collections.map((collection) => `${collection.id}:${collection.updatedAt}`),
     ...activeTaskRuns.map((run) => `${run.id}:${run.status}:${run.finishedAt ?? ""}`),
@@ -719,7 +743,7 @@ export default function App() {
         <ProjectList projects={visibleProjects} allProjects={scopeProjects} selectedId={librarySurface === "project" ? selectedId : undefined} onSelect={(id) => void selectProject(id)} query={query} onQuery={setQuery} filters={filters} onFilters={setFilters} sort={sort} onSort={setSort} scope={scope} onScope={setScope} scanning={scanning} progress={progress} t={t} empty={emptyMessage} onAddRoot={() => void chooseDirectory(false)} onRegister={() => void chooseDirectory(true)} onScan={() => void startScan()} onCancelScan={() => void cancelScan()} collectionControls={<CollectionControls collections={collections} selectedId={selectedCollectionId} t={t} notify={notify} onSelect={(id) => { scopeCache.current = undefined; setSelectedCollectionId(id); }} onChanged={async (id) => { scopeCache.current = undefined; await reload(undefined, id ?? null); setSelectedCollectionId(id); }} />} collections={collections} selectedCollectionId={selectedCollectionId} onAddToCollection={(projectId, collectionId) => updateCollectionMembership(projectId, collectionId, true)} onRemoveFromCollection={(projectId, collectionId) => updateCollectionMembership(projectId, collectionId, false)} onRename={async (id, displayName) => { try { await api.updateProject(id, { displayName }); await reload(id); } catch (error) { notify("error", t("saveFailed"), String(error)); throw error; } }} onDescription={async (id, description) => { try { await api.updateProject(id, { description }); await reload(id); } catch (error) { notify("error", t("saveFailed"), String(error)); throw error; } }} scanRoots={scanRoots} onRemoveProject={async (id) => { try { await removeProjectRecord(id); } catch (error) { notify("error", t("removeRecordFailed"), String(error)); } }} onRemoveFolder={async (path, projectIds) => { try { await removeFolderRecords(path, projectIds); } catch (error) { notify("error", t("removeFolderFailed"), String(error)); } }} onIconError={(error) => notify("error", t("projectIconFailed"), String(error))} onReveal={(path) => void api.openInExplorer(path).catch((error) => notify("error", t("openFailed"), String(error)))} onRelocate={(id) => void relocateProject(id)} />
         <div className={"detail-pane" + (librarySurface === "project" && projectLoading && detail ? " is-switching" : "")}>
           <Suspense fallback={<div className="detail-pane-shell"><AppSkeleton /></div>}>
-          {booting ? <div className="detail-pane-shell"><AppSkeleton /></div> : bootError ? <div className="detail-pane-shell"><main id="main-content" className="main-pane"><EmptyState title={t("startupFailed")} body={bootError} actions={<Button variant="primary" onClick={() => void bootstrapApp()}>{t("retry")}</Button>} /></main></div> : librarySurface === "dashboard" ? <div className="detail-pane-shell"><HomeDashboard t={t} refreshKey={dashboardRefreshKey} onOpenProject={(id) => selectProject(id)} onOpenCollection={(id) => void openCollectionFromDashboard(id)} onOpenRun={(runId) => void openTaskRun(runId).then(() => setActiveTasksOpen(true)).catch((error) => notify("error", t("tasksLoadFailed"), String(error)))} onOpenAttention={() => { setApprovalsOpen(true); void loadApprovals(); }} onOpenAttentionItem={openDashboardAttentionItem} /></div> : detail ? <div className="detail-pane-shell"><Dashboard detail={detail} t={t} notify={notify} onFavorite={async () => { await api.updateProject(detail.project.id, { favorite: !detail.project.favorite }); await reload(detail.project.id); }} onArchive={async () => { await api.updateProject(detail.project.id, { archived: !detail.project.archived }); notify("success", detail.project.archived ? t("projectRestored") : t("projectArchived")); await reload(); }} onRefresh={async () => { await api.refreshProject(detail.project.id); await reload(detail.project.id); }} onRemove={async () => { try { await removeProjectRecord(detail.project.id); } catch (error) { notify("error", t("removeRecordFailed"), String(error)); } }} onOpenExplorer={() => void api.openInExplorer(detail.project.canonicalPath).catch((error) => notify("error", t("openFailed"), String(error)))} onOpenTerminal={(terminal) => void api.openInTerminal(detail.project.canonicalPath, terminal).catch((error) => notify("error", t("openFailed"), String(error)))} onOpenIde={(ide) => void api.openInIde(detail.project.canonicalPath, ide).then(() => reload(detail.project.id)).catch((error) => notify("error", t("openFailed"), String(error)))} onOpenAgent={(agent) => void api.openInAgent(detail.project.canonicalPath, agent).then(() => reload(detail.project.id)).catch((error) => notify("error", t("openFailed"), String(error)))} onOpenProject={(id) => void loadProjectDetail(id)} onRelocate={() => void relocateProject(detail.project.id)} onDescription={async (description) => { try { await api.updateProject(detail.project.id, { description }); await reload(detail.project.id); } catch (error) { notify("error", t("saveFailed"), String(error)); throw error; } }} onNotes={(notes) => void api.updateProject(detail.project.id, { notes }).then(() => { notify("success", t("settingsSaved")); return reload(detail.project.id); }).catch((error) => notify("error", t("saveFailed"), String(error)))} onTags={(tags) => void api.updateProject(detail.project.id, { tags }).then(() => { notify("success", t("settingsSaved")); return reload(detail.project.id); }).catch((error) => notify("error", t("saveFailed"), String(error)))} /></div> : projectLoading ? <div className="detail-pane-shell"><AppSkeleton /></div> : <div className="detail-pane-shell"><main id="main-content" className="main-pane"><EmptyState title={t("noSelection")} body={t("selectProjectHint")} actions={<Button variant="primary" onClick={() => void chooseDirectory(false)}>{t("addRoot")}</Button>} /></main></div>}
+          {booting ? <div className="detail-pane-shell"><AppSkeleton /></div> : bootError ? <div className="detail-pane-shell"><main id="main-content" className="main-pane"><EmptyState title={t("startupFailed")} body={bootError} actions={<Button variant="primary" onClick={() => void bootstrapApp()}>{t("retry")}</Button>} /></main></div> : librarySurface === "dashboard" ? <div className="detail-pane-shell"><HomeDashboard t={t} refreshKey={dashboardRefreshKey} onOpenProject={(id) => void openProjectFromPalette(id)} onOpenCollection={(id) => void openCollectionFromDashboard(id)} onOpenRun={(runId) => void openTaskRun(runId).then(() => setActiveTasksOpen(true)).catch((error) => notify("error", t("tasksLoadFailed"), String(error)))} onOpenAttention={() => { setApprovalsOpen(true); void loadApprovals(); }} onOpenAttentionItem={openDashboardAttentionItem} /></div> : detail ? <div className="detail-pane-shell"><Dashboard detail={detail} t={t} notify={notify} onFavorite={async () => { await api.updateProject(detail.project.id, { favorite: !detail.project.favorite }); await reload(detail.project.id); }} onArchive={async () => { await api.updateProject(detail.project.id, { archived: !detail.project.archived }); notify("success", detail.project.archived ? t("projectRestored") : t("projectArchived")); await reload(); }} onRefresh={async () => { await api.refreshProject(detail.project.id); await reload(detail.project.id); }} onRemove={async () => { try { await removeProjectRecord(detail.project.id); } catch (error) { notify("error", t("removeRecordFailed"), String(error)); } }} onOpenExplorer={() => void api.openInExplorer(detail.project.canonicalPath).catch((error) => notify("error", t("openFailed"), String(error)))} onOpenTerminal={(terminal) => void api.openInTerminal(detail.project.canonicalPath, terminal).catch((error) => notify("error", t("openFailed"), String(error)))} onOpenIde={(ide) => void api.openInIde(detail.project.canonicalPath, ide).then(() => reload(detail.project.id)).catch((error) => notify("error", t("openFailed"), String(error)))} onOpenAgent={(agent) => void api.openInAgent(detail.project.canonicalPath, agent).then(() => reload(detail.project.id)).catch((error) => notify("error", t("openFailed"), String(error)))} onOpenProject={(id) => void openProjectFromPalette(id)} onRelocate={() => void relocateProject(detail.project.id)} onDescription={async (description) => { try { await api.updateProject(detail.project.id, { description }); await reload(detail.project.id); } catch (error) { notify("error", t("saveFailed"), String(error)); throw error; } }} onNotes={(notes) => void api.updateProject(detail.project.id, { notes }).then(() => { notify("success", t("settingsSaved")); return reload(detail.project.id); }).catch((error) => notify("error", t("saveFailed"), String(error)))} onTags={(tags) => void api.updateProject(detail.project.id, { tags }).then(() => { notify("success", t("settingsSaved")); return reload(detail.project.id); }).catch((error) => notify("error", t("saveFailed"), String(error)))} /></div> : projectLoading ? <div className="detail-pane-shell"><AppSkeleton /></div> : <div className="detail-pane-shell"><main id="main-content" className="main-pane"><EmptyState title={t("noSelection")} body={t("selectProjectHint")} actions={<Button variant="primary" onClick={() => void chooseDirectory(false)}>{t("addRoot")}</Button>} /></main></div>}
           </Suspense>
         </div>
       </>
@@ -739,7 +763,7 @@ export default function App() {
         <Dialog.Backdrop className="settings-page-backdrop" />
         <Dialog.Popup className="settings-page-dialog" aria-labelledby="settings-page-title">
           <Suspense fallback={<AppSkeleton />}>
-            <SettingsPane settings={settings} scanRoots={scanRoots} scanning={scanning} t={t} notify={notify} onSettings={updateSettings} onAddRoot={() => chooseDirectory(false)} onRemoveRoot={async (id) => { await api.removeScanRoot(id, false); notify("success", t("rootRemoved")); await reload(); }} onScanRoot={(id) => startScan(id)} onReload={() => reload()} updateState={updateState} onCheckForUpdates={() => updaterService.checkForUpdates()} onDownloadUpdate={() => updaterService.downloadUpdate()} onInstallUpdate={() => updaterService.installUpdate()} onRestartApp={() => updaterService.restartApp()} onDeferUpdate={() => updaterService.deferUpdate()} onBack={closeSettings} />
+            <SettingsPane settings={settings} scanRoots={scanRoots} scanning={scanning} t={t} notify={notify} onSettings={updateSettings} onAddRoot={() => chooseDirectory(false)} onRemoveRoot={async (id) => { await api.removeScanRoot(id, false); notify("success", t("rootRemoved")); await reload(); }} onScanRoot={(id) => startScan(id)} onReload={async () => { await reload(); }} updateState={updateState} onCheckForUpdates={() => updaterService.checkForUpdates()} onDownloadUpdate={() => updaterService.downloadUpdate()} onInstallUpdate={() => updaterService.installUpdate()} onRestartApp={() => updaterService.restartApp()} onDeferUpdate={() => updaterService.deferUpdate()} onBack={closeSettings} />
           </Suspense>
         </Dialog.Popup>
       </Dialog.Portal>

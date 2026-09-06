@@ -30,6 +30,8 @@ For a single open checkout, the Agent can call `register_project`. For a larger 
 
 The Agent keeps ownership of its model, account, provider configuration, conversation, and decisions about reading project files. RepoAtlas keeps the durable Project and task records.
 
+Agent changes to the shared library continue to appear after onboarding, including edits to existing descriptions, tasks, and Collections. The desktop checks local database changes while visible and when you return to it; this does not scan project directories. Task requests expire after 15 minutes and must be requested again if they were not approved in time.
+
 ## Main features
 
 - **Working dashboard** — start with local Project and Collection status, seven-day Task Run results, recent work, and items that need action.

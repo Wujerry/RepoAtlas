@@ -5,6 +5,17 @@ use rusqlite::{params, OptionalExtension};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
+const APPROVAL_TTL_MINUTES: i64 = 15;
+const EXPIRED_ERROR: &str = "approval expired; request a new approval";
+
+fn approval_expired(approval: &PendingApproval) -> bool {
+    chrono::DateTime::parse_from_rfc3339(&approval.created_at)
+        .map(|created| {
+            chrono::Utc::now() >= created + chrono::Duration::minutes(APPROVAL_TTL_MINUTES)
+        })
+        .unwrap_or(true)
+}
+
 impl Core {
     pub fn request_task_approval(&self, spec: TaskSpec) -> Result<PendingApproval> {
         self.request_task_approval_from("desktop", spec)
@@ -137,11 +148,23 @@ impl Core {
             "SELECT id, project_id, kind, title, detail, executable, argv_json, cwd, task_id, shell_mode, status, origin, run_id, error, created_at, resolved_at, expected_ports_json, dev_url_path, dev_url_scheme FROM pending_approvals WHERE status = 'pending' ORDER BY datetime(created_at) DESC",
         )?;
         let rows = stmt.query_map([], approval_from_row)?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(Into::into)
+        Ok(rows
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .filter(|approval| !approval_expired(approval))
+            .collect())
     }
 
     pub fn get_pending_approval(&self, id: &str) -> Result<PendingApproval> {
+        let mut approval = self.load_pending_approval(id)?;
+        if approval.status == "pending" && approval_expired(&approval) {
+            approval.status = "expired".into();
+            approval.error = Some(EXPIRED_ERROR.into());
+        }
+        Ok(approval)
+    }
+
+    fn load_pending_approval(&self, id: &str) -> Result<PendingApproval> {
         self.conn
             .query_row(
                 "SELECT id, project_id, kind, title, detail, executable, argv_json, cwd, task_id, shell_mode, status, origin, run_id, error, created_at, resolved_at, expected_ports_json, dev_url_path, dev_url_scheme FROM pending_approvals WHERE id = ?1",
@@ -157,10 +180,24 @@ impl Core {
         approved: bool,
     ) -> Result<(PendingApproval, Option<TaskSpec>)> {
         const CHANGED_ERROR: &str = "task definition changed; approval denied";
-        let (approval, spec, definition_changed) = self.with_immediate_transaction(|core| {
-            let mut approval = core.get_pending_approval(id)?;
+        let (approval, spec, rejection) = self.with_immediate_transaction(|core| {
+            let mut approval = core.load_pending_approval(id)?;
             if approval.status != "pending" {
                 return Err(Error::msg("approval is no longer pending"));
+            }
+
+            if approval_expired(&approval) {
+                let resolved_at = now();
+                core.conn.execute(
+                    "UPDATE pending_approvals SET status = 'expired', error = ?1, resolved_at = ?2 WHERE id = ?3 AND status = 'pending'",
+                    params![EXPIRED_ERROR, resolved_at, id],
+                )?;
+                core.record_audit_event(&approval.origin, "expire_task_approval", "task",
+                    approval.task_id.as_deref().or(Some(&approval.project_id)), Some(EXPIRED_ERROR), "expired")?;
+                approval.status = "expired".into();
+                approval.resolved_at = Some(resolved_at);
+                approval.error = Some(EXPIRED_ERROR.into());
+                return Ok((approval, None, Some(EXPIRED_ERROR)));
             }
 
             // BEGIN IMMEDIATE covers this comparison, so a concurrent
@@ -185,7 +222,7 @@ impl Core {
                 approval.status = "denied".into();
                 approval.resolved_at = Some(resolved_at);
                 approval.error = Some(CHANGED_ERROR.into());
-                return Ok((approval, None, true));
+                return Ok((approval, None, Some(CHANGED_ERROR)));
             }
 
             let next_status = if approved { "starting" } else { "denied" };
@@ -230,10 +267,10 @@ impl Core {
             } else {
                 None
             };
-            Ok((approval, spec, false))
+            Ok((approval, spec, None))
         })?;
-        if definition_changed {
-            return Err(Error::msg(CHANGED_ERROR));
+        if let Some(reason) = rejection {
+            return Err(Error::msg(reason));
         }
         Ok((approval, spec))
     }

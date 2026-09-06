@@ -37,7 +37,35 @@ pub struct Core {
 
 type IconOverride = (String, Vec<u8>, Option<String>);
 
+/// Immutable operation context; filesystem and process work requires no Core
+/// connection. Adapters serialize writes for the same checkout outside Core.
+pub struct PreparedGitOperation {
+    project_id: String,
+    path: PathBuf,
+    op: GitOp,
+}
+
+impl PreparedGitOperation {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn execute(&self) -> Result<(GitCommandResult, Option<GitSnapshot>)> {
+        let result = git::execute(&self.path, self.op.clone())?;
+        let snapshot = git::snapshot(&self.path);
+        Ok((result, snapshot))
+    }
+}
+
 impl Core {
+    /// Changes committed by other connections, not filesystem changes. The
+    /// token is meaningful only on the long-lived desktop Core connection.
+    pub fn data_version(&self) -> Result<i64> {
+        self.conn
+            .query_row("PRAGMA data_version", [], |row| row.get(0))
+            .map_err(Into::into)
+    }
+
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
         let runtime_lock = acquire_runtime_lock(path, true)?;
@@ -615,6 +643,11 @@ impl Core {
             .optional()?
             .ok_or_else(|| Error::NotFound(id.into()))?;
         let mut detail = row?;
+        for fact in &mut detail.facts {
+            if fact.kind == "lineage" {
+                fact.value = git::sanitize_remote_url(&fact.value);
+            }
+        }
         detail.project.tags = self.tags_for(&detail.project.id)?;
         detail.start_here = start_here_tasks(&detail.tasks, &detail.facts);
         detail.lineage = self.lineage_for(&detail)?;
@@ -2242,13 +2275,12 @@ impl Core {
         let mut latest_runs = HashMap::<String, DashboardTaskRunSummary>::new();
         let mut run_stmt = self.conn.prepare(&format!(
             "SELECT r.project_id, r.kind, r.status, r.started_at, r.finished_at
-             FROM task_runs r
-             WHERE r.project_id IN ({placeholders})
-               AND r.id = (
-                 SELECT latest.id FROM task_runs latest
-                 WHERE latest.project_id = r.project_id
-                 ORDER BY datetime(latest.started_at) DESC, latest.id DESC LIMIT 1
-               )"
+             FROM projects p JOIN task_runs r ON r.id = (
+                  SELECT latest.id FROM task_runs latest
+                  WHERE latest.project_id = p.id
+                  ORDER BY datetime(latest.started_at) DESC, latest.id DESC LIMIT 1
+               )
+             WHERE p.id IN ({placeholders})"
         ))?;
         let run_rows =
             run_stmt.query_map(rusqlite::params_from_iter(project_ids.iter()), |row| {
@@ -2602,9 +2634,40 @@ impl Core {
     }
 
     pub fn git_execute(&self, project_id: &str, op: GitOp) -> Result<GitCommandResult> {
-        let path = self.project_path(project_id)?;
-        let action = git_action_name(&op);
-        let result = match git::execute(&path, op.clone()) {
+        let operation = self.prepare_git_operation(project_id, op)?;
+        self.finish_git_operation(&operation, operation.execute())
+    }
+
+    pub fn prepare_git_operation(
+        &self,
+        project_id: &str,
+        op: GitOp,
+    ) -> Result<PreparedGitOperation> {
+        Ok(PreparedGitOperation {
+            project_id: project_id.into(),
+            path: self.project_path(project_id)?,
+            op,
+        })
+    }
+
+    pub fn validate_git_operation(&self, operation: &PreparedGitOperation) -> Result<()> {
+        if self.project_path(&operation.project_id)? != operation.path {
+            return Err(Error::msg(
+                "project location changed; retry the Git operation",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn finish_git_operation(
+        &self,
+        operation: &PreparedGitOperation,
+        outcome: Result<(GitCommandResult, Option<GitSnapshot>)>,
+    ) -> Result<GitCommandResult> {
+        let project_id = operation.project_id.as_str();
+        let op = &operation.op;
+        let action = git_action_name(op);
+        let (mut result, snapshot) = match outcome {
             Ok(result) => result,
             Err(error) => {
                 self.record_audit_event(
@@ -2618,8 +2681,7 @@ impl Core {
                 return Err(error);
             }
         };
-        let _ = self.refresh_project(project_id);
-        let (title, detail) = match &op {
+        let (title, detail) = match op {
             GitOp::Commit { .. } => ("Git commit", None),
             GitOp::Pull => ("Git pull", None),
             GitOp::Push => ("Git push", None),
@@ -2628,7 +2690,6 @@ impl Core {
             GitOp::Checkout { branch, .. } => ("Git checkout", Some(branch.as_str())),
             _ => ("Git operation", None),
         };
-        let _ = self.record_project_event(project_id, "git", title, detail);
         self.record_audit_event(
             "desktop",
             action,
@@ -2637,6 +2698,20 @@ impl Core {
             detail,
             if result.ok { "success" } else { "failed" },
         )?;
+        // The operation already ran: preserve its outcome and audit even when
+        // another client moved or removed the record while Git was running.
+        if self.validate_git_operation(operation).is_err() {
+            let warning =
+                "Project record changed during Git execution; cached state was not updated.";
+            result.stdout.push_str(&format!("\n{warning}"));
+            result.stderr.push_str(&format!("\n{warning}"));
+            return Ok(result);
+        }
+        if let Some(snapshot) = snapshot {
+            self.conn.execute("UPDATE projects SET git_json = ?1, last_commit_at = ?2, updated_at = ?3 WHERE id = ?4",
+                params![to_json(&snapshot)?, snapshot.last_commit_at, now(), project_id])?;
+        }
+        let _ = self.record_project_event(project_id, "git", title, detail);
         Ok(result)
     }
 

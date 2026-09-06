@@ -1,5 +1,5 @@
 import { ArrowDown, ArrowUp, CheckCircle, Code, DesktopTower, GitBranch, Play, WarningCircle } from "@phosphor-icons/react";
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { MessageKey } from "../i18n";
 import { formatTime } from "../lib/format";
 import type { EnvironmentInspection, GitStatus, ProjectDetail, ProjectFile, ReadmeDocument, RuntimeStatus, TaskRun } from "../types";
@@ -73,7 +73,7 @@ export function OverviewWorkspace(props: {
     { id: "runtime", label: t("fileGroupRuntime"), items: files.filter((file) => file.kind === "runtime") },
   ].filter((group) => group.items.length > 0);
   const matchLabel = (state: string) => state === "match" ? t("versionMatch") : state === "mismatch" ? t("versionMismatch") : state === "missing" ? t("versionMissing") : state === "undeclared" ? t("undeclaredVersion") : t("unknownVersion");
-  const attentionCount = git?.snapshot.dirty ? git.files.length : 0;
+  const attentionCount = git?.snapshot.dirty ? new Set(git.files.map((file) => file.path)).size : 0;
   const branchName = git?.snapshot.branch ?? (project.vcsKind === "git" ? t("detachedHead") : project.vcsKind);
   const startHere = detail.startHere?.length ? detail.startHere : quickTasks.map((task) => ({ taskId: task.id, kind: task.kind, name: task.name, source: t("inferredTask"), inferred: task.inferred }));
   const recentEvents = (detail.recentEvents ?? []).filter((event) => !(event.kind === "open" && !event.detail));
@@ -149,9 +149,19 @@ export function OverviewWorkspace(props: {
     <section id="overview-notes" className="content-card overview-notes"><div className="section-heading"><div><p className="eyebrow">{t("personalContext")}</p><h2>{t("tagsAndNotes")}</h2></div></div>
       <div className="tag-cloud editable">{project.tags.map((tag) => <button key={tag} onClick={() => onTags(project.tags.filter((item) => item !== tag))}>{tag}<span aria-hidden="true">x</span></button>)}</div>
       <form className="inline-form" onSubmit={(event) => { event.preventDefault(); const value = tagDraft.trim(); if (!value || project.tags.includes(value)) return; onTags([...project.tags, value]); setTagDraft(""); }}><label><span>{t("addTag")}</span><input value={tagDraft} onChange={(event) => setTagDraft(event.target.value)} /></label><Button type="submit">{t("add")}</Button></form>
-      <label className="field-group"><span>{t("notes")}</span><textarea key={project.id} defaultValue={project.notes ?? ""} onBlur={(event) => onNotes(event.target.value)} placeholder={t("notesHint")} /></label>
+      <label className="field-group"><span>{t("notes")}</span><NotesEditor key={project.id} value={project.notes ?? ""} onSave={onNotes} placeholder={t("notesHint")} /></label>
     </section>
   </div>;
+}
+
+function NotesEditor({ value, onSave, placeholder }: { value: string; onSave: (notes: string) => void; placeholder: string }) {
+  const [draft, setDraft] = useState(value);
+  const dirty = useRef(false);
+  useEffect(() => { if (!dirty.current) setDraft(value); }, [value]);
+  return <textarea value={draft} placeholder={placeholder} onChange={(event) => { dirty.current = true; setDraft(event.target.value); }} onBlur={() => {
+    if (dirty.current && draft !== value) onSave(draft);
+    dirty.current = false;
+  }} />;
 }
 
 function statusKey(status: string): MessageKey {

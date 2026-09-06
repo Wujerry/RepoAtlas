@@ -605,5 +605,60 @@ fn migrate(conn: &Connection) -> Result<()> {
             [],
         )?;
     }
+    let applied16: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = 16)",
+        [],
+        |row| row.get(0),
+    )?;
+    if !applied16 {
+        let transaction = conn.unchecked_transaction()?;
+        sanitize_project_remotes(&transaction)?;
+        transaction.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_task_runs_project_latest
+             ON task_runs(project_id, datetime(started_at) DESC, id DESC);
+             INSERT INTO schema_migrations (version, applied_at) VALUES (16, datetime('now'));",
+        )?;
+        transaction.commit()?;
+    }
+    Ok(())
+}
+
+/// Also used on backup copies, which must not expose legacy credentials even
+/// if an older application instance wrote a record after this migration.
+pub(crate) fn sanitize_project_remotes(conn: &Connection) -> Result<()> {
+    let rows = {
+        let mut stmt = conn.prepare("SELECT id, facts_json, lineage_key FROM projects")?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows
+    };
+    for (id, original, old_key) in rows {
+        let mut facts: Vec<crate::models::DetectedFact> = serde_json::from_str(&original)
+            .map_err(|error| crate::error::Error::msg(error.to_string()))?;
+        for fact in &mut facts {
+            if fact.kind == "lineage" {
+                fact.value = crate::git::sanitize_remote_url(&fact.value);
+            }
+        }
+        let key = facts
+            .iter()
+            .find(|fact| fact.kind == "lineage")
+            .and_then(|fact| crate::git::normalize_remote_url(&fact.value));
+        let sanitized = serde_json::to_string(&facts)
+            .map_err(|error| crate::error::Error::msg(error.to_string()))?;
+        if sanitized != original || key != old_key {
+            conn.execute(
+                "UPDATE projects SET facts_json = ?1, lineage_key = ?2 WHERE id = ?3",
+                params![sanitized, key, id],
+            )?;
+        }
+    }
     Ok(())
 }

@@ -35,6 +35,7 @@ vi.mock("../lib/api", () => ({
 }));
 
 import { Dashboard } from "../components/Dashboard";
+import { GitWorkspace } from "../components/GitWorkspace";
 
 const t = (key: MessageKey) => dictionaries.en[key];
 
@@ -94,6 +95,45 @@ function environment(): EnvironmentInspection {
 }
 
 describe("overview workspace", () => {
+  it("refreshes untouched metadata editors and preserves active drafts", async () => {
+    inspectProjectEnvironment.mockResolvedValue(environment());
+    const onNotes = vi.fn();
+    const props = { t, notify: vi.fn(), onFavorite: vi.fn(), onArchive: vi.fn(), onRefresh: vi.fn(), onRemove: vi.fn(), onOpenExplorer: vi.fn(), onOpenTerminal: vi.fn(), onOpenIde: vi.fn(), onOpenAgent: vi.fn(), onDescription: vi.fn(), onNotes, onTags: vi.fn() };
+    const initial = detail();
+    initial.project.notes = "Original notes";
+    const { rerender } = render(<Dashboard {...props} detail={initial} />);
+    const updated = { ...initial, project: { ...initial.project, description: "Agent description", notes: "Agent notes" } };
+    rerender(<Dashboard {...props} detail={updated} />);
+    const notes = screen.getByLabelText(t("notes"));
+    expect(notes).toHaveValue("Agent notes");
+    fireEvent.blur(notes);
+    expect(onNotes).not.toHaveBeenCalled();
+    fireEvent.change(notes, { target: { value: "Local draft" } });
+    const later = { ...updated, project: { ...updated.project, notes: "Later Agent notes" } };
+    rerender(<Dashboard {...props} detail={later} />);
+    expect(notes).toHaveValue("Local draft");
+    fireEvent.blur(notes);
+    expect(onNotes).toHaveBeenCalledWith("Local draft");
+    fireEvent.click(screen.getByRole("button", { name: "Agent description" }));
+    const dialog = await screen.findByRole("dialog");
+    const description = within(dialog).getByRole("textbox");
+    expect(description).toHaveValue("Agent description");
+    fireEvent.change(description, { target: { value: "Local description draft" } });
+    rerender(<Dashboard {...props} detail={{ ...later, project: { ...later.project, description: "Later Agent description" } }} />);
+    expect(description).toHaveValue("Local description draft");
+    fireEvent.click(within(dialog).getByRole("button", { name: t("save") }));
+    await waitFor(() => expect(props.onDescription).toHaveBeenCalledWith("Local description draft"));
+  });
+
+  it("counts a mixed Git status as one file and keeps both diff actions", () => {
+    const onDiff = vi.fn();
+    render(<GitWorkspace git={{ snapshot: detail().git!, files: [{ path: "file.txt", status: "M", staged: true }, { path: "file.txt", status: "M", staged: false }], branches: [], log: [] }} loading={false} busy={false} commitMessage="" setCommitMessage={vi.fn()} stagedCount={1} diff="" diffLoading={false} t={t} onRetry={vi.fn()} onGit={vi.fn()} onDiff={onDiff} />);
+    expect(screen.getByText(`1 ${t("changedFiles")}`)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: `Mfile.txt${t("staged")}` }));
+    fireEvent.click(screen.getByRole("button", { name: `Mfile.txt${t("unstaged")}` }));
+    expect(onDiff.mock.calls).toEqual([["file.txt", true], ["file.txt", false]]);
+  });
+
   it("keeps the overview switcher in the tab row and opens a file preview", async () => {
     inspectProjectEnvironment.mockResolvedValue(environment());
     readProjectFile.mockResolvedValue({ path: "package.json", content: '{ "name": "atlas" }', truncated: false });

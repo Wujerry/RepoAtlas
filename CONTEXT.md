@@ -83,7 +83,7 @@ An explicit, scoped user authorization for one operation or a defined class of o
 _Avoid_: Permission, consent
 
 **Pending Approval**:
-A time-bounded request awaiting explicit approval before a protected operation may begin.
+A request valid for 15 minutes from creation, awaiting explicit approval before a protected operation may begin. An expired request requires a new request.
 _Avoid_: Queued task, permission request
 
 **Audit Event**:

@@ -6,6 +6,10 @@ Task Run monitoring stays inside the structured Command Broker boundary. One app
 
 Task Run history queries use project/time and status/time indexes. Repository Lineage uses a normalized indexed key maintained with Project detection rather than reparsing every Project's facts for each detail request. Attention acknowledgement and Collection membership are resolved in bounded batch queries; these derived views do not use per-item Project-detail lookups.
 
+Recent Project summaries start from at most six Project IDs and select each latest Task Run once, using an index that matches the timestamp expression and deterministic ID tie-breaker. The number of returned summaries must not hide repeated work over every historical run.
+
+The desktop checks SQLite `data_version` on its existing Core connection every two seconds while visible and when returning to the window. Bootstrap captures the initial token before loading records. An external commit invalidates the current library cache and refreshes Projects, selected detail, Scan Roots, Collections, and the Dashboard without changing selection unnecessarily. Polls are single-flight and an unsuccessful refresh does not acknowledge the new token. This observes application records only; it does not watch or scan Project files.
+
 Attention acknowledgement is versioned by the source condition. It is not deletion of the underlying Audit Event, Task Run, Project, or environment observation; when the source changes, the condition appears again.
 
 The desktop Dashboard is another bounded derived view owned by the shared Core. Opening it performs read-only SQLite aggregation over non-archived Project state, Project Collections, current Task Runs, Attention Items, and terminal Task Run results from the previous seven days. Its recent Project and Task Run lists are capped, and collection activity is derived in batch. It does not refresh Git, read Project files, start a scan, record a Project open event, or create Audit Events. The Tauri adapter exposes the snapshot to the desktop, but MCP does not add a parallel Dashboard tool because Agents already have the narrower Project and Task Run contracts.

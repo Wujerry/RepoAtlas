@@ -42,6 +42,7 @@ import type {
 } from "../types";
 export const api = {
   bootstrap: () => invoke<Bootstrap>("bootstrap"),
+  getDataVersion: () => invoke<number>("get_data_version"),
   getSettings: () => invoke<AppSettings>("get_settings"),
   updateSettings: (settings: AppSettings) => invoke<AppSettings>("update_settings", { settings }),
   listScanRoots: () => invoke<ScanRoot[]>("list_scan_roots"),

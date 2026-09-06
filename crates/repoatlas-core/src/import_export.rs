@@ -369,6 +369,9 @@ pub fn backup_to(conn: &Connection, dest: &Path) -> Result<()> {
     let mut backup_conn = Connection::open(dest)?;
     let backup = rusqlite::backup::Backup::new(conn, &mut backup_conn)?;
     backup.run_to_completion(1000, std::time::Duration::from_millis(50), None)?;
+    drop(backup);
+    crate::db::sanitize_project_remotes(&backup_conn)?;
+    backup_conn.execute_batch("VACUUM")?;
     Ok(())
 }
 
