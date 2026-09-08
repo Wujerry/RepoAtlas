@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { BookOpenText, CaretDown, Code, Copy, DotsThree, Files as FilesIcon, FolderOpen, GitBranch, PencilSimple, Play, Sparkle, Star, TerminalWindow } from "@phosphor-icons/react";
+import { BookOpenText, CaretDown, CheckCircle, Code, Copy, DotsThree, Files as FilesIcon, FolderOpen, GitBranch, PencilSimple, Play, Sparkle, Star, TerminalWindow, WarningCircle } from "@phosphor-icons/react";
 import { Dialog } from "@base-ui/react/dialog";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
@@ -334,63 +334,89 @@ export function Dashboard({ detail, t, notify, onFavorite, onArchive, onRefresh,
   return (
     <main id="main-content" className={tab === "tasks" ? "main-pane main-pane-tasks" : tab === "files" ? "main-pane main-pane-files" : "main-pane"}>
       <header className="project-header">
-        <div className="atlas-texture" aria-hidden="true" />
         <div className="project-hero">
           <div className="project-identity">
-            <h1>{project.displayName}</h1>
-            <button className="hero-path" title={project.canonicalPath} onClick={() => void navigator.clipboard.writeText(project.canonicalPath).then(() => notify("success", t("copied"), project.canonicalPath)).catch((error) => notify("error", t("copyFailed"), String(error)))}><code>{project.canonicalPath}</code><Copy aria-label={t("copyPath")} /></button>
-            <button className={`project-description ${project.description ? "has-description" : "is-empty"}`} onClick={() => { setDescriptionDraft(project.description ?? ""); setDescriptionOpen(true); }}><span>{project.description || t("addDescription")}</span><PencilSimple aria-hidden="true" /></button>
-          </div>
-          <div className="project-hero-side">
-            <dl className="project-quick-facts" aria-label={t("projectBasics")}>
-              <div><dt>{t("projectStatus")}</dt><dd className={project.availability === "ready" ? "is-ready" : "is-warning"}>{t(project.availability === "ready" ? "ready" : "unavailable")}</dd></div>
-              <div><dt>{project.vcsKind === "git" ? "Git" : project.vcsKind.toUpperCase()}</dt><dd>{git?.snapshot.branch ?? detail.git?.branch ?? "—"}</dd></div>
-              <div><dt>{t("projectStack")}</dt><dd title={stackOf(project).join(" · ")}>{stackOf(project).slice(0, 3).join(" · ") || "—"}</dd></div>
-              <div><dt>{t("projectTaskCount")}</dt><dd>{detail.tasks.length}</dd></div>
-            </dl>
-            <div className="hero-actions">
-            <ActionMenu trigger={<Button variant="primary" size="md"><Sparkle weight="bold" />{t("openAgent")}<CaretDown /></Button>} items={[
-              ...(agentTools.length
-                ? agentTools.map((agent) => ({
-                    label: agent.name,
-                    icon: <AgentGlyph agent={agent.id} />,
-                    onClick: () => onOpenAgent(agent.id),
-                  }))
-                : [{
-                    label: t("noAgentDetected"),
-                    onClick: () => notify("warning", t("noAgentDetected"), t("agentNotInstalled")),
-                  }]),
-            ]} />
-            {terminals.length > 1 ? (
-              <ActionMenu trigger={<Button><TerminalWindow />{t("openTerminal")}<CaretDown /></Button>} items={terminals.map((terminal) => ({
-                label: terminal.name,
-                icon: <TerminalGlyph terminal={terminal.id} />,
-                onClick: () => onOpenTerminal(terminal.id),
-              }))} />
-            ) : (
-              <Button onClick={() => onOpenTerminal(terminals[0]?.id)}><TerminalWindow />{t("openTerminal")}</Button>
-            )}
-            <ActionMenu trigger={<Button><Code weight="bold" />{t("openIde")}<CaretDown /></Button>} items={[
-              ...(ides.length
-                ? ides.map((ide) => ({
-                    label: ide.name,
-                    icon: <IdeGlyph ide={ide.id} />,
-                    onClick: () => onOpenIde(ide.id),
-                  }))
-                : [{
-                    label: t("noIdeDetected"),
-                    onClick: () => notify("warning", t("noIdeDetected"), t("ideNotInstalled")),
-                  }]),
-            ]} />
-            <Button onClick={onOpenExplorer}><FolderOpen />{t("openExplorer")}</Button>
-            <Button size="icon" aria-label={project.favorite ? t("unfavorite") : t("favorite")} onClick={() => void onFavorite()}><Star weight={project.favorite ? "fill" : "regular"} /></Button>
-            <ActionMenu trigger={<Button size="icon" aria-label={t("moreActions")}><DotsThree weight="bold" /></Button>} items={[
-              { label: t("refresh"), onClick: () => void onRefresh() },
-              { label: t("atlasReport"), onClick: () => void openAtlasReport() },
-              { label: t("relocateProject"), onClick: () => onRelocate?.() },
-              { label: project.archived ? t("unarchive") : t("archive"), onClick: () => void onArchive() },
-              { label: t("removeRecord"), onClick: () => setRemoveOpen(true), danger: true },
-            ]} />
+            <div className="project-hero-top">
+              <div className="project-title-row">
+                <h1 title={project.displayName}>{project.displayName}</h1>
+                <span className={"project-status-pill " + (project.availability === "ready" ? "is-ready" : "is-warning")}>
+                  {project.availability === "ready" ? <CheckCircle weight="fill" /> : <WarningCircle weight="fill" />}
+                  <span>{t(project.availability === "ready" ? "ready" : "unavailable")}</span>
+                </span>
+              </div>
+              <div className="hero-actions">
+                <ActionMenu trigger={<Button variant="primary" size="md"><Sparkle weight="bold" />{t("openAgent")}<CaretDown /></Button>} items={[
+                  ...(agentTools.length
+                    ? agentTools.map((agent) => ({
+                        label: agent.name,
+                        icon: <AgentGlyph agent={agent.id} />,
+                        onClick: () => onOpenAgent(agent.id),
+                      }))
+                    : [{
+                        label: t("noAgentDetected"),
+                        onClick: () => notify("warning", t("noAgentDetected"), t("agentNotInstalled")),
+                      }]),
+                ]} />
+                {terminals.length > 1 ? (
+                  <ActionMenu trigger={<Button><TerminalWindow />{t("openTerminal")}<CaretDown /></Button>} items={terminals.map((terminal) => ({
+                    label: terminal.name,
+                    icon: <TerminalGlyph terminal={terminal.id} />,
+                    onClick: () => onOpenTerminal(terminal.id),
+                  }))} />
+                ) : (
+                  <Button onClick={() => onOpenTerminal(terminals[0]?.id)}><TerminalWindow />{t("openTerminal")}</Button>
+                )}
+                <ActionMenu trigger={<Button><Code weight="bold" />{t("openIde")}<CaretDown /></Button>} items={[
+                  ...(ides.length
+                    ? ides.map((ide) => ({
+                        label: ide.name,
+                        icon: <IdeGlyph ide={ide.id} />,
+                        onClick: () => onOpenIde(ide.id),
+                      }))
+                    : [{
+                        label: t("noIdeDetected"),
+                        onClick: () => notify("warning", t("noIdeDetected"), t("ideNotInstalled")),
+                      }]),
+                ]} />
+                <Button onClick={onOpenExplorer}><FolderOpen />{t("openExplorer")}</Button>
+                <Button size="icon" aria-label={project.favorite ? t("unfavorite") : t("favorite")} onClick={() => void onFavorite()}><Star weight={project.favorite ? "fill" : "regular"} /></Button>
+                <ActionMenu trigger={<Button size="icon" aria-label={t("moreActions")}><DotsThree weight="bold" /></Button>} items={[
+                  { label: t("refresh"), onClick: () => void onRefresh() },
+                  { label: t("atlasReport"), onClick: () => void openAtlasReport() },
+                  { label: t("relocateProject"), onClick: () => onRelocate?.() },
+                  { label: project.archived ? t("unarchive") : t("archive"), onClick: () => void onArchive() },
+                  { label: t("removeRecord"), onClick: () => setRemoveOpen(true), danger: true },
+                ]} />
+              </div>
+            </div>
+            <div className="project-sub-row">
+              <button className="hero-path" title={project.canonicalPath} onClick={() => void navigator.clipboard.writeText(project.canonicalPath).then(() => notify("success", t("copied"), project.canonicalPath)).catch((error) => notify("error", t("copyFailed"), String(error)))}>
+                <code>{project.canonicalPath}</code>
+                <Copy aria-label={t("copyPath")} />
+              </button>
+              {(git?.snapshot.branch ?? detail.git?.branch) && (
+                <span className="hero-meta-chip">
+                  <GitBranch weight="bold" />
+                  <code>{git?.snapshot.branch ?? detail.git?.branch}</code>
+                </span>
+              )}
+              {stackOf(project).length > 0 && (
+                <span className="hero-meta-chip hero-stack-chip" title={stackOf(project).join(" · ")}>
+                  {stackOf(project).slice(0, 3).join(" · ")}
+                </span>
+              )}
+            </div>
+            <button className={"project-description " + (project.description ? "has-description" : "is-empty")} onClick={() => { setDescriptionDraft(project.description ?? ""); setDescriptionOpen(true); }}>
+              <span>{project.description || t("addDescription")}</span>
+              <PencilSimple aria-hidden="true" />
+            </button>
+            <div className="project-hero-side" hidden>
+              <dl className="project-quick-facts" aria-label={t("projectBasics")}>
+                <div><dt>{t("projectStatus")}</dt><dd className={project.availability === "ready" ? "is-ready" : "is-warning"}>{t(project.availability === "ready" ? "ready" : "unavailable")}</dd></div>
+                <div><dt>{project.vcsKind === "git" ? "Git" : project.vcsKind.toUpperCase()}</dt><dd>{git?.snapshot.branch ?? detail.git?.branch ?? "—"}</dd></div>
+                <div><dt>{t("projectStack")}</dt><dd title={stackOf(project).join(" · ")}>{stackOf(project).slice(0, 3).join(" · ") || "—"}</dd></div>
+                <div><dt>{t("projectTaskCount")}</dt><dd>{detail.tasks.length}</dd></div>
+              </dl>
             </div>
           </div>
         </div>

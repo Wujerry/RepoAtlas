@@ -20,10 +20,10 @@ import { heroShots, markUrl, tasksShots } from "./assets";
 
 const EASE: [number, number, number, number] = [0.16, 1, 0.3, 1];
 
-const RELEASES = "https://github.com/wujer/RepoAtlas/releases";
-const SOURCE = "https://github.com/wujer/RepoAtlas";
-const CONTRIBUTING = "https://github.com/wujer/RepoAtlas/blob/main/CONTRIBUTING.md";
-const SECURITY = "https://github.com/wujer/RepoAtlas/security/policy";
+const RELEASES = "https://github.com/Wujerry/RepoAtlas/releases";
+const SOURCE = "https://github.com/Wujerry/RepoAtlas";
+const CONTRIBUTING = "https://github.com/Wujerry/RepoAtlas/blob/main/CONTRIBUTING.md";
+const SECURITY = "https://github.com/Wujerry/RepoAtlas/security/policy";
 
 const libraryIcons = [PlugsConnected, SquaresFour, Files, BellRinging, TerminalWindow];
 

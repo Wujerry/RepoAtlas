@@ -17,6 +17,9 @@ pub(crate) fn tool_schemas() -> Vec<Value> {
         "devUrlScheme": { "type": ["string", "null"], "enum": ["http", "https", null] }
     });
     vec![
+        tool_schema("list_modules", "Read cached Module evidence, runtime requirements, task IDs and promoted Project links. No filesystem scan. Task IDs belong to the parent Project unless promoted.", object_schema(json!({"projectId": {"type": "string", "minLength": 1}}), &["projectId"])),
+        tool_schema("promote_module", "Explicitly manage a Module as an independent Project. Use only when the user requests independent management. Preserves files, task definitions and historical runs; future scans retain this decision.", object_schema(json!({"projectId": {"type": "string", "minLength": 1}, "moduleId": {"type": "string", "minLength": 1}}), &["projectId", "moduleId"])),
+        tool_schema("set_directory_group", "Explicitly use a Project as a directory grouping entry and promote its discovered Modules to Projects. Keep the grouping entry and its metadata. Disabling grouping never demotes existing Projects. Use only when requested by the user.", object_schema(json!({"projectId": {"type": "string", "minLength": 1}, "enabled": {"type": "boolean"}}), &["projectId", "enabled"])),
         tool_schema(
             "list_projects",
             "List managed projects with optional scope and search filters.",
@@ -68,7 +71,7 @@ pub(crate) fn tool_schemas() -> Vec<Value> {
         ),
         tool_schema(
             "get_project",
-            "Get project detail including path, detected technology, README excerpt, tasks, environment, lineage, events, and Git snapshot.",
+            "Get cached project detail including Modules with their own stack, requirements and task IDs, directoryGroup preference, path, README excerpt, tasks, lineage, events and Git snapshot.",
             object_schema(json!({ "id": { "type": "string", "minLength": 1 } }), &["id"]),
         ),
         tool_schema(
@@ -78,7 +81,7 @@ pub(crate) fn tool_schemas() -> Vec<Value> {
         ),
         tool_schema(
             "register_project",
-            "Register one local directory as a managed project without changing files in that directory.",
+            "Explicitly register one local directory as a Project and discover its constituent Modules and independent nested checkouts. Do not use this to split Module candidates unless the user requested independent management. Never changes project files.",
             object_schema(json!({ "path": { "type": "string", "minLength": 1 } }), &["path"]),
         ),
         tool_schema(

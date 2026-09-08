@@ -9,13 +9,13 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/wujer/RepoAtlas/actions/workflows/ci.yml"><img src="https://github.com/wujer/RepoAtlas/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI 状态" /></a>
+  <a href="https://github.com/Wujerry/RepoAtlas/actions/workflows/ci.yml"><img src="https://github.com/Wujerry/RepoAtlas/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI 状态" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-FFA31A.svg" alt="MIT License" /></a>
 </p>
 
 RepoAtlas 把散落在各个磁盘里的本地 checkout 变成一个真正能干活的项目库：看清每个 Project 是做什么的，用合适的编码 Agent 或工具打开它，反复执行开发任务，并把输出和历史留在本机。
 
-> **欢迎 macOS 用户参与贡献。** RepoAtlas 还没有经过 Mac 真机测试，目前不提供受支持的 macOS 安装包。如果你手上有 Mac，欢迎按照 [CONTRIBUTING.md](CONTRIBUTING.md) 帮忙构建、测试和补充文档，也可以把可复现的问题提交到 [Issue](https://github.com/wujer/RepoAtlas/issues)。
+> **欢迎 macOS 用户参与贡献。** RepoAtlas 还没有经过 Mac 真机测试，目前不提供受支持的 macOS 安装包。如果你手上有 Mac，欢迎按照 [CONTRIBUTING.md](CONTRIBUTING.md) 帮忙构建、测试和补充文档，也可以把可复现的问题提交到 [Issue](https://github.com/Wujerry/RepoAtlas/issues)。
 
 ## 把初始化工作交给 AI Agent
 
@@ -34,7 +34,7 @@ RepoAtlas 把散落在各个磁盘里的本地 checkout 变成一个真正能干
 
 ## 主要功能
 
-- **工作总览**：启动后先看本地 Project 和 Collection 状态、最近 7 天的 Task Run 结果、最近工作和待处理事项。
+- **工作总览**：突出最近可用项目的一键入口，搭配本地缓存状态，以及最近项目、任务运行、项目集合和待处理事项。
 - **Agent 辅助初始化**：让外部 AI Agent 盘点你授权的目录，通过 MCP 写入有依据的项目描述、任务和图标。
 - **本地项目库**：中英文搜索 Project，用 Project Collection 整理相关工作，并用 Repository Lineage 关联同一仓库的多个 checkout。
 - **Project Brief 和只读 Files**：集中查看技术栈、环境要求、README、源码、配置、最近活动和运行历史，但不把 RepoAtlas 变成代码编辑器。
@@ -65,7 +65,7 @@ RepoAtlas 启动后先显示工作总览，不会替你选中某个 Project。�
 
 ## 下载——Windows x64 Beta
 
-1. 从 [Releases](https://github.com/wujer/RepoAtlas/releases) 下载最新安装包。
+1. 从 [Releases](https://github.com/Wujerry/RepoAtlas/releases) 下载最新安装包。
 2. 校验 SHA-256，并和发布时附带的 `SHA256SUMS` 对比：
 
    ```powershell
@@ -82,6 +82,8 @@ RepoAtlas 启动后先显示工作总览，不会替你选中某个 Project。�
 pnpm install
 pnpm tauri dev
 ```
+
+桌面开发命令会先构建并复制 MCP 程序，再启动应用；首次运行可能需要较长时间。
 
 首次启动时，在引导对话框中点击「复制给 Agent，扫描发现」。RepoAtlas 会生成一段指令，让 Agent 配置 MCP、询问你授权的目录、发现 Project，并补齐项目描述、任务和图标。
 
@@ -108,3 +110,9 @@ pnpm build
 ## 许可证
 
 [MIT](LICENSE)
+
+### 混合工程与模块
+
+扫描在根目录发现 `package.json` 或 checkout 后仍继续向下发现。一个 Project 可以包含 Node、Java 等不同技术栈的 Module，每个模块都有自己的证据、环境要求和任务工作目录。下层独立 checkout 保持独立 Project；其余模块候选可点击“作为独立项目管理”。“仅作目录分组”保留根目录记录，并将其模块独立管理。这些选择会在再次扫描时保留，不修改工程文件。
+
+说明页最前面提供“初始化 MCP”和“扫描目录”两段可复制提示词。Agent 先获得明确确认的绝对目录，调用 `add_scan_root` 后再调用 `scan_root`。`get_project`、`get_project_brief` 和 `list_modules` 返回缓存的模块证据；只有用户明确要求改变管理方式时才调用 `promote_module` / `set_directory_group`。模块任务使用所属 Project 和模块工作目录，提升后使用独立 Project；`run_task` 仍需要桌面审批。

@@ -183,6 +183,7 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
             <div className="task-grid">
               {tasks.map((task) => {
                 const isEditing = editor?.mode === "edit" && editor.taskId === task.id;
+                const taskRunCount = runs.filter((run) => run.taskId === task.id || run.kind === task.kind).length;
                 return (
                 <article className={"task-card" + (runningRuns.some((run) => run.taskId === task.id) ? " is-running" : "") + (isEditing ? " is-editing" : "")} key={task.id}>
                   {isEditing ? renderTaskEditor(true) : <>
@@ -191,7 +192,10 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
                       <div className="task-card-kicker">
                         <span className="task-kind-label">{task.kind}</span>
                       </div>
-                      <strong>{task.name || task.kind}</strong>
+                      <div className="task-title-line">
+                        <strong>{task.name || task.kind}</strong>
+                        {taskRunCount > 0 && <span className="task-run-counter" title={`${taskRunCount} ${t("taskRunCount")}`}>{taskRunCount} {t("taskRunCount")}</span>}
+                      </div>
                       {task.description && <p className="task-card-description">{task.description}</p>}
                       <code>{formatCommand(task.executable, task.argv)}</code>
                     </div>

@@ -41,8 +41,7 @@ impl<'a> ScanEngine<'a> {
                 });
             }
             if detect::is_project_root(&dir) {
-                discovered.push(DiscoveredProject { path: dir });
-                continue;
+                discovered.push(DiscoveredProject { path: dir.clone() });
             }
             let entries = match fs::read_dir(&dir) {
                 Ok(entries) => entries,
@@ -60,10 +59,10 @@ impl<'a> ScanEngine<'a> {
                     }
                 };
                 let path = entry.path();
-                let Ok(meta) = entry.metadata() else {
+                let Ok(meta) = fs::symlink_metadata(&path) else {
                     continue;
                 };
-                if meta.file_type().is_symlink() {
+                if is_link(&meta) {
                     continue;
                 }
                 if meta.is_dir() {
@@ -76,6 +75,18 @@ impl<'a> ScanEngine<'a> {
             }
         }
         Ok((discovered, visited, errors, false))
+    }
+}
+
+pub(crate) fn is_link(meta: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        meta.file_attributes() & 0x400 != 0
+    }
+    #[cfg(not(windows))]
+    {
+        meta.file_type().is_symlink()
     }
 }
 

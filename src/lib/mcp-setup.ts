@@ -58,10 +58,11 @@ ${launchHint}
 1. 先检查当前 Agent 客户端是否已经连接名为 repoatlas 的 MCP。
 2. 如果还没有连接，新增一个 stdio MCP server，名称必须是 repoatlas，并使用下面的配置：
 ${config}
-3. 配置后执行 initialize 和 tools/list，确认存在 add_scan_root、scan_root 和 register_project。
-4. 先询问我需要扫描哪些目录，得到我的明确确认后再继续；不要自行猜测或挑选目录。
-5. 对我确认的每个目录，先调用 add_scan_root 授权，再显式调用 scan_root 执行发现。扫描只读取目录内容，用于登记项目。
-6. 扫描完成后向我总结发现的项目。每个项目优先给出项目描述和发现的任务（这两项最重要），再给名称、路径与语言、框架、VCS 等分类。项目描述和任务描述都必须使用与我交流的语言书写。描述必须来自项目内的真实依据（如 README、package.json、Cargo.toml），拿不准的内容不要编造。
+3. 配置后执行 initialize 和 tools/list，确认存在 add_scan_root、scan_root、register_project、list_modules 和 promote_module。
+4. 先询问我需要扫描哪些目录，得到我对绝对路径的明确确认后再继续；不要自行猜测或挑选目录。
+5. 对我确认的每个目录，先调用 add_scan_root 授权，再显式调用 scan_root 执行发现。扫描由内核高效安全清点工程结构与技术栈，只读取目录内容，用于登记项目。
+6. 根目录存在 package.json 不代表整个目录只有一个 Node 项目。扫描继续发现下层目录；用 get_project / list_modules 查看模块自己的技术栈、环境要求、taskIds 和 projectId。独立 checkout 保留为 Project，其余先作为 Module 候选；不要因为语言不同就自动提升，也不要自行调用 register_project 拆分模块。只有我明确要求独立管理时调用 promote_module；只有我明确要求根目录仅作目录分组时调用 set_directory_group。保留已有归属选择。模块任务属于父 Project，cwd 必须是模块目录；提升后使用返回的独立 Project，避免重复登记任务。
+扫描完成后向我总结发现的项目及模块。针对每个项目，深入阅读其 README、manifest、说明文档或核心入口代码，理解其真实业务用途和核心场景（说明这个项目到底是拿来干什么的）。每个项目优先给出项目描述和发现的任务（这两项最重要），再给名称、路径与语言、框架、VCS 等分类。项目描述和任务描述都必须使用与我交流的语言书写。描述必须来自项目内的真实依据（如 README、package.json、Cargo.toml），拿不准的内容不要编造。
 7. 总结之后不需要等我确认，直接通过 MCP 写入：用 update_project 写入 description；任务用 add_task 新增、update_task 修改，不要用 update_project 的 tasks 参数整体覆盖已有任务（仅登记全新项目或经我同意时才整体替换）。图标：在项目目录内查找真实存在的图标文件（README 或网页引用的 logo、icon.png、logo.png、favicon.ico 等，仅限 PNG/JPEG/WebP/ICO），确认文件存在后调用 set_project_icon 设置；找不到就跳过，不要编造路径，也不要引用项目目录之外的文件。只写入有把握的结构化任务，shell 模式任务一律不写；没有把握的字段保持原样。
 8. 不要调用 run_task，也不要执行 Git 写入、Shell Mode、外部 AI 请求或文件系统删除。
 
@@ -79,10 +80,11 @@ ${launchHint}
 1. Check whether the current agent client already has an MCP server named repoatlas.
 2. If it is not connected, add a stdio MCP server named repoatlas with this configuration:
 ${config}
-3. After configuring it, run initialize and tools/list and confirm that add_scan_root, scan_root, and register_project are available.
-4. Ask me which directories should be scanned, and wait for my explicit confirmation before continuing; do not guess or pick directories on your own.
-5. For each directory I confirm, call add_scan_root to authorize it, then explicitly call scan_root to run discovery. Scanning only reads directory contents to register projects.
-6. After scanning, summarize the discovered projects for me. For each project, lead with the project description and the tasks you discovered (these two matter most), then names, paths, and classifications such as language, framework, and VCS. Write the project description and every task summary in the language I am using with you. Descriptions must come from real evidence inside the project (README, package.json, Cargo.toml, and similar); never invent what you cannot support.
+3. After configuring it, run initialize and tools/list and confirm that add_scan_root, scan_root, register_project, list_modules, and promote_module are available.
+4. Ask me which directories should be scanned, and wait for my explicit confirmation of absolute paths before continuing; do not guess or pick directories on your own.
+5. For each directory I confirm, call add_scan_root to authorize it, then explicitly call scan_root to run discovery. Scanning relies on the safe local core to inspect structure and register projects without modifying them.
+6. A root package.json does not make the entire directory one Node Project. Discovery continues below manifests. Use get_project / list_modules for each Module's stack, runtime requirements, taskIds and projectId. Independent checkouts remain Projects; other directories are Module candidates. Never promote based on language differences or split Modules through register_project without my request. Use promote_module only when I request independent management; use set_directory_group only when I request directory grouping. Preserve existing choices. Module tasks belong to the parent Project and must use the Module directory as cwd; after promotion, use its independent Project without duplicating tasks.
+After scanning, summarize discovered Projects and Modules for me. For each project, inspect its README, manifest, or entry code to understand what it actually does in real-world business. Lead with the project description and the tasks you discovered (these two matter most), then names, paths, and classifications such as language, framework, and VCS. Write the project description and every task summary in the language I am using with you. Descriptions must come from real evidence inside the project (README, package.json, Cargo.toml, and similar); never invent what you cannot support.
 7. After summarizing, write through MCP immediately without waiting for my confirmation: use update_project for the description; add tasks with add_task and revise them with update_task, and do not use the tasks parameter of update_project to replace an existing task list wholesale (only for a brand-new project or with my explicit approval). Icons: search the project directory for a real icon file (a logo referenced by the README or web pages, or icon.png, logo.png, favicon.ico, and similar; PNG/JPEG/WebP/ICO only), confirm it exists, then call set_project_icon; skip when none is found — never invent a path or reference files outside the project directory. Only write structured tasks you are confident about, never shell-mode tasks, and leave fields you cannot support unchanged.
 8. Do not call run_task, and do not perform Git writes, Shell Mode, external AI requests, or filesystem deletion.
 
@@ -93,8 +95,8 @@ export function buildAgentSetupInstruction(info: McpSetupInfo | undefined, local
   if (!info) return "";
   if (info.binaryPath) {
     return locale === "zh"
-      ? `请为你当前运行的 Agent 客户端配置 RepoAtlas MCP。\n\n1. MCP 命令：${info.binaryPath}\n2. 共用数据库：${info.dbPath}\n3. 在 MCP 配置中新增名为 repoatlas 的 stdio server。command 使用上面的绝对路径，env 必须设置 REPOATLAS_DB=${info.dbPath}。\n4. 配置后执行 initialize 和 tools/list 验证连接，并向我报告可用工具。\n5. MCP 可直接管理 Project、Scan Root、任务定义、图标与只读项目证据；run_task 只能创建桌面待审批请求。模型、账号和 Provider 配置由 Agent 客户端自己管理。不要开放 Git 写入、Shell Mode、任意命令执行或磁盘删除能力。`
-      : `Configure the RepoAtlas MCP server for your current agent client.\n\n1. MCP command: ${info.binaryPath}\n2. Shared database: ${info.dbPath}\n3. Add a stdio MCP server named repoatlas. Use that absolute path as command and set REPOATLAS_DB=${info.dbPath}.\n4. Verify initialize and tools/list, then report the available tools.\n5. MCP may directly manage Projects, Scan Roots, task definitions, icons, and read-only project evidence; run_task may only create a pending desktop approval. The agent client owns its model, account, and provider configuration. Do not add Git writes, Shell Mode, arbitrary command execution, or disk deletion capabilities.`;
+      ? `请为你当前运行的 Agent 客户端配置 RepoAtlas MCP。\n\n1. MCP 命令：${info.binaryPath}\n2. 共用数据库：${info.dbPath}\n3. 在 MCP 配置中新增名为 repoatlas 的 stdio server。command 使用上面的绝对路径，env 必须设置 REPOATLAS_DB=${info.dbPath}。\n4. 配置后执行 initialize 和 tools/list 验证连接，并向我报告可用工具。\n5. MCP 可直接管理 Project、Scan Root、任务定义、图标与只读项目证据。用 list_modules 查看模块技术栈和工作目录；只有用户要求时才用 promote_module 或 set_directory_group 改变管理方式；run_task 只能创建桌面待审批请求。模型、账号和 Provider 配置由 Agent 客户端自己管理。不要开放 Git 写入、Shell Mode、任意命令执行或磁盘删除能力。`
+      : `Configure the RepoAtlas MCP server for your current agent client.\n\n1. MCP command: ${info.binaryPath}\n2. Shared database: ${info.dbPath}\n3. Add a stdio MCP server named repoatlas. Use that absolute path as command and set REPOATLAS_DB=${info.dbPath}.\n4. Verify initialize and tools/list, then report the available tools.\n5. MCP may directly manage Projects, Scan Roots, task definitions, icons, and read-only project evidence. Use list_modules for Module stacks and working directories; use promote_module or set_directory_group only at the user's request; run_task may only create a pending desktop approval. The agent client owns its model, account, and provider configuration. Do not add Git writes, Shell Mode, arbitrary command execution, or disk deletion capabilities.`;
   }
   if (info.workspacePath) {
     return locale === "zh"

@@ -385,6 +385,7 @@ fn initialize_result(params: &Value) -> Value {
     json!({
         "protocolVersion": protocol_version,
         "capabilities": { "tools": {} },
+        "instructions": "Discover only explicitly authorized Scan Roots: add_scan_root then scan_root. Root manifests do not stop nested discovery. Read get_project/list_modules for per-Module stacks, requirements and task IDs. Modules remain constituent directories unless the user explicitly requests promote_module or set_directory_group. Module task IDs use the parent Project and Module cwd; promoted directories have their own Project ID. Preserve user decisions and avoid duplicate tasks. Protected run_task requests require desktop approval. No Git writes, Shell Mode, arbitrary execution or filesystem deletion.",
         "serverInfo": { "name": "repoatlas-mcp", "version": env!("CARGO_PKG_VERSION") }
     })
 }
@@ -521,6 +522,38 @@ fn call_with_cancel(
                 .get_project_brief(project_id)
                 .map_err(|error| error.to_string())?;
             Ok(serde_json::to_string_pretty(&brief).unwrap())
+        }
+        "list_modules" => {
+            let id = required_string(args, "projectId")?;
+            core.get_project(id).map_err(|e| e.to_string())?;
+            Ok(
+                serde_json::to_string_pretty(&core.list_modules(id).map_err(|e| e.to_string())?)
+                    .unwrap(),
+            )
+        }
+        "promote_module" => {
+            let project = core
+                .promote_module_with_origin(
+                    required_string(args, "projectId")?,
+                    required_string(args, "moduleId")?,
+                    "mcp",
+                )
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_string_pretty(&project).unwrap())
+        }
+        "set_directory_group" => {
+            let enabled = args
+                .get("enabled")
+                .and_then(Value::as_bool)
+                .ok_or("enabled must be a boolean")?;
+            let project = core
+                .set_directory_group_with_origin(
+                    required_string(args, "projectId")?,
+                    enabled,
+                    "mcp",
+                )
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_string_pretty(&project).unwrap())
         }
         "register_project" => {
             let path = required_string(args, "path")?;
@@ -1577,5 +1610,57 @@ mod tests {
         let response: Value = serde_json::from_str(&response).expect("json");
         assert_eq!(response["cancelled"], true);
         let _ = std::fs::remove_dir_all(root_path);
+    }
+    #[test]
+    fn module_tools_roundtrip_through_json_rpc_without_execution() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("repoatlas-module-rpc-{nonce}"));
+        std::fs::create_dir_all(path.join("web")).unwrap();
+        std::fs::write(path.join("package.json"), "{}").unwrap();
+        std::fs::write(
+            path.join("web/package.json"),
+            r#"{"scripts":{"dev":"vite"}}"#,
+        )
+        .unwrap();
+        let core = Core::open_in_memory().unwrap();
+        let broker = Broker::new(path.join("logs")).unwrap();
+        let mut state = ProtocolState::default();
+        handle_line(
+            &core,
+            &broker,
+            None,
+            r#"{"jsonrpc":"2.0","id":0,"method":"initialize"}"#,
+            &mut state,
+        )
+        .unwrap();
+        let project = core.register_project(&path).unwrap();
+        let mut call = |name: &str, arguments: Value| {
+            let line = json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":name,"arguments":arguments}}).to_string();
+            let response = handle_line(&core, &broker, None, &line, &mut state).unwrap();
+            let response: Value = serde_json::from_str(&response).unwrap();
+            assert_ne!(response["result"]["isError"], true, "{response}");
+            serde_json::from_str::<Value>(
+                response["result"]["content"][0]["text"].as_str().unwrap(),
+            )
+            .unwrap()
+        };
+        let modules = call("list_modules", json!({"projectId":project.id}));
+        assert_eq!(modules.as_array().unwrap().len(), 1);
+        let child = call(
+            "promote_module",
+            json!({"projectId":project.id,"moduleId":modules[0]["id"]}),
+        );
+        assert!(child["id"].is_string());
+        let group = call(
+            "set_directory_group",
+            json!({"projectId":project.id,"enabled":true}),
+        );
+        assert_eq!(group["directoryGroup"], true);
+        assert!(core.list_task_runs(&project.id).unwrap().is_empty());
+        assert!(path.join("web/package.json").exists());
+        std::fs::remove_dir_all(path).unwrap();
     }
 }

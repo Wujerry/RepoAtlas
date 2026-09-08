@@ -9,13 +9,13 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/wujer/RepoAtlas/actions/workflows/ci.yml"><img src="https://github.com/wujer/RepoAtlas/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status" /></a>
+  <a href="https://github.com/Wujerry/RepoAtlas/actions/workflows/ci.yml"><img src="https://github.com/Wujerry/RepoAtlas/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-FFA31A.svg" alt="MIT License" /></a>
 </p>
 
 RepoAtlas turns scattered local checkouts into one working library. See what each Project is, open it in the right coding Agent or tool, run repeatable development tasks, and keep the output and history on your machine.
 
-> **macOS contributors wanted.** RepoAtlas has not yet been tested on real Mac hardware, so there is no supported macOS build today. If you have a Mac, help us build, test, and document it through [CONTRIBUTING.md](CONTRIBUTING.md), or open an [issue](https://github.com/wujer/RepoAtlas/issues) with reproducible results.
+> **macOS contributors wanted.** RepoAtlas has not yet been tested on real Mac hardware, so there is no supported macOS build today. If you have a Mac, help us build, test, and document it through [CONTRIBUTING.md](CONTRIBUTING.md), or open an [issue](https://github.com/Wujerry/RepoAtlas/issues) with reproducible results.
 
 ## Let your AI Agent do the setup
 
@@ -53,7 +53,11 @@ Every canonical checkout is a **Project**. A **Scan Root** is a directory you ex
 
 Projects remain tied to their real paths. Collections organize them without moving directories, and removing a RepoAtlas record does not delete the checkout on disk.
 
-RepoAtlas opens on the Dashboard instead of choosing a Project for you. Collection cards are quick entries into the existing filtered project tree; the snapshot is calculated from bounded local records and does not scan checkouts, refresh Git, read source files, or contact a remote analytics service.
+RepoAtlas opens on the Dashboard instead of choosing a Project for you. Collections are quick entries into the existing filtered project tree; the snapshot is calculated from bounded local records and does not scan checkouts, refresh Git, read source files, or contact a remote analytics service.
+
+The Dashboard highlights a recent available Project for quick re-entry, with cached status metrics and direct access to recent Projects, Task Runs, Collections, and Attention.
+
+The project tree toolbar adds expand-all, collapse-all, collapse-to-selected, and jump-to-current-project controls so long collections stay navigable without scrolling blind.
 
 ## Task workbench
 
@@ -65,7 +69,7 @@ Open the global workbench to follow active runs across Projects. Runtime observa
 
 ## Download — Windows x64 beta
 
-1. Download the latest installer from [Releases](https://github.com/wujer/RepoAtlas/releases).
+1. Download the latest installer from [Releases](https://github.com/Wujerry/RepoAtlas/releases).
 2. Verify its SHA-256 checksum against the published `SHA256SUMS`:
 
    ```powershell
@@ -82,6 +86,8 @@ You need Node.js 24.11 or later (below 25), pnpm 10.20.0, Rust stable, and the [
 pnpm install
 pnpm tauri dev
 ```
+
+The desktop development command builds and copies the MCP sidecar before starting the app; the first run may take longer.
 
 On first launch, choose **Copy for Agent, scan and discover** in the onboarding dialog. RepoAtlas prepares an instruction that lets your Agent configure MCP, ask for the directories you approve, discover Projects, and populate their descriptions, tasks, and icons.
 
@@ -108,3 +114,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 ## License
 
 [MIT](LICENSE)
+
+### Mixed projects and Modules
+
+Scanning continues below a root `package.json` or checkout. A Project can contain Node, Java and other Modules with their own evidence, runtime requirements and tasks. Module task actions run in the Module directory. Independent nested checkouts remain Projects; other candidates can be explicitly promoted with **Manage as independent Project**. **Use as directory group** retains the root entry and promotes its constituents. These choices survive rescans and never change project files.
+
+The Guide starts with copyable **Initialize MCP** and **Scan directories** prompts. Agents must first obtain confirmed absolute paths, call `add_scan_root`, then `scan_root`. `get_project`, `get_project_brief` and `list_modules` expose cached Module evidence. Use `promote_module` / `set_directory_group` only for a user's explicit management choice. Module task IDs use their parent Project; promoted Modules use their own Project. `run_task` still requires desktop approval.

@@ -598,6 +598,42 @@ fn mcp_setup_info(app: AppHandle) -> Result<McpSetupInfo, String> {
 }
 
 #[tauri::command]
+async fn promote_module(
+    state: State<'_, Arc<AppState>>,
+    project_id: String,
+    module_id: String,
+) -> Result<ProjectSummary, String> {
+    run_blocking(state.inner().clone(), move |core| {
+        core.promote_module_with_origin(&project_id, &module_id, "desktop")
+    })
+    .await
+}
+
+#[tauri::command]
+async fn set_directory_group(
+    state: State<'_, Arc<AppState>>,
+    project_id: String,
+    enabled: bool,
+) -> Result<ProjectSummary, String> {
+    run_blocking(state.inner().clone(), move |core| {
+        core.set_directory_group_with_origin(&project_id, enabled, "desktop")
+    })
+    .await
+}
+
+#[tauri::command]
+async fn resolve_module_path(
+    state: State<'_, Arc<AppState>>,
+    project_id: String,
+    module_id: String,
+) -> Result<String, String> {
+    run_blocking(state.inner().clone(), move |core| {
+        core.resolve_module_path(&project_id, &module_id)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn register_project(
     state: State<'_, Arc<AppState>>,
     path: String,
@@ -2183,6 +2219,9 @@ pub fn run() {
             open_project_file,
             mcp_setup_info,
             register_project,
+            promote_module,
+            set_directory_group,
+            resolve_module_path,
             update_project,
             remove_project,
             remove_folder_records,

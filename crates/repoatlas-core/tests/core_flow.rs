@@ -619,11 +619,8 @@ fn windows_script_launcher_rejects_unrepresentable_script_paths_without_leaving_
         &project_path.join("package.json"),
         r#"{"name":"script-safety"}"#,
     );
-    // cmd.exe /S strips the payload quotes, so a script whose own name
-    // carries metacharacters has no safe command-line form. The start
-    // attempt must fail loudly and close the database record instead of
-    // launching something unintended.
-    let script = project_path.join("build&release.cmd");
+    // Percent expansion is still rejected; failure must not leave a live run.
+    let script = project_path.join("build%release.cmd");
     write(&script, "@echo off\r\nexit /b 0\r\n");
     let db = dir.path().join("core.sqlite");
     let core = Core::open(&db).unwrap();
@@ -645,7 +642,9 @@ fn windows_script_launcher_rejects_unrepresentable_script_paths_without_leaving_
             |_, _| {},
         )
         .unwrap_err();
-    assert!(error.to_string().contains("cannot be expressed safely"));
+    assert!(error
+        .to_string()
+        .contains("unsupported quotes, percent signs"));
     assert!(core.list_active_task_runs().unwrap().is_empty());
 }
 

@@ -17,7 +17,7 @@ The optional shared identity that relates projects originating from the same ver
 _Avoid_: Project, remote
 
 **Module**:
-A constituent package or component within a project, especially inside a monorepo. A module is not a standalone project unless the user promotes it.
+A constituent package or component within a project, especially inside a monorepo. A module is not a standalone project unless the user promotes it. A detected manifest below a Project is a Module candidate until its membership is evidenced; each Module retains its own stack, runtime requirements, and task working directory. A root manifest never stops authorized discovery.
 _Avoid_: Subproject, nested project
 
 **Detected Fact**:

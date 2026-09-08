@@ -15,3 +15,29 @@
 @import "./styles/82-onboarding.css";
 @import "./styles/83-splash.css";
 @import "./styles/90-motion.css";
+
+:root {
+  --feature-bg: #1c1c1c;
+  --feature-text: #f5f5f5;
+  --feature-muted: #b3b3b3;
+  --feature-line: #353535;
+}
+
+.modules-panel { margin-bottom: 24px; border: 1px solid var(--line); border-radius: 14px; padding: 20px; background: var(--bg-elevated); }
+.modules-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.modules-heading h2 { display: flex; align-items: center; gap: 10px; margin: 0; font-size: 16px; font-weight: 600; letter-spacing: -.02em; }
+.modules-count { color: var(--muted); font-family: var(--font-mono); font-size: 12px; font-weight: 500; }
+.modules-heading p, .modules-note, .module-body p { font-size: 11px; color: var(--muted); margin: 6px 0 12px; line-height: 1.65; }
+.modules-note { padding-top: 10px; margin-bottom: 0; border-top: 1px solid var(--line); }
+.module-row { border-top: 1px solid var(--line); }
+.module-row summary { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 15px 4px; cursor: pointer; font-size: 12px; border-radius: 6px; transition: background .15s ease; }
+.module-row summary:hover { background: var(--bg-hover); }
+.module-row summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.module-row summary > svg:not(.module-chevron) { width: 18px; height: 18px; color: var(--muted); }
+.module-row summary strong { overflow-wrap: anywhere; font-weight: 580; }
+.module-stack { margin-left: auto; color: var(--muted); font-size: 11px; }
+.module-body { padding: 4px 0 18px 32px; min-width: 0; }
+.module-body code { display: block; font-size: 11px; overflow-wrap: anywhere; }
+.module-actions, .module-tasks { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.module-chevron { width: 12px; height: 12px; flex: none; color: var(--muted); }
+.module-row[open] .module-chevron { transform: rotate(90deg); }

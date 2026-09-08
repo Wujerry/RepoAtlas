@@ -72,6 +72,17 @@ fn migrate(conn: &Connection) -> Result<()> {
             FOREIGN KEY(scan_root_id) REFERENCES scan_roots(id) ON DELETE SET NULL
         );
 
+        CREATE TABLE IF NOT EXISTS project_directory_groups (
+            project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS project_modules (
+            canonical_path TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            snapshot_json TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS project_modules_owner ON project_modules(project_id);
+
         CREATE TABLE IF NOT EXISTS project_tags (
             project_id TEXT NOT NULL,
             tag TEXT NOT NULL,

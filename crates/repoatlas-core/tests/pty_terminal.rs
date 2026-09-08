@@ -82,3 +82,52 @@ fn command_broker_exposes_a_tty_and_preserves_ansi() {
     assert!(joined.contains("progress-2"), "{joined:?}");
     let _ = broker.stop(core.connection(), &run.id);
 }
+
+#[cfg(windows)]
+#[test]
+fn windows_script_with_spaces_runs_the_resolved_path_not_a_local_namesake() {
+    let dir = tempdir().unwrap();
+    let root = dir.path().join("project");
+    let script = dir.path().join("My Tools & (fixture)").join("my build.cmd");
+    write(&root.join("package.json"), r#"{"name":"script-fixture"}"#);
+    write(&root.join("my build.cmd"), "@echo WRONG_SCRIPT\r\n");
+    write(
+        &script,
+        "@echo off\r\necho APPROVED_SCRIPT\r\necho [%~1]\r\necho \"[%~2]\"\r\n",
+    );
+    let core = Core::open_in_memory().unwrap();
+    let project = core.register_project(&root).unwrap();
+    let broker = Broker::new(dir.path().join("logs")).unwrap();
+    let chunks = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let observed = chunks.clone();
+    let run = broker
+        .start(
+            core.connection(),
+            TaskSpec {
+                project_id: project.id,
+                task_id: None,
+                kind: "run".into(),
+                executable: script.to_string_lossy().into_owned(),
+                argv: vec!["hello world".into(), "nightly | smoke".into()],
+                cwd: Some(project.canonical_path),
+                shell_mode: false,
+            },
+            move |chunk| observed.lock().unwrap().push(chunk.text),
+            |_, _| {},
+        )
+        .unwrap();
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_secs(8) {
+        let _ = broker.write_stdin(&run.id, "\x1b[24;80R");
+        if !broker.active().unwrap().contains(&run.id) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let output = chunks.lock().unwrap().join("");
+    let _ = broker.stop(core.connection(), &run.id);
+    assert!(output.contains("APPROVED_SCRIPT"), "{output:?}");
+    assert!(output.contains("[hello world]"), "{output:?}");
+    assert!(output.contains("[nightly | smoke]"), "{output:?}");
+    assert!(!output.contains("WRONG_SCRIPT"), "{output:?}");
+}

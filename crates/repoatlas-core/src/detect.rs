@@ -60,7 +60,7 @@ pub fn is_skip_dir(name: &str) -> bool {
 }
 
 pub fn is_project_root(path: &Path) -> bool {
-    // Scanning uses this predicate as a stop condition. A Project may live
+    // Scanning uses this predicate to discover candidates, not to stop recursion. A Project may live
     // below a Git checkout, but an arbitrary directory below that checkout
     // must not become a project merely because Git metadata exists above it.
     // `detect` still resolves the repository root for manually registered
@@ -1863,7 +1863,12 @@ fn first_existing_text(path: &Path, names: &[&str]) -> Option<String> {
     names.iter().find_map(|name| read_text(&path.join(name)))
 }
 
-fn read_text(path: &Path) -> Option<String> {
+pub(crate) fn read_text(path: &Path) -> Option<String> {
+    for ancestor in path.ancestors() {
+        if crate::scan::is_link(&fs::symlink_metadata(ancestor).ok()?) {
+            return None;
+        }
+    }
     let file = fs::File::open(path).ok()?;
     let mut bytes = Vec::new();
     file.take(MAX_DETECT_TEXT_BYTES + 1)

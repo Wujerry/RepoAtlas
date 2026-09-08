@@ -19,6 +19,7 @@ export interface ScanRoot {
 }
 
 export interface ProjectSummary {
+  directoryGroup?: boolean;
   id: string;
   canonicalPath: string;
   displayName: string;
@@ -76,6 +77,7 @@ export interface GitSnapshot {
 
 export interface GitFileStatus {
   path: string;
+  originalPath?: string | null;
   status: string;
   staged: boolean;
 }
@@ -230,7 +232,15 @@ export interface ProjectIcon {
   dataUrl: string | null;
 }
 
+export interface ProjectModule {
+  id: string; canonicalPath: string; relativePath: string; name: string;
+  languages: string[]; frameworks: string[]; packageManagers: string[];
+  facts: DetectedFact[]; runtimeRequirements: RuntimeRequirement[]; taskIds: string[];
+  observedAt: string; availability: string; projectId: string | null; evidence: string;
+}
+
 export interface ProjectDetail {
+  modules?: ProjectModule[];
   project: ProjectSummary;
   facts: DetectedFact[];
   readmePath: string | null;
@@ -359,6 +369,7 @@ export interface CollectionUpsert {
 }
 
 export interface ProjectBrief {
+  modules?: ProjectModule[];
   project: ProjectSummary;
   facts: DetectedFact[];
   environment: EnvironmentInspection;

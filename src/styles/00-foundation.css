@@ -26,6 +26,8 @@
   --danger-wash: rgba(239, 141, 129, 0.12);
   --shadow: 0 22px 70px rgba(4, 8, 5, 0.38);
   --shadow-soft: 0 10px 28px rgba(4, 8, 5, 0.22);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.24), 0 4px 12px rgba(0, 0, 0, 0.16);
+  --inset-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.05);
   --focus: 0 0 0 3px rgba(255, 163, 26, 0.25);
   --font-sans: "Geist Variable", "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-mono: "Geist Mono", "Cascadia Code", "SFMono-Regular", monospace;
@@ -63,6 +65,8 @@
   --danger-wash: rgba(166, 63, 54, 0.09);
   --shadow: 0 22px 70px rgba(0, 0, 0, 0.14);
   --shadow-soft: 0 10px 28px rgba(0, 0, 0, 0.09);
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.04), 0 6px 16px rgba(0, 0, 0, 0.03);
+  --inset-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.8);
   --focus: 0 0 0 3px rgba(255, 163, 26, 0.24);
 }
 
@@ -86,4 +90,3 @@ code, pre, kbd { font-family: var(--font-mono); }
 .skip-link:focus { top: 12px; }
 .eyebrow { margin: 0 0 4px; color: var(--accent); font-size: 10px; font-weight: 680; letter-spacing: .13em; text-transform: uppercase; }
 .muted-copy { color: var(--muted); line-height: 1.6; }
-

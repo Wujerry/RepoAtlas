@@ -18,6 +18,17 @@ vi.mock("../lib/api", () => ({
 const t = (key: MessageKey) => dictionaries.en[key];
 
 describe("HelpPage first-launch replay", () => {
+  it("puts initialization and authorized scanning prompts before the explanatory sections", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    render(<HelpPage locale="en" t={t} notify={vi.fn()} />);
+    await screen.findByText(/A root package.json does not make/);
+    const headings = screen.getAllByRole("heading", { level: 2 });
+    expect(headings.slice(0, 2).map(h => h.textContent)).toEqual([t("helpInitializePrompt"), t("helpScanPrompt")]);
+    fireEvent.click(screen.getAllByRole("button", { name: t("copyForAgent") })[1]);
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining("promote_module"));
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining("explicit confirmation of absolute paths"));
+  });
   it("reopens onboarding from help and stays disabled during a scan", () => {
     const onReplayOnboarding = vi.fn();
     const { rerender } = render(

@@ -1,6 +1,6 @@
 # Releasing RepoAtlas
 
-This document describes the intended release path for the public `wujer/RepoAtlas` repository. The repository is being prepared locally; do not add a remote, push a tag, publish a Release, or deploy Pages as part of local preparation.
+This document describes the intended release path for the public `Wujerry/RepoAtlas` repository. The repository is being prepared locally; do not add a remote, push a tag, publish a Release, or deploy Pages as part of local preparation.
 
 ## Release contract
 
@@ -57,7 +57,7 @@ The release workflow always creates a draft. A stable tag without Windows Authen
 The updater endpoint is:
 
 ```text
-https://github.com/wujer/RepoAtlas/releases/latest/download/latest.json
+https://github.com/Wujerry/RepoAtlas/releases/latest/download/latest.json
 ```
 
 Tauri updater metadata must contain a valid SemVer version, RFC 3339 publication date, platform-specific URLs, and the complete signature text for each updater artifact. A signature URL is not a substitute for the signature content.

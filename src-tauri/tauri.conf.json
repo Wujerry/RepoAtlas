@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "io.repoatlas.desktop",
   "build": {
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "node scripts/copy-mcp-sidecar.mjs && pnpm dev",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "node scripts/copy-mcp-sidecar.mjs && pnpm build",
     "frontendDist": "../dist"
@@ -52,7 +52,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNGNDc3M0I5NUNDQjAwMgpSV1FDc015Vk8zZjBBMy9FYm5WQXZHYmtxZlpCOE85L3FtUFFmdmpLcEtLaEdQUUxhaVNVbHAwYQo=",
       "endpoints": [
-        "https://github.com/wujer/RepoAtlas/releases/latest/download/latest.json"
+        "https://github.com/Wujerry/RepoAtlas/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "passive"

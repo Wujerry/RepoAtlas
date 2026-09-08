@@ -1,6 +1,6 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Archive, ArrowCounterClockwise, CaretRight, Check, ClockCounterClockwise, Copy, FolderPlus, FolderSimple, Image, ListBullets, MagnifyingGlass, MapPin, NotePencil, PencilSimple, Plus, PlusCircle, SortAscending, SquaresFour, Star, Trash, TreeStructure, XCircle } from "@phosphor-icons/react";
+import { Archive, ArrowCounterClockwise, ArrowsInSimple, CaretDoubleDown, CaretDoubleUp, CaretRight, Check, ClockCounterClockwise, Copy, Crosshair, FolderPlus, FolderSimple, Image, ListBullets, MagnifyingGlass, MapPin, NotePencil, PencilSimple, Plus, PlusCircle, SortAscending, SquaresFour, Star, Trash, TreeStructure, XCircle } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { MessageKey } from "../i18n";
 import { api } from "../lib/api";
@@ -128,6 +128,9 @@ export function ProjectList({
 }: ProjectListProps) {
   const iconCache = useRef(new Map<string, { revision: string; icon: { kind: string; source: string | null; dataUrl: string | null } }>());
   const parentRef = useRef<HTMLDivElement>(null);
+  const revealBaselineRef = useRef(false);
+  const lastSelectedIdRef = useRef<string | undefined>(undefined);
+  const pendingRevealRef = useRef(false);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());
   const [activeRowId, setActiveRowId] = useState<string>();
   const initializedExpansion = useRef(false);
@@ -147,6 +150,7 @@ export function ProjectList({
   const roots = useMemo(() => buildProjectTree(projects, sort), [projects, sort]);
   const groupIds = useMemo(() => collectGroupIds(roots), [roots]);
   const rows = useMemo(() => flattenProjectTree(roots, expandedGroups), [expandedGroups, roots]);
+  const selectedInList = useMemo(() => projects.some((project) => project.id === selectedId), [projects, selectedId]);
   const sortedProjects = useMemo(() => sortProjects(projects, sort), [projects, sort]);
   const visibleRows = useMemo<ProjectTreeRow[]>(() => layout === "tree" ? rows : sortedProjects.map((project, index) => ({
     kind: "project",
@@ -283,12 +287,61 @@ export function ProjectList({
     if (activeIndex >= 0) virtualizer.scrollToIndex(activeIndex, { align: "auto" });
   }, [activeIndex, virtualizer]);
 
+  // A fresh selection from outside the list (command palette, dashboard, scope
+  // auto-pick) must reveal its row: expand ancestors, move the active row, and
+  // scroll the virtual list once the row exists. Repeated renders keep waiting
+  // until ancestor expansion makes the row visible.
+  useEffect(() => {
+    if (!revealBaselineRef.current) {
+      revealBaselineRef.current = true;
+      lastSelectedIdRef.current = selectedId;
+      return;
+    }
+    const selectionChanged = selectedId !== lastSelectedIdRef.current;
+    lastSelectedIdRef.current = selectedId;
+    if (selectionChanged) pendingRevealRef.current = Boolean(selectedId);
+    if (!pendingRevealRef.current || !selectedId) return;
+    if (!projects.some((project) => project.id === selectedId)) {
+      pendingRevealRef.current = false;
+      return;
+    }
+    const index = visibleRows.findIndex((row) => row.id === `project:${selectedId}`);
+    if (index < 0) return;
+    pendingRevealRef.current = false;
+    setActiveRowId(`project:${selectedId}`);
+    virtualizer.scrollToIndex(index, { align: "auto" });
+  }, [projects, selectedId, visibleRows, virtualizer]);
+
   function toggleGroup(id: string) {
     setExpandedGroups((current) => {
       const next = new Set(current);
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
+  }
+
+  function expandAllGroups() {
+    setExpandedGroups(new Set(groupIds));
+  }
+
+  function collapseAllGroups() {
+    setExpandedGroups(new Set());
+  }
+
+  function revealSelectedProject() {
+    if (!selectedId || !selectedInList) return;
+    setExpandedGroups((current) => {
+      const next = new Set(current);
+      ancestorGroupIds(roots, selectedId).forEach((id) => next.add(id));
+      return next;
+    });
+    pendingRevealRef.current = true;
+  }
+
+  function collapseToSelected() {
+    if (!selectedId || !selectedInList) return;
+    setExpandedGroups(new Set(ancestorGroupIds(roots, selectedId)));
+    pendingRevealRef.current = true;
   }
 
   function moveActive(nextIndex: number) {
@@ -471,7 +524,7 @@ export function ProjectList({
   return (
     <section className="list-pane" aria-label={t("projects")}>
       <header className="list-header">
-        <div className="list-heading"><p className="eyebrow">{t("library")}</p><div><h1>{t("projects")}</h1><span className="project-count">{projects.length}</span></div></div>
+        <div className="list-heading"><div><h1>{t("projects")}</h1><span className="project-count">{projects.length}</span></div></div>
         <div className="list-header-actions">
           <ActionMenu
             trigger={
@@ -509,6 +562,12 @@ export function ProjectList({
             {(query.trim() || hasFacetFilters) && <button className="clear-filters" onClick={() => { onQuery(""); onFilters({ language: "", tag: "" }); }}>{t("clear")}</button>}
           </div>
           <div className="list-view-tools">
+            <div className="list-tree-tools" role="group" aria-label={t("treeTools")}>
+              <button type="button" disabled={layout !== "tree" || projects.length === 0} aria-label={t("expandAll")} title={t("expandAll")} onClick={expandAllGroups}><CaretDoubleDown aria-hidden="true" /></button>
+              <button type="button" disabled={layout !== "tree" || projects.length === 0} aria-label={t("collapseAll")} title={t("collapseAll")} onClick={collapseAllGroups}><CaretDoubleUp aria-hidden="true" /></button>
+              <button type="button" disabled={layout !== "tree" || !selectedInList} aria-label={t("focusSelected")} title={t("focusSelected")} onClick={collapseToSelected}><ArrowsInSimple aria-hidden="true" /></button>
+              <button type="button" disabled={!selectedInList} aria-label={t("revealSelected")} title={t("revealSelected")} onClick={revealSelectedProject}><Crosshair aria-hidden="true" /></button>
+            </div>
             <ActionMenu
               trigger={
                 <button type="button" className="sort-trigger" aria-haspopup="menu" aria-label={t("sortBy")} title={t(sortLabels[sort])}>

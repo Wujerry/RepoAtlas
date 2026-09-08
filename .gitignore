@@ -39,7 +39,10 @@ _ping.md
 # Rust
 /target
 src-tauri/target
-src-tauri/resources/
+src-tauri/resources/*
+!src-tauri/resources/repoatlas-mcp/
+src-tauri/resources/repoatlas-mcp/*
+!src-tauri/resources/repoatlas-mcp/README.md
 
 # Local tooling artifacts
 .playwright-mcp/

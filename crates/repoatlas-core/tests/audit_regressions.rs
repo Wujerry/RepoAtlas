@@ -349,3 +349,77 @@ fn dashboard_latest_runs_remain_fast_with_long_history_and_timestamp_ties() {
         assert!(elapsed < std::time::Duration::from_secs(1), "{elapsed:?}");
     }
 }
+
+#[test]
+fn literal_git_paths_and_rename_unstage_preserve_other_files() {
+    let dir = tempdir().unwrap();
+    let root = dir.path().join("project");
+    init(&root);
+    for name in ["a[1].txt", "a1.txt", "old.txt"] {
+        fs::write(root.join(name), "original\n").unwrap();
+    }
+    git(&root, &["add", "."]);
+    git(&root, &["commit", "-m", "fixture"]);
+    let core = Core::open_in_memory().unwrap();
+    let project = core.register_project(&root).unwrap();
+    for name in ["a[1].txt", "a1.txt"] {
+        fs::write(root.join(name), format!("changed {name}\n")).unwrap();
+    }
+    let execute = |op| {
+        let operation = core.prepare_git_operation(&project.id, op).unwrap();
+        let result = core
+            .finish_git_operation(&operation, operation.execute())
+            .unwrap();
+        assert!(result.ok, "{}", result.stderr);
+    };
+    let diff = core.git_diff(&project.id, Some("a[1].txt"), false).unwrap();
+    assert!(diff.patch.contains("changed a[1].txt"));
+    assert!(!diff.patch.contains("changed a1.txt"));
+    execute(GitOp::Stage {
+        paths: vec!["a[1].txt".into()],
+    });
+    let status = core.git_status(&project.id).unwrap();
+    assert_eq!(status.files.iter().filter(|f| f.staged).count(), 1);
+    execute(GitOp::Stage {
+        paths: vec!["a1.txt".into()],
+    });
+    execute(GitOp::Unstage {
+        paths: vec!["a[1].txt".into()],
+    });
+    let status = core.git_status(&project.id).unwrap();
+    assert_eq!(
+        status
+            .files
+            .iter()
+            .filter(|f| f.staged)
+            .map(|f| f.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["a1.txt"]
+    );
+    git(&root, &["mv", "old.txt", "new.txt"]);
+    let status = core.git_status(&project.id).unwrap();
+    assert_eq!(
+        status
+            .files
+            .iter()
+            .find(|f| f.path == "new.txt")
+            .unwrap()
+            .original_path
+            .as_deref(),
+        Some("old.txt")
+    );
+    execute(GitOp::Unstage {
+        paths: vec!["new.txt".into()],
+    });
+    let status = core.git_status(&project.id).unwrap();
+    assert_eq!(
+        status
+            .files
+            .iter()
+            .filter(|f| f.staged)
+            .map(|f| f.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["a1.txt"]
+    );
+    assert!(root.join("new.txt").exists());
+}

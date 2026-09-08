@@ -62,7 +62,7 @@
 
 ## Components
 - Existing components to reuse: Base UI primitives, TanStack virtual list, Framer Motion, and the current typed Tauri API boundary.
-- New/changed components: App mark, Dashboard summary cards and entry lists, path tree, Project Collection selector/editor, scope selector, fields, tabs, badges, skeletons, empty state, toast stack, scan status, attention center, project-description editor, structured Project Brief, Task Run monitor, virtualized Project File View, unified rendered Markdown, help/MCP setup, and page headers.
+- New/changed components: App mark, Dashboard featured Project, status rail and entry lists, path tree, Project Collection selector/editor, scope selector, fields, tabs, badges, skeletons, empty state, toast stack, scan status, attention center, project-description editor, structured Project Brief, Task Run monitor, virtualized Project File View, unified rendered Markdown, help/MCP setup, and page headers.
 - Variants and states: Default, hover, pressed, focus-visible, selected, loading, success, warning, error, disabled, and unavailable.
 - Token/component ownership: Global tokens and layout live in `src/styles.css`; behavior and accessible semantics live in `src/components/ui`.
 
@@ -98,7 +98,21 @@
 - Performance constraints: Keep project and file-tree virtualization, load directories only when expanded, build the path index only on search, keep syntax highlighting off the UI thread, animate compositor properties only, and avoid unnecessary reloads or layout measurement.
 - Compatibility constraints: Windows and macOS title bars, paths, system theme changes, Chinese/English, and offline startup.
 - MCP boundary: project metadata, tasks, icons, location, existing bounded project evidence, reports, and Scan Root records are directly manageable over MCP. The Files directory, preview, image, and path-index commands are desktop-only and are not MCP tools. Model/provider configuration stays in the Agent client. Shell mode, Git writes, arbitrary command execution, and filesystem deletion are not exposed over MCP. Every MCP or desktop mutation is recorded in a local audit trail without secrets.
-- Test/screenshot expectations: Typecheck, production build, Rust Core/MCP checks, and interaction tests. The current scope explicitly omits full-application manual screenshot review; only the generated Logo is checked for silhouette, transparency, and small-size recognition.
+- Test/screenshot expectations: Verify every changed layer with focused checks. Visual changes require live Tauri inspection at 1440x920 and 1100x720 in light and dark themes; typecheck and component tests alone do not establish visual correctness.
 
 ## Open questions
 - None for the current scope. Dependency graphs, SVG project-icon ingestion, SVN write operations, and configurable external launchers remain future work.
+
+## Module discovery and guidance
+
+- Overview starts with an expandable Modules and directory structure panel when cached constituents exist. Each entry shows its relative path, own stack, candidate/Module/independent Project status, evidence time, runtime requirements, and scoped task actions.
+- Module launch actions use its validated directory. Independent entries navigate to their Project; explicit promotion refreshes the shared project library. Actions remain keyboard accessible with visible pending and result feedback.
+- Directory grouping retains the root entry and metadata, promotes constituent Modules, and persists across refresh. Explain that restoring Project mode does not merge independent Projects. Group entries carry a Directory group badge.
+- Help begins with two copyable Agent prompts: Initialize MCP, then Scan directories. Both preserve explicit absolute Scan Root authorization, per-Module task cwd, user-controlled promotion, and desktop execution approvals.
+
+## Workspace visual hierarchy
+
+- Home leads with a featured, available, unarchived recent Project and an explicit Open Project action. The neutral graphite surface is shared by both themes; amber is reserved for the entry action. Empty libraries show onboarding guidance, never invented project activity.
+- Four cached status metrics form an unboxed rail. Recent Projects and Task Runs precede Collections and Attention; seven-day aggregates stay below actionable entries. Open entries retain their typed navigation callbacks.
+- Use larger Project names, restrained section labels, whitespace and dividing rules instead of repeated nested cards. Avoid decorative gradients and continuous animation. Long names and paths truncate with full text available in tooltips; secondary text remains readable in both themes.
+- Project headers use an ultra-compact, high-density split layout: project identity, branch/stack chips, and path line on the left paired directly with primary Agent/Terminal/IDE action buttons on the right, keeping vertical header height below 70px to preserve maximum viewport height for workspace content. Left sidebar adopts refined control heights, muted search containers, and distinct active project indicators.

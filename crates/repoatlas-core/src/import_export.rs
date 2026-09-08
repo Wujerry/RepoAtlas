@@ -32,6 +32,8 @@ pub struct ExportCollection {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportProject {
+    #[serde(default)]
+    pub directory_group: bool,
     pub canonical_path: String,
     pub display_name: String,
     pub notes: Option<String>,
@@ -203,6 +205,17 @@ pub fn import_into(
                     project.last_opened_at, now,
                 ],
             )?;
+            if project.directory_group {
+                conn.execute(
+                    "INSERT OR IGNORE INTO project_directory_groups (project_id) VALUES (?1)",
+                    [&id],
+                )?;
+            } else {
+                conn.execute(
+                    "DELETE FROM project_directory_groups WHERE project_id = ?1",
+                    [&id],
+                )?;
+            }
             conn.execute(
                 "DELETE FROM project_tags WHERE project_id = ?1",
                 params![id],
@@ -416,6 +429,11 @@ fn export_projects(conn: &Connection) -> Result<Vec<ExportProject>> {
                 source_name,
             });
         out.push(ExportProject {
+            directory_group: conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM project_directory_groups WHERE project_id = ?1)",
+                [&id],
+                |row| row.get(0),
+            )?,
             canonical_path: path,
             display_name: name,
             notes,

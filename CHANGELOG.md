@@ -31,5 +31,5 @@ Initial pre-release application baseline:
 - stdio MCP adapter sharing the Rust core and its safety boundaries;
 - English and Simplified Chinese interface support with light, dark, and system themes.
 
-[Unreleased]: https://github.com/wujer/RepoAtlas/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/wujer/RepoAtlas/releases/tag/v0.1.0
+[Unreleased]: https://github.com/Wujerry/RepoAtlas/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/Wujerry/RepoAtlas/releases/tag/v0.1.0

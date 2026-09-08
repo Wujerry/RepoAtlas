@@ -1,13 +1,10 @@
 import {
   ArrowClockwise,
   ArrowRight,
-  Bell,
   CheckCircle,
   Clock,
   FolderSimple,
   GitBranch,
-  PlayCircle,
-  Stack,
   WarningCircle,
   XCircle,
 } from "@phosphor-icons/react";
@@ -94,47 +91,35 @@ export function HomeDashboard({ t, refreshKey, onOpenProject, onOpenCollection, 
     return <main id="main-content" className="home-dashboard"><EmptyState title={t("dashboardLoadFailed")} body={error ?? t("dashboardLoadFailed")} actions={<Button variant="primary" onClick={() => setReloadToken((value) => value + 1)}>{t("retry")}</Button>} /></main>;
   }
 
+  const featured = snapshot.recentProjects.find(({ project }) => project.availability === "ready" && !project.archived);
+
   const metrics = [
-    { label: t("projects"), value: snapshot.projectCount, note: `${snapshot.availableProjectCount} ${t("available")} · ${snapshot.unavailableProjectCount} ${t("unavailable")}`, icon: <FolderSimple /> },
-    { label: t("collections"), value: snapshot.collectionCount, note: t("dashboardCollectionNote"), icon: <Stack /> },
-    { label: t("activeTasks"), value: snapshot.activeRunCount, note: t("dashboardRunningNote"), icon: <PlayCircle /> },
-    { label: t("attentionCenter"), value: snapshot.attentionCount, note: t("dashboardAttentionNote"), icon: <Bell /> },
+    { label: t("projects"), value: snapshot.projectCount, note: `${snapshot.availableProjectCount} ${t("available")} · ${snapshot.unavailableProjectCount} ${t("unavailable")}` },
+    { label: t("collections"), value: snapshot.collectionCount, note: t("dashboardCollectionNote") },
+    { label: t("activeTasks"), value: snapshot.activeRunCount, note: t("dashboardRunningNote") },
+    { label: t("attentionCenter"), value: snapshot.attentionCount, note: t("dashboardAttentionNote") },
   ];
 
   return <main id="main-content" className="home-dashboard">
     <header className="home-dashboard-header">
       <div><span className="eyebrow">RepoAtlas</span><h1>{t("dashboard")}</h1><p>{t("dashboardHint")}</p></div>
-      <div className="home-dashboard-updated"><span>{t("dashboardGeneratedAt")} {formatTime(snapshot.generatedAt)}</span><Button size="icon" variant="quiet" aria-label={t("refresh")} onClick={() => setReloadToken((value) => value + 1)}><ArrowClockwise aria-hidden="true" /></Button></div>
+      <div className="home-dashboard-updated" title={`${t("dashboardGeneratedAt")} ${formatTime(snapshot.generatedAt)}`}><span>{t("dashboardGeneratedAt")} {formatTime(snapshot.generatedAt)}</span><Button size="icon" variant="quiet" loading={loading} aria-label={t("refresh")} onClick={() => setReloadToken((value) => value + 1)}><ArrowClockwise aria-hidden="true" /></Button></div>
     </header>
 
     {error && <div className="dashboard-inline-error" role="status"><WarningCircle aria-hidden="true" />{t("dashboardRefreshFailed")}<Button variant="quiet" onClick={() => setReloadToken((value) => value + 1)}>{t("retry")}</Button></div>}
 
-    <section className="dashboard-metric-grid" aria-label={t("dashboardStatusSummary")}>
-      {metrics.map((metric) => <article className="dashboard-metric" key={metric.label}><span className="dashboard-metric-icon" aria-hidden="true">{metric.icon}</span><div><span>{metric.label}</span><strong>{metric.value}</strong><small>{metric.note}</small></div></article>)}
-    </section>
-
-    <section className="dashboard-section dashboard-results">
-      <div className="dashboard-section-heading"><div><span className="eyebrow">{t("lastSevenDays")}</span><h2>{t("taskRunResults")}</h2></div><strong>{snapshot.sevenDayRuns.total}</strong></div>
-      <div className="dashboard-result-grid">
-        <div className="dashboard-result is-success"><CheckCircle weight="fill" aria-hidden="true" /><span>{t("succeeded")}</span><strong>{snapshot.sevenDayRuns.succeeded}</strong></div>
-        <div className="dashboard-result is-danger"><XCircle weight="fill" aria-hidden="true" /><span>{t("failed")}</span><strong>{snapshot.sevenDayRuns.failed}</strong></div>
-        <div className="dashboard-result is-muted"><Clock weight="fill" aria-hidden="true" /><span>{t("cancelled")}</span><strong>{snapshot.sevenDayRuns.cancelled}</strong></div>
-      </div>
-    </section>
-
-    <div className="dashboard-content-grid">
-      <section className="dashboard-section dashboard-collections">
-        <div className="dashboard-section-heading"><div><span className="eyebrow">{t("projectOrganization")}</span><h2>{t("collections")}</h2></div></div>
-        {snapshot.collections.length === 0 ? <p className="dashboard-empty-copy">{t("dashboardNoCollections")}</p> : <div className="dashboard-collection-list">{snapshot.collections.map((collection) => <button className="dashboard-collection" key={collection.id} onClick={() => onOpenCollection(collection.id)}>
-          <span className="dashboard-collection-top"><span><strong>{collection.name}</strong>{collection.description && <small>{collection.description}</small>}</span><ArrowRight aria-hidden="true" /></span>
-          <span className="dashboard-collection-meta"><span>{collection.projectCount} {t("projects")}</span>{collection.archivedProjectCount > 0 && <span>{collection.archivedProjectCount} {t("archived")}</span>}{collection.activeRunCount > 0 && <span className="is-running">{collection.activeRunCount} {t("running")}</span>}{collection.attentionCount > 0 && <span className="is-danger">{collection.attentionCount} {t("attentionShort")}</span>}</span>
-          <time>{collection.lastActivityAt ? `${t("lastActivity")} ${formatTime(collection.lastActivityAt)}` : t("noRecentActivity")}</time>
-        </button>)}</div>}
+    <div className="dashboard-launchpad">
+      <section className="dashboard-feature" aria-label={t("continueWork")}>
+        <div className="dashboard-feature-heading"><span className="eyebrow">{t(featured ? "continueWork" : "dashboardWelcome")}</span><FolderSimple aria-hidden="true" /></div>
+        <h2 title={featured?.project.displayName}>{featured?.project.displayName ?? t("dashboardWelcomeTitle")}</h2>
+        <p>{featured?.project.description || t(featured ? "dashboardResumeHint" : "dashboardNoRecentProjects")}</p>
+        {featured && <>
+          <div className="dashboard-feature-stack">{stackOf(featured.project).slice(0, 3).map(value => <span key={value}>{value}</span>)}{featured.git?.branch && <span><GitBranch aria-hidden="true" />{featured.git.branch}</span>}</div>
+          <div className="dashboard-feature-footer"><code title={featured.project.canonicalPath}>{featured.project.canonicalPath}</code><Button variant="primary" onClick={() => onOpenProject(featured.project.id)}>{t("dashboardResumeProject")}<ArrowRight aria-hidden="true" /></Button></div>
+        </>}
       </section>
-
-      <section className="dashboard-section dashboard-attention">
-        <div className="dashboard-section-heading"><div><span className="eyebrow">{t("needsAction")}</span><h2>{t("attentionCenter")}</h2></div>{snapshot.attentionCount > snapshot.attentionPreview.length && <Button variant="quiet" onClick={onOpenAttention}>{t("viewAll")}</Button>}</div>
-        {snapshot.attentionPreview.length === 0 ? <p className="dashboard-empty-copy is-clear"><CheckCircle weight="fill" aria-hidden="true" />{t("dashboardNoAttention")}</p> : <div className="dashboard-attention-list">{snapshot.attentionPreview.map((item) => <button key={item.id} className={`dashboard-attention-item severity-${item.severity}`} onClick={() => onOpenAttentionItem(item)}><WarningCircle weight="fill" aria-hidden="true" /><span><strong>{item.title}</strong><small>{item.detail}</small><time>{formatTime(item.occurredAt)}</time></span><ArrowRight aria-hidden="true" /></button>)}</div>}
+      <section className="dashboard-metric-grid" aria-label={t("dashboardStatusSummary")}>
+        {metrics.map((metric) => <article className="dashboard-metric" key={metric.label}><div><span>{metric.label}</span><strong>{metric.value}</strong><small>{metric.note}</small></div></article>)}
       </section>
     </div>
 
@@ -154,5 +139,30 @@ export function HomeDashboard({ t, refreshKey, onOpenProject, onOpenCollection, 
         {snapshot.recentRuns.length === 0 ? <p className="dashboard-empty-copy">{t("dashboardNoRecentRuns")}</p> : <div className="dashboard-run-list">{snapshot.recentRuns.map(({ run, projectName }) => <button key={run.id} className="dashboard-run" onClick={() => onOpenRun(run.id)}><span className={`dashboard-run-status ${statusClass(run.status)}`} aria-hidden="true" /><span><strong>{projectName}</strong><small>{run.kind} · {statusLabel(run.status, t)}</small></span><time>{formatTime(run.finishedAt ?? run.startedAt)}</time><ArrowRight aria-hidden="true" /></button>)}</div>}
       </section>
     </div>
+
+    <div className="dashboard-content-grid">
+      <section className="dashboard-section dashboard-collections">
+        <div className="dashboard-section-heading"><div><span className="eyebrow">{t("projectOrganization")}</span><h2>{t("collections")}</h2></div></div>
+        {snapshot.collections.length === 0 ? <p className="dashboard-empty-copy">{t("dashboardNoCollections")}</p> : <div className="dashboard-collection-list">{snapshot.collections.map((collection) => <button className="dashboard-collection" key={collection.id} onClick={() => onOpenCollection(collection.id)}>
+          <span className="dashboard-collection-top"><span><strong>{collection.name}</strong>{collection.description && <small>{collection.description}</small>}</span><ArrowRight aria-hidden="true" /></span>
+          <span className="dashboard-collection-meta"><span>{collection.projectCount} {t("projects")}</span>{collection.archivedProjectCount > 0 && <span>{collection.archivedProjectCount} {t("archived")}</span>}{collection.activeRunCount > 0 && <span className="is-running">{collection.activeRunCount} {t("running")}</span>}{collection.attentionCount > 0 && <span className="is-danger">{collection.attentionCount} {t("attentionShort")}</span>}</span>
+          <time>{collection.lastActivityAt ? `${t("lastActivity")} ${formatTime(collection.lastActivityAt)}` : t("noRecentActivity")}</time>
+        </button>)}</div>}
+      </section>
+
+      <section className="dashboard-section dashboard-attention">
+        <div className="dashboard-section-heading"><div><span className="eyebrow">{t("needsAction")}</span><h2>{t("attentionCenter")}</h2></div>{snapshot.attentionCount > snapshot.attentionPreview.length && <Button variant="quiet" onClick={onOpenAttention}>{t("viewAll")}</Button>}</div>
+        {snapshot.attentionPreview.length === 0 ? <p className="dashboard-empty-copy is-clear"><CheckCircle weight="fill" aria-hidden="true" />{t("dashboardNoAttention")}</p> : <div className="dashboard-attention-list">{snapshot.attentionPreview.map((item) => <button key={item.id} className={`dashboard-attention-item severity-${item.severity}`} onClick={() => onOpenAttentionItem(item)}><WarningCircle weight="fill" aria-hidden="true" /><span><strong>{item.title}</strong><small>{item.detail}</small><time>{formatTime(item.occurredAt)}</time></span><ArrowRight aria-hidden="true" /></button>)}</div>}
+      </section>
+    </div>
+
+    <section className="dashboard-section dashboard-results">
+      <div className="dashboard-section-heading"><div><span className="eyebrow">{t("lastSevenDays")}</span><h2>{t("taskRunResults")}</h2></div><strong>{snapshot.sevenDayRuns.total}</strong></div>
+      <div className="dashboard-result-grid">
+        <div className="dashboard-result is-success"><CheckCircle weight="fill" aria-hidden="true" /><span>{t("succeeded")}</span><strong>{snapshot.sevenDayRuns.succeeded}</strong></div>
+        <div className="dashboard-result is-danger"><XCircle weight="fill" aria-hidden="true" /><span>{t("failed")}</span><strong>{snapshot.sevenDayRuns.failed}</strong></div>
+        <div className="dashboard-result is-muted"><Clock weight="fill" aria-hidden="true" /><span>{t("cancelled")}</span><strong>{snapshot.sevenDayRuns.cancelled}</strong></div>
+      </div>
+    </section>
   </main>;
 }

@@ -83,6 +83,9 @@ export const api = {
   revealProjectFile: (projectId: string, path: string) => invoke<void>("reveal_project_file", { projectId, path }),
   openProjectFile: (projectId: string, path: string) => invoke<void>("open_project_file", { projectId, path }),
   mcpSetupInfo: () => invoke<McpSetupInfo>("mcp_setup_info"),
+  promoteModule: (projectId: string, moduleId: string) => invoke<ProjectSummary>("promote_module", { projectId, moduleId }),
+  setDirectoryGroup: (projectId: string, enabled: boolean) => invoke<ProjectSummary>("set_directory_group", { projectId, enabled }),
+  resolveModulePath: (projectId: string, moduleId: string) => invoke<string>("resolve_module_path", { projectId, moduleId }),
   registerProject: (path: string) => invoke<ProjectSummary>("register_project", { path }),
   updateProject: (id: string, patch: ProjectPatch) =>
     invoke<ProjectSummary>("update_project", { id, patch }),

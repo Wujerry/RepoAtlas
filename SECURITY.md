@@ -8,7 +8,7 @@ The project is currently pre-release. Until the first stable release, security f
 
 ## Reporting a vulnerability
 
-Please do not open a public issue for a suspected vulnerability. Use [GitHub's private vulnerability reporting form](https://github.com/wujer/RepoAtlas/security/advisories/new) when the repository is public. Include:
+Please do not open a public issue for a suspected vulnerability. Use [GitHub's private vulnerability reporting form](https://github.com/Wujerry/RepoAtlas/security/advisories/new) when the repository is public. Include:
 
 - a clear description of the impact and affected boundary;
 - the smallest reproduction or proof of concept;

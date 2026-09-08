@@ -366,4 +366,70 @@ describe("ProjectList tree", () => {
     expect(onSort).toHaveBeenCalledWith("name");
   });
 
+  it("reveals and follows a selection made outside the list, even inside a collapsed group", () => {
+    const projects = [project("alpha", "C:\\code\\web\\alpha"), project("beta", "C:\\code\\tools\\beta")];
+    const view = renderList({ projects, allProjects: projects, selectedId: "alpha" });
+    const tree = screen.getByRole("tree");
+    expect(screen.getByRole("treeitem", { name: "alpha" })).toBeInTheDocument();
+
+    fireEvent.click(within(screen.getByRole("treeitem", { name: "tools" })).getByRole("button"));
+    expect(screen.queryByRole("treeitem", { name: "beta" })).not.toBeInTheDocument();
+
+    view.rerender(<ProjectList {...view.props} selectedId="beta" />);
+
+    expect(screen.getByRole("treeitem", { name: "beta" })).toBeInTheDocument();
+    expect(tree).toHaveAttribute("aria-activedescendant", "project:beta");
+  });
+
+  it("expands and collapses every group from the tree tools", async () => {
+    renderList();
+    await waitFor(() => expect(screen.getByRole("treeitem", { name: "atlas" })).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: t("collapseAll") }));
+    expect(screen.queryByRole("treeitem", { name: "atlas" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("revealSelected") })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: t("expandAll") }));
+    expect(screen.getByRole("treeitem", { name: "atlas" })).toBeInTheDocument();
+    expect(screen.getByRole("treeitem", { name: "portal" })).toBeInTheDocument();
+  });
+
+  it("collapses every path except the selected project's ancestors", async () => {
+    const projects = [project("alpha", "C:\\code\\web\\alpha"), project("beta", "C:\\code\\tools\\beta")];
+    renderList({ projects, allProjects: projects, selectedId: "alpha" });
+    await waitFor(() => expect(screen.getByRole("treeitem", { name: "alpha" })).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: t("focusSelected") }));
+
+    expect(screen.getByRole("treeitem", { name: "alpha" })).toBeInTheDocument();
+    expect(screen.queryByRole("treeitem", { name: "beta" })).not.toBeInTheDocument();
+    expect(screen.getByRole("tree")).toHaveAttribute("aria-activedescendant", "project:alpha");
+  });
+
+  it("jumps back to the selected project after keyboard focus moves elsewhere", async () => {
+    renderList();
+    const tree = screen.getByRole("tree");
+    await waitFor(() => expect(screen.getByRole("treeitem", { name: "portal" })).toBeInTheDocument());
+
+    fireEvent.keyDown(tree, { key: "ArrowDown" });
+    fireEvent.keyDown(tree, { key: "ArrowDown" });
+    fireEvent.keyDown(tree, { key: "ArrowDown" });
+    expect(tree).toHaveAttribute("aria-activedescendant", "project:portal");
+
+    fireEvent.click(screen.getByRole("button", { name: t("revealSelected") }));
+    expect(tree).toHaveAttribute("aria-activedescendant", "project:atlas");
+  });
+
+  it("keeps tree-only tools unavailable in flat layout", async () => {
+    renderList();
+    await waitFor(() => expect(screen.getByRole("treeitem", { name: "atlas" })).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: t("flatView") }));
+
+    expect(screen.getByRole("button", { name: t("expandAll") })).toBeDisabled();
+    expect(screen.getByRole("button", { name: t("collapseAll") })).toBeDisabled();
+    expect(screen.getByRole("button", { name: t("focusSelected") })).toBeDisabled();
+    expect(screen.getByRole("button", { name: t("revealSelected") })).toBeEnabled();
+  });
+
 });

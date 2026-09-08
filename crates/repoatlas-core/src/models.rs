@@ -12,6 +12,8 @@ pub struct ScanRoot {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectSummary {
+    #[serde(default)]
+    pub directory_group: bool,
     pub id: String,
     pub canonical_path: String,
     pub display_name: String,
@@ -82,6 +84,8 @@ pub struct GitSnapshot {
 #[serde(rename_all = "camelCase")]
 pub struct GitFileStatus {
     pub path: String,
+    #[serde(default)]
+    pub original_path: Option<String>,
     pub status: String,
     pub staged: bool,
 }
@@ -264,6 +268,8 @@ pub struct ProjectIcon {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectDetail {
+    #[serde(default)]
+    pub modules: Vec<ProjectModule>,
     pub project: ProjectSummary,
     pub facts: Vec<DetectedFact>,
     pub readme_path: Option<String>,
@@ -289,6 +295,26 @@ pub struct ReadmeDocument {
     pub path: String,
     pub content: String,
     pub truncated: bool,
+}
+
+/// Cached evidence for a constituent directory, never an implicit Project.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectModule {
+    pub id: String,
+    pub canonical_path: String,
+    pub relative_path: String,
+    pub name: String,
+    pub languages: Vec<String>,
+    pub frameworks: Vec<String>,
+    pub package_managers: Vec<String>,
+    pub facts: Vec<DetectedFact>,
+    pub runtime_requirements: Vec<RuntimeRequirement>,
+    pub task_ids: Vec<String>,
+    pub observed_at: String,
+    pub availability: String,
+    pub project_id: Option<String>,
+    pub evidence: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -455,6 +481,8 @@ pub struct CollectionUpsert {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectBrief {
+    #[serde(default)]
+    pub modules: Vec<ProjectModule>,
     pub project: ProjectSummary,
     pub facts: Vec<DetectedFact>,
     pub environment: EnvironmentInspection,

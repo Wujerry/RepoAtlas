@@ -133,8 +133,20 @@ pub fn log(path: &Path, limit: u32) -> Result<Vec<GitLogEntry>> {
         .collect())
 }
 
-pub fn execute(path: &Path, op: GitOp) -> Result<GitCommandResult> {
+pub fn execute(path: &Path, mut op: GitOp) -> Result<GitCommandResult> {
     ensure_git(path)?;
+    if let GitOp::Unstage { paths } = &mut op {
+        let files = parse_porcelain(&git_status_porcelain(path)?);
+        for file in files {
+            if file.staged && file.status == "renamed" && paths.contains(&file.path) {
+                if let Some(source) = file.original_path {
+                    if !paths.contains(&source) {
+                        paths.push(source);
+                    }
+                }
+            }
+        }
+    }
     let args = typed_args(&op)?;
     git_run(path, &args)
 }
@@ -233,12 +245,13 @@ fn parse_porcelain(raw: &[u8]) -> Vec<GitFileStatus> {
         let staged_code = record[0] as char;
         let unstaged_code = record[1] as char;
         let path = record[3..].to_vec();
-        // With -z, a rename/copy record stores the destination first and the
-        // source in the following NUL-delimited record. Git operations use
-        // the destination path, so intentionally discard the source here.
-        if matches!(staged_code, 'R' | 'C') && index < records.len() {
+        let original_path = if matches!(staged_code, 'R' | 'C') && index < records.len() {
+            let source = String::from_utf8_lossy(records[index]).into_owned();
             index += 1;
-        }
+            Some(source)
+        } else {
+            None
+        };
         // Index and working-tree changes are independent (e.g. MM or AM).
         for (code, staged) in [(staged_code, true), (unstaged_code, false)] {
             if code == ' ' || (staged && code == '?') {
@@ -246,6 +259,7 @@ fn parse_porcelain(raw: &[u8]) -> Vec<GitFileStatus> {
             }
             files.push(GitFileStatus {
                 path: String::from_utf8_lossy(&path).into_owned(),
+                original_path: if staged { original_path.clone() } else { None },
                 status: status_name(code),
                 staged,
             });
@@ -348,6 +362,7 @@ fn git_run_raw(path: &Path, args: &[String]) -> Result<RawGitCommandResult> {
     let root = repository_root(path).unwrap_or_else(|| path.to_path_buf());
     let mut command = Command::new("git");
     command
+        .arg("--literal-pathspecs")
         .args(args)
         .current_dir(root)
         .stdin(Stdio::null())

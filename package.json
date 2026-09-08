@@ -6,14 +6,14 @@
   "description": "A local-first control center for the code you already have.",
   "author": "wujer",
   "license": "MIT",
-  "homepage": "https://github.com/wujer/RepoAtlas#readme",
+  "homepage": "https://github.com/Wujerry/RepoAtlas#readme",
   "repository": {
     "type": "git",
-    "url": "https://github.com/wujer/RepoAtlas.git",
+    "url": "https://github.com/Wujerry/RepoAtlas.git",
     "directory": "."
   },
   "bugs": {
-    "url": "https://github.com/wujer/RepoAtlas/issues"
+    "url": "https://github.com/Wujerry/RepoAtlas/issues"
   },
   "engines": {
     "node": ">=24.11.0 <25"

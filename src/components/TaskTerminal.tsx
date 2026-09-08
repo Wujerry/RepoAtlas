@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { api } from "../lib/api";
-import { setInputOwner } from "../lib/task-runs";
+import { getTaskRunSnapshot, subscribeTaskRuns, setInputOwner } from "../lib/task-runs";
+import { writeLog } from "../lib/terminal-log";
 import type { TaskRun } from "../types";
 import "@xterm/xterm/css/xterm.css";
 
@@ -14,23 +15,6 @@ function themeFor(mode: "dark" | "light") {
   return mode === "light"
     ? { background: "#f6f5f2", foreground: "#1f2328", cursor: "#1f2328" }
     : { background: "#090909", foreground: "#d4d4d4", cursor: "#ffa31a" };
-}
-
-function writeLog(
-  session: { term: { write: (data: string, callback?: () => void) => void; reset: () => void }; written: number },
-  log: string,
-  onWritten?: () => void,
-) {
-  if (log.length < session.written) {
-    session.term.reset();
-    session.written = 0;
-  }
-  if (log.length > session.written) {
-    session.term.write(log.slice(session.written), onWritten);
-    session.written = log.length;
-  } else {
-    onWritten?.();
-  }
 }
 
 function isTestEnvironment() {
@@ -54,6 +38,10 @@ export function TaskTerminal({
   interactive: boolean;
   theme?: "dark" | "light";
 }) {
+  const snapshot = useSyncExternalStore(subscribeTaskRuns, getTaskRunSnapshot);
+  const logEnd = snapshot.logs[run.id] === log ? (snapshot.logOffsets[run.id] ?? log.length) : log.length;
+  const endRef = useRef(logEnd);
+  endRef.current = logEnd;
   const hostRef = useRef<HTMLDivElement>(null);
   const logRef = useRef(log);
   const sessionRef = useRef<XtermSession | null>(null);
@@ -102,7 +90,7 @@ export function TaskTerminal({
           void api.resizeTaskRun(run.id, term.cols, term.rows).catch(() => undefined);
         }
       };
-      writeLog(session, logRef.current, () => {
+      writeLog(session, logRef.current, endRef.current, () => {
         contentReady = true;
         reveal();
       });
@@ -148,8 +136,8 @@ export function TaskTerminal({
     if (!canMountXterm) return;
     const session = sessionRef.current;
     if (!session) return;
-    writeLog(session, log);
-  }, [canMountXterm, log]);
+    writeLog(session, log, logEnd);
+  }, [canMountXterm, log, logEnd]);
 
   if (!canMountXterm) {
     return <pre className={"log-pane log-pane--" + theme}>{log}</pre>;

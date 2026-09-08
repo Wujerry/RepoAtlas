@@ -25,6 +25,7 @@ use std::sync::atomic::AtomicBool;
 use uuid::Uuid;
 
 mod approvals;
+mod modules;
 
 pub struct Core {
     conn: Connection,
@@ -648,6 +649,8 @@ impl Core {
                 fact.value = git::sanitize_remote_url(&fact.value);
             }
         }
+        detail.modules = self.list_modules(id)?;
+        detail.project.directory_group = self.is_directory_group(id)?;
         detail.project.tags = self.tags_for(&detail.project.id)?;
         detail.start_here = start_here_tasks(&detail.tasks, &detail.facts);
         detail.lineage = self.lineage_for(&detail)?;
@@ -766,6 +769,7 @@ impl Core {
         recent_runs.truncate(10);
         let recent_activity = self.list_project_events(project_id, 12)?;
         Ok(ProjectBrief {
+            modules: detail.modules,
             project: detail.project,
             facts: detail.facts,
             environment,
@@ -1064,8 +1068,18 @@ impl Core {
         let origin = origin.to_owned();
         self.with_immediate_transaction(|core| {
             let scan_root_id = core.matching_scan_root(&canonical)?;
-            core.upsert_project(&canonical, scan_root_id.as_deref(), "manual")?;
+            if let Some((owner, module_id)) = core.module_at_path(&canonical)? {
+                core.promote_module_inner(
+                    &owner,
+                    &module_id,
+                    &origin,
+                    &paths::path_to_string(&canonical),
+                )?;
+            } else {
+                core.upsert_project(&canonical, scan_root_id.as_deref(), "manual")?;
+            }
             let project = core.project_by_path(&canonical)?;
+            core.discover_modules(&project.id)?;
             core.record_audit_event(
                 &origin,
                 "register_project",
@@ -1074,7 +1088,7 @@ impl Core {
                 Some("path supplied"),
                 "success",
             )?;
-            Ok(project)
+            core.project_by_path(&canonical)
         })
     }
 
@@ -1083,8 +1097,13 @@ impl Core {
         if !canonical.is_dir() {
             return Err(Error::msg("path is not a directory"));
         }
+        if let Some((owner, module_id)) = self.module_at_path(&canonical)? {
+            return self.promote_module_with_origin(&owner, &module_id, "local");
+        }
         let scan_root_id = self.matching_scan_root(&canonical)?;
         self.upsert_project(&canonical, scan_root_id.as_deref(), "manual")?;
+        let project = self.project_by_path(&canonical)?;
+        self.discover_modules(&project.id)?;
         self.project_by_path(&canonical)
     }
 
@@ -1700,6 +1719,9 @@ impl Core {
                 &detail.project.origin,
             )?;
         }
+        if path.is_dir() {
+            self.discover_modules(id)?;
+        }
         self.record_project_event(id, "refresh", "Refreshed project", None)?;
         self.get_project_summary(id)?
             .ok_or_else(|| Error::NotFound(id.into()))
@@ -1798,9 +1820,10 @@ impl Core {
         root_id: &str,
         discovered: &crate::scan::DiscoveredProject,
     ) -> Result<String> {
-        Ok(self
-            .upsert_project(&discovered.path, Some(root_id), "scan")?
-            .id)
+        let boundary = PathBuf::from(self.get_scan_root(root_id)?.path);
+        self.with_immediate_transaction(|core| {
+            core.ingest_directory(&discovered.path, Some(root_id), &boundary)
+        })
     }
 
     pub fn finalize_scan_ingest(
@@ -1832,6 +1855,7 @@ impl Core {
                 params![now(), root_id],
             )?;
             for id in found_ids {
+                self.update_missing_modules(id)?;
                 self.record_project_event(id, "scan", "Scan refreshed project", Some(root_id))?;
             }
         }
@@ -2793,7 +2817,22 @@ impl Core {
             .map(from_json)
             .transpose()?
             .unwrap_or_default();
-        let merged_tasks = merge_tasks(existing_tasks, detection.tasks.clone());
+        let module_ids: HashSet<_> = if existing_tasks.is_empty() {
+            Vec::new()
+        } else {
+            self.list_modules(&id)?
+        }
+        .into_iter()
+        .filter(|m| m.project_id.is_none())
+        .flat_map(|m| m.task_ids)
+        .collect();
+        let module_tasks: Vec<_> = existing_tasks
+            .iter()
+            .filter(|t| t.inferred && module_ids.contains(&t.id))
+            .cloned()
+            .collect();
+        let mut merged_tasks = merge_tasks(existing_tasks, detection.tasks.clone());
+        merged_tasks.extend(module_tasks);
         self.conn.execute(
             r#"
             INSERT INTO projects (
@@ -2811,7 +2850,7 @@ impl Core {
                 detected_name = excluded.detected_name,
                 vcs_kind = excluded.vcs_kind,
                 availability = 'ready',
-                origin = excluded.origin,
+                origin = CASE WHEN projects.origin = 'manual' THEN projects.origin ELSE excluded.origin END,
                 scan_root_id = excluded.scan_root_id,
                 languages_json = excluded.languages_json,
                 frameworks_json = excluded.frameworks_json,
@@ -2983,7 +3022,14 @@ impl Core {
                 tags.entry(project_id).or_default().push(tag);
             }
         }
+        let mut stmt = self
+            .conn
+            .prepare("SELECT project_id FROM project_directory_groups")?;
+        let groups = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<HashSet<_>>>()?;
         for project in projects {
+            project.directory_group = groups.contains(&project.id);
             project.tags = tags.remove(&project.id).unwrap_or_default();
         }
         Ok(())
@@ -3389,6 +3435,7 @@ impl Core {
             .transpose()?;
         if let Some(project) = project.as_mut() {
             project.tags = self.tags_for(&project.id)?;
+            project.directory_group = self.is_directory_group(&project.id)?;
         }
         Ok(project)
     }
@@ -3489,6 +3536,7 @@ fn scan_root_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScanRoot> {
 
 fn row_to_summary(row: &rusqlite::Row<'_>) -> Result<ProjectSummary> {
     Ok(ProjectSummary {
+        directory_group: false,
         id: row.get(0)?,
         canonical_path: row.get(1)?,
         display_name: row.get(2)?,
@@ -3514,6 +3562,7 @@ fn row_to_summary(row: &rusqlite::Row<'_>) -> Result<ProjectSummary> {
 
 fn row_to_detail(row: &rusqlite::Row<'_>) -> Result<ProjectDetail> {
     let summary = ProjectSummary {
+        directory_group: false,
         id: row.get(0)?,
         canonical_path: row.get(1)?,
         display_name: row.get(2)?,
@@ -3537,6 +3586,7 @@ fn row_to_detail(row: &rusqlite::Row<'_>) -> Result<ProjectDetail> {
     };
     let facts: Vec<crate::models::DetectedFact> = from_json(row.get(15)?)?;
     Ok(ProjectDetail {
+        modules: Vec::new(),
         project: summary,
         facts: facts.clone(),
         readme_path: row.get(19)?,
@@ -3776,28 +3826,33 @@ fn merge_tasks(
     existing: Vec<TaskDefinition>,
     detected: Vec<TaskDefinition>,
 ) -> Vec<TaskDefinition> {
-    let mut custom: Vec<_> = existing.into_iter().filter(|task| !task.inferred).collect();
-    let mut seen = custom
-        .iter()
-        .map(|task| {
-            (
-                task.kind.clone(),
-                task.executable.clone(),
-                task.argv.clone(),
-            )
-        })
-        .collect::<std::collections::BTreeSet<_>>();
-    for task in detected {
-        let key = (
+    let key = |task: &TaskDefinition| {
+        (
             task.kind.clone(),
             task.executable.clone(),
             task.argv.clone(),
-        );
-        if seen.insert(key) {
-            custom.push(task);
+            task.cwd.clone(),
+        )
+    };
+    let mut merged: Vec<_> = existing
+        .iter()
+        .filter(|task| !task.inferred)
+        .cloned()
+        .collect();
+    let mut seen = merged
+        .iter()
+        .map(&key)
+        .collect::<std::collections::BTreeSet<_>>();
+    for mut task in detected {
+        let signature = key(&task);
+        if seen.insert(signature.clone()) {
+            if let Some(old) = existing.iter().find(|old| key(old) == signature) {
+                task.id = old.id.clone();
+            }
+            merged.push(task);
         }
     }
-    custom
+    merged
 }
 
 fn unicode_match_query(query: &str) -> Option<String> {

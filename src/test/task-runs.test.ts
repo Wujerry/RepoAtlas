@@ -57,3 +57,15 @@ describe("task run event store", () => {
     vi.useRealTimers();
   });
 });
+
+it("advances the cumulative offset when a capped log has identical content", async () => {
+  vi.useFakeTimers();
+  await startTaskRunListeners();
+  handlers.log?.({ runId: "capped", stream: "pty", text: "x".repeat(200000) });
+  await vi.advanceTimersByTimeAsync(50);
+  handlers.log?.({ runId: "capped", stream: "pty", text: "xxx" });
+  await vi.advanceTimersByTimeAsync(50);
+  expect(getTaskRunSnapshot().logs.capped).toHaveLength(200000);
+  expect(getTaskRunSnapshot().logOffsets.capped).toBe(200003);
+  vi.useRealTimers();
+});

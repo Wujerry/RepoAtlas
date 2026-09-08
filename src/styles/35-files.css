@@ -27,7 +27,7 @@
 .files-tree-row { display: grid; grid-template-columns: 16px 18px minmax(0, 1fr) auto; gap: 5px; align-items: center; min-width: 0; width: 100%; height: 27px; padding-block: 0; padding-right: 7px; overflow: hidden; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text-soft); line-height: 1; text-align: left; }
 .files-tree-row:hover { background: var(--bg-hover); color: var(--text); }
 .files-tree-row.is-selected { border-color: var(--line); background: var(--bg-hover); color: var(--text); }
-.files-tree-row.is-focused { border-color: var(--line-strong); box-shadow: inset 2px 0 var(--accent); }
+.files-tree-row.is-focused { border-color: var(--line-strong); background: var(--bg-elevated); }
 .files-tree-row.is-generated { color: var(--muted); }
 .files-tree-caret-slot, .files-tree-icon { display: grid; align-self: center; justify-self: center; width: 18px; height: 18px; overflow: visible; place-items: center; color: var(--muted); font-size: 0; line-height: 0; }
 .files-tree-caret-slot { width: 16px; }

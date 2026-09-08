@@ -11,6 +11,7 @@ type TaskRunState = {
   runs: TaskRun[];
   recent: TaskRun[];
   logs: Record<string, string>;
+  logOffsets: Record<string, number>;
   selectedId?: string;
   layout: "tiles" | "focus";
   projectNames: Record<string, string>;
@@ -26,6 +27,7 @@ let state: TaskRunState = {
   runs: [],
   recent: [],
   logs: {},
+  logOffsets: {},
   layout: "tiles",
   projectNames: {},
 };
@@ -49,13 +51,16 @@ function flushPendingLogs() {
   logFlushTimer = undefined;
   if (pendingLogChunks.size === 0) return;
   const logs = { ...state.logs };
+  const logOffsets = { ...state.logOffsets };
   const changed: string[] = [];
   pendingLogChunks.forEach((chunks, runId) => {
-    logs[runId] = ((logs[runId] ?? "") + chunks.join("")).slice(-200000);
+    const appended = chunks.join("");
+    logOffsets[runId] = (logOffsets[runId] ?? logs[runId]?.length ?? 0) + appended.length;
+    logs[runId] = ((logs[runId] ?? "") + appended).slice(-200000);
     changed.push(runId);
   });
   pendingLogChunks.clear();
-  state = { ...state, logs };
+  state = { ...state, logs, logOffsets };
   emit();
   changed.forEach(notifyLog);
 }
@@ -87,6 +92,7 @@ function upsertRun(run: TaskRun) {
   state = {
     ...state,
     logs: Object.fromEntries(Object.entries(state.logs).filter(([id]) => retained.has(id))),
+    logOffsets: Object.fromEntries(Object.entries(state.logOffsets).filter(([id]) => retained.has(id))),
   };
 }
 
@@ -154,6 +160,7 @@ export async function refreshTaskRuns(options: { hydrateLogs?: boolean; refreshP
     runs,
     projectNames: names,
     logs: { ...state.logs, ...Object.fromEntries(tails) },
+    logOffsets: { ...state.logOffsets, ...Object.fromEntries(tails.map(([id, log]) => [id, log.length])) },
     selectedId: state.selectedId && runs.some((run) => run.id === state.selectedId) ? state.selectedId : runs[0]?.id ?? state.selectedId,
   };
   emitMetadata();
@@ -174,6 +181,7 @@ export async function openTaskRun(runId: string) {
     ...state,
     recent: [run, ...state.recent.filter((item) => item.id !== run.id)].slice(0, MAX_RECENT_RUNS),
     logs: { ...state.logs, [run.id]: output },
+    logOffsets: { ...state.logOffsets, [run.id]: output.length },
     selectedId: run.id,
     layout: "focus",
   };
@@ -193,7 +201,7 @@ export async function startTaskRunListeners() {
       upsertRun(run);
       try {
         const output = await api.readTaskLog(run.id);
-        state = { ...state, logs: { ...state.logs, [run.id]: output } };
+        state = { ...state, logs: { ...state.logs, [run.id]: output }, logOffsets: { ...state.logOffsets, [run.id]: output.length } };
       } catch {
         /* keep streamed log */
       }

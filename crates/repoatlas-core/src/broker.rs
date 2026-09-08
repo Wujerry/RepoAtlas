@@ -1249,7 +1249,8 @@ fn pty_command(executable: &str, argv: &[String]) -> Result<CommandBuilder> {
     // portable-pty only quotes values containing whitespace. The token is
     // whitespace-free, so it reaches the payload line verbatim, where /S
     // cannot strip a first quote that does not exist.
-    command.arg(&token);
+    command.env("REPOATLAS_SCRIPT_PATH", token);
+    command.arg("%REPOATLAS_SCRIPT_PATH%");
     for argument in argv {
         validate_cmd_value(argument)?;
         command.arg(argument);
@@ -1257,49 +1258,21 @@ fn pty_command(executable: &str, argv: &[String]) -> Result<CommandBuilder> {
     Ok(command)
 }
 
-/// Pick the payload token that addresses a Windows script.
-///
-/// `cmd.exe /S /C` strips the first and last quote of the payload, so a
-/// quoted script path breaks (and can be turned into a second command)
-/// whenever quoted arguments follow. Scripts are therefore addressed by a
-/// token that stays unquoted: the full path when it is payload-safe, or the
-/// bare file name which `cmd.exe` resolves against the task working
-/// directory and PATH.
-#[cfg(windows)]
+/// Preserve the resolved script path. Expansion of the private environment
+/// token happens after /S quote stripping, so quotes around the executable
+/// survive without portable-pty applying C argv escaping to them.
+#[cfg(any(windows, test))]
 fn cmd_script_token(executable: &str) -> Result<String> {
-    let path = Path::new(executable);
-    let file_name = path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .map(str::to_string);
-    if is_cmd_payload_token(executable) {
-        return Ok(executable.to_string());
+    if executable.is_empty()
+        || executable
+            .chars()
+            .any(|c| c.is_control() || matches!(c, '"' | '%'))
+    {
+        return Err(Error::msg(
+            "the script path contains unsupported quotes, percent signs, or control characters",
+        ));
     }
-    if let Some(name) = file_name.as_deref() {
-        if is_cmd_payload_token(name) {
-            return Ok(name.to_string());
-        }
-    }
-    Err(Error::msg(
-        "the script path cannot be expressed safely in a cmd.exe command line; rename the script or move the project to a path without spaces or cmd.exe metacharacters",
-    ))
-}
-
-/// True when the value can be placed on the `/C` payload line without
-/// quoting: no whitespace (which would trigger portable-pty quoting), no
-/// quotes, no percent expansion, no control characters, and none of the
-/// characters cmd.exe treats as separators or grouping even outside quotes.
-#[cfg(windows)]
-fn is_cmd_payload_token(value: &str) -> bool {
-    !value.is_empty()
-        && value.chars().all(|character| {
-            !character.is_whitespace()
-                && !character.is_control()
-                && !matches!(
-                    character,
-                    '"' | '%' | '&' | '|' | '<' | '>' | '^' | '(' | ')' | ',' | ';' | '='
-                )
-        })
+    Ok(format!("\"{executable}\""))
 }
 
 #[cfg(not(windows))]
@@ -1479,22 +1452,15 @@ mod tests {
     }
 
     #[test]
-    fn windows_script_tokens_prefer_full_paths_and_fall_back_to_basenames() {
-        assert_eq!(
-            cmd_script_token(r"C:\tools\npm.cmd").unwrap(),
-            r"C:\tools\npm.cmd"
-        );
-        // Whitespace or a parenthesis in the command token breaks or splits
-        // the /C payload, so cmd.exe gets the bare file name, which it
-        // resolves against the task working directory and PATH.
-        assert_eq!(cmd_script_token(r"C:\My Tools\npm.cmd").unwrap(), "npm.cmd");
-        assert_eq!(
-            cmd_script_token(r"C:\tools(x86)\npm.cmd").unwrap(),
-            "npm.cmd"
-        );
-        // Neither form is payload-safe: fail loudly instead of launching
-        // something unintended.
-        assert!(cmd_script_token(r"C:\My Tools\my npm.cmd").is_err());
+    fn windows_script_tokens_preserve_full_paths() {
+        for path in [
+            r"C:\tools\npm.cmd",
+            r"C:\My Tools\npm.cmd",
+            r"C:\tools(x86)\my npm.cmd",
+        ] {
+            assert_eq!(cmd_script_token(path).unwrap(), format!("\"{path}\""));
+        }
+        assert!(cmd_script_token(r"C:\%TOOLS%\npm.cmd").is_err());
     }
 
     #[test]
@@ -1507,11 +1473,11 @@ mod tests {
 
         assert_eq!(
             command,
-            r#"C:\tools\build.cmd "--label=nightly | smoke" "(preview) draft""#
+            r#""C:\tools\build.cmd" "--label=nightly | smoke" "(preview) draft""#
         );
         assert_eq!(
             encode_cmd_command_line(r"C:\tools\build.cmd", &["".into()]).unwrap(),
-            r#"C:\tools\build.cmd """#
+            r#""C:\tools\build.cmd" """#
         );
     }
 

@@ -310,9 +310,10 @@ jobs:
         run: |
           node scripts/build-updater-manifest.mjs \
             --version "${RELEASE_TAG#v}" \
+            --label UNSIGNED-BETA \
             --artifacts release-assets \
             --output latest.json \
-            --base-url "https://github.com/wujer/RepoAtlas/releases/download/$RELEASE_TAG"
+            --base-url "https://github.com/Wujerry/RepoAtlas/releases/download/$RELEASE_TAG"
 
       - name: Generate checksums
         env:
