@@ -6,8 +6,8 @@ describe("task console layout", () => {
   it("reserves the complete output height on the opening frame", () => {
     const styles = readFileSync(resolve(process.cwd(), "src/styles/40-tasks.css"), "utf8");
 
-    expect(styles).toMatch(/\.task-console\.is-collapsed\s*\{[^}]*height:\s*42px;/);
-    expect(styles).toMatch(/\.task-console\.is-open\s*\{[^}]*height:\s*clamp\(220px,\s*calc\(32vh \+ 42px\),\s*322px\);/);
+    expect(styles).toMatch(/\.task-console\.is-collapsed\s*\{[^}]*height:\s*40px;/);
+    expect(styles).toMatch(/\.task-console\.is-open\s*\{[^}]*height:\s*clamp\(230px,\s*calc\(34vh \+ 40px\),\s*360px\);/);
     expect(styles).toMatch(/\.task-console \.task-xterm\s*\{[^}]*height:\s*100%;/);
     expect(styles).not.toMatch(/\.task-console[^}]*transition[^}]*height/);
   });
