@@ -34,7 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Review dependency changes
-        uses: actions/dependency-review-action@v4
+        uses: actions/dependency-review-action@v5
 
   codeql:
     name: CodeQL (${{ matrix.language }})
@@ -49,10 +49,10 @@ jobs:
         language: [javascript-typescript, rust]
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
 
@@ -75,25 +75,25 @@ jobs:
           toolchain: 1.97.1
 
       - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
+        uses: github/codeql-action/autobuild@v4
 
       - name: Analyze
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
 
   javascript-audit:
     name: pnpm audit
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 10.20.0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 24.11.0
           cache: pnpm
@@ -110,7 +110,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Audit Rust dependencies
         uses: actions-rust-lang/audit@v1
