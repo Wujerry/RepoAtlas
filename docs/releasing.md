@@ -64,9 +64,10 @@ Do not claim that a release is SignPath-signed until the project has been accept
 
 1. Update the changelog and the four version sources together.
 2. Run the local checks listed below.
-3. Create a local tag in the exact `vX.Y.Z` form only when the repository is ready to be published.
-4. Push the branch and tag only after an explicit maintainer decision to publish.
-5. GitHub Actions creates a draft Release, builds the three supported targets with `tauri-apps/tauri-action`, and attaches installer/updater artifacts and `.sig` files.
+3. Choose one release trigger only when the repository is ready to be published:
+   - Preferred: open **Actions → Release → Run workflow**, select `main`, and enter the exact release tag (for example `v0.1.0-beta.1`). The workflow validates the release contract and creates the lightweight tag at the selected `main` commit.
+   - Alternative: create and push the exact `vX.Y.Z` / prerelease tag locally; the existing tag-push trigger remains supported.
+4. GitHub Actions creates a draft Release, builds the three supported targets with `tauri-apps/tauri-action`, and attaches installer/updater artifacts and `.sig` files.
 6. A final job generates the platform map in `latest.json` and a `SHA256SUMS` file, verifies it with `sha256sum -c`, then uploads both to the same draft. After downloading `SHA256SUMS` and the listed assets into one directory, run `sha256sum -c SHA256SUMS` to verify them locally.
 7. Review the draft on every platform. Verify platform signatures, updater URLs, release notes, and the absence of private paths or credentials.
 8. Publish the draft only after platform signing, installation, upgrade, rollback, and smoke checks are complete.
@@ -96,9 +97,11 @@ cargo check -p repoatlas
 node scripts/check-version.mjs --tag v0.1.0
 ```
 
-The release workflow is tag-triggered and intentionally has no local/development
-shortcut. It must not be run against a branch name. Pages is a separate workflow
-and is also not deployed during local preparation.
+The release workflow supports both tag pushes and an explicit `workflow_dispatch`
+entry point. Manual releases must be launched from `main` and require an explicit
+release-tag input; the workflow creates that tag only after version, updater-key,
+and platform-signing gates pass. Pages is a separate workflow and is not deployed
+as part of release preparation.
 
 On Windows, inspect the generated MSI and NSIS bundles and their `.sig` files. On macOS, inspect both Intel and Apple Silicon bundles, signatures, and notarization results. Keep Rust incremental compilation enabled during local verification.
 
