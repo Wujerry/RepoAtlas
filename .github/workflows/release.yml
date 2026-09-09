@@ -436,7 +436,7 @@ jobs:
           }
 
           # Human-facing installers.
-          copy_one 'x86_64-pc-windows-msvc-*-setup-UNSIGNED-BETA.exe'
+          copy_one 'x86_64-pc-windows-msvc-*-setup*.exe'
           copy_one 'aarch64-apple-darwin-*.dmg'
           copy_one 'x86_64-apple-darwin-*.dmg'
 
