@@ -173,7 +173,14 @@ jobs:
           RELEASE_TAG: ${{ needs.validate.outputs.release-tag }}
           PRERELEASE: ${{ needs.validate.outputs.prerelease }}
         run: |
-          if release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" 2>/dev/null)"; then
+          release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" 2>/dev/null || true)"
+          if [ -z "$release_json" ]; then
+            # Draft releases carry the tag name but are not attached to the tag
+            # until they are published, so the lookup above cannot find them.
+            release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --paginate \
+              --jq "[.[] | select(.draft == true and .tag_name == \"$RELEASE_TAG\")] | .[0] // empty" 2>/dev/null || true)"
+          fi
+          if [ -n "$release_json" ]; then
             release_id="$(jq -r '.id' <<<"$release_json")"
             release_draft="$(jq -r '.draft' <<<"$release_json")"
             release_prerelease="$(jq -r '.prerelease' <<<"$release_json")"
@@ -190,7 +197,13 @@ jobs:
             fi
             gh release create "$RELEASE_TAG" "${args[@]}" \
               --notes "Draft release for $RELEASE_TAG. Review platform signatures, checksums, updater metadata, installation, and upgrade behavior before publishing."
-            release_id="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq '.id')"
+            release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --paginate \
+              --jq "[.[] | select(.draft == true and .tag_name == \"$RELEASE_TAG\")] | .[0] // empty")
+            if [ -z "$release_json" ]; then
+              echo "Could not resolve the created draft release for $RELEASE_TAG." >&2
+              exit 1
+            fi
+            release_id="$(jq -r '.id' <<<"$release_json")"
             release_draft=true
             echo "Created draft release $RELEASE_TAG."
           fi
