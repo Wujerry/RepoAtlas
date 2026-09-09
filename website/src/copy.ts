@@ -57,202 +57,202 @@ const marqueeCommands = [
 ];
 
 export const copy: Record<Locale, Copy> = {
-  en: {
-    lang: "en",
-    dir: "ltr",
-    title: "RepoAtlas: let your coding Agent build a local project library",
-    description:
-      "Let your coding Agent inventory approved directories, then run and review repeatable development tasks in one local project library.",
-    skip: "Skip to content",
-    homeAria: "RepoAtlas home",
-    navAria: "Primary navigation",
-    navTasks: "Tasks",
-    navLibrary: "Library",
-    navSafety: "Local rules",
-    navLang: "中文",
-    navLangHref: "./zh/",
-    navLangLang: "zh-CN",
-    navSource: "GitHub",
-    heroHeadline: [
-      { text: "Let your Agent build the library." },
-      { text: "Run every task locally.", accent: true },
+  "en": {
+    "lang": "en",
+    "dir": "ltr",
+    "title": "RepoAtlas: local projects, Git, and development tasks",
+    "description": "Find local projects, inspect files and Git changes, run development tasks, and review logs in one desktop app.",
+    "skip": "Skip to content",
+    "homeAria": "RepoAtlas home",
+    "navAria": "Primary navigation",
+    "navTasks": "Tasks",
+    "navLibrary": "Projects",
+    "navSafety": "Local data",
+    "navLang": "中文",
+    "navLangHref": "./zh/",
+    "navLangLang": "zh-CN",
+    "navSource": "GitHub",
+    "heroHeadline": [
+      {
+        "text": "Your projects in one place."
+      },
+      {
+        "text": "Run, build, and check.",
+        "accent": true
+      }
     ],
-    heroSub:
-      "Copy one onboarding instruction. Your coding Agent connects RepoAtlas MCP, asks what it may scan, then adds evidence-backed Project descriptions, tasks, and icons. You take over from a working local library.",
-    ctaPrimary: "Download the pre-release",
-    ctaSecondary: "See tasks run",
-    heroImageAlt:
-      "The RepoAtlas library view with project collections, branch and dirty-file status, and the attention center",
-    marqueeAria: "Sample commands you can save and run as tasks",
-    marqueeCommands,
-    tasksTitle: "Tasks run in the open, and every run leaves a record.",
-    tasksBody:
-      "A task is a program plus its arguments, not a hand-built shell string. It runs in a real PTY, output streams as it happens, and the exit code and full log stay with the run. Development tasks can declare expected ports so RepoAtlas can show process-tree CPU, memory, listening ports, and safe localhost previews.",
-    tasksFacts: [
+    "heroSub": "Find projects by name, path, or technology. Open your editor, inspect Git changes, preview files, and run saved development tasks from the same window.",
+    "ctaPrimary": "View releases",
+    "ctaSecondary": "Explore tasks",
+    "heroImageAlt": "RepoAtlas project library showing folders, project details, Git status, and launch buttons",
+    "marqueeAria": "Examples of commands saved as tasks",
+    "marqueeCommands": marqueeCommands,
+    "tasksTitle": "Save a task. Run it again when you need it.",
+    "tasksBody": "Keep development, test, build, and packaging tasks with each project. Run several tasks side by side, type into their terminals, and check the output as it arrives.",
+    "tasksFacts": [
       {
-        key: "program + args",
-        title: "Reviewed before it runs",
-        body: "Program, argument vector, working directory: all on the panel beforehand, saveable as a task you reuse.",
+        "key": "configuration",
+        "title": "Saved commands",
+        "body": "Save the program, arguments, and working directory. Each task keeps its own configuration."
       },
       {
-        key: "live PTY",
-        title: "Output that streams, not batches",
-        body: "Long builds and big test suites scroll line by line, so you see exactly where things stick.",
+        "key": "terminal",
+        "title": "Live terminal output",
+        "body": "Read build output, answer interactive prompts, and stop a running task from the workbench."
       },
       {
-        key: "runtime + ports",
-        title: "See what the process tree is doing",
-        body: "CPU, memory, child processes, listening ports, and safe localhost previews sit beside the live terminal.",
+        "key": "processes",
+        "title": "CPU, memory, and ports",
+        "body": "Check resource usage, child processes, and listening ports. Open a running local development page from its address."
       },
       {
-        key: "exit + log",
-        title: "Exit code and log, kept with the run",
-        body: "Come back days later to work out why that build failed. The record is still there.",
-      },
+        "key": "history",
+        "title": "Logs and exit codes",
+        "body": "Review previous runs with their status, duration, exit code, and output."
+      }
     ],
-    tasksImageAlt:
-      "The RepoAtlas task workbench with saved tasks, a runtime monitor, and live terminal output",
-    libraryTitle: "The setup work goes to your Agent. The durable records stay here.",
-    libraryBody:
-      "Start with one open checkout or an approved Scan Root. RepoAtlas turns the result into a searchable library for daily project work, not another chat history.",
-    libraryCells: [
+    "tasksImageAlt": "RepoAtlas task workbench showing saved tasks, process metrics, and live terminals",
+    "libraryTitle": "Find a project and get back to work.",
+    "libraryBody": "Add a Scan Root to discover projects in a directory, or register one project directly. Search the library and group related projects into collections.",
+    "libraryCells": [
       {
-        title: "Agent-assisted initialization",
-        body: "Your Agent asks which directories it may scan, registers Projects, then writes descriptions, reviewed tasks, and recognizable icons from real checkout evidence.",
-        mono: "Ask: scan D:\\work\\legacy-app",
+        "title": "Project discovery",
+        "body": "Identify languages, frameworks, package managers, and modules. Refresh the scan when your directories change.",
+        "mono": "Name · Path · Language · Framework"
       },
       {
-        title: "Collections and Project Briefs",
-        body: "Group related Projects without changing their identity, then read one structured view of facts, environment, tasks, runs, and recent activity.",
+        "title": "Git status and changes",
+        "body": "See the current branch and changed files. Review diffs, stage files, commit, and pull or push using your existing Git credentials."
       },
       {
-        title: "Read-only Files",
-        body: "Browse and search on demand, preview Markdown and code, and stay inside the Project boundary. It is an inspector, not an editor.",
+        "title": "File browsing and preview",
+        "body": "Browse folders, search paths, and read Markdown, source code, and images without opening an editor."
       },
       {
-        title: "Attention center",
-        body: "Pending Approvals, failed runs, unavailable Projects, and environment mismatches arrive in one actionable list.",
+        "title": "Collections and recent projects",
+        "body": "Group related projects, mark favorites, and return to recently opened work. Failed tasks and unavailable projects appear in the attention center."
       },
       {
-        title: "External Agent + MCP",
-        body: "Open an installed coding Agent at the Project path. MCP supplies structured context; protected execution still waits for desktop approval.",
-      },
+        "title": "Editors, terminals, and coding agents",
+        "body": "Open installed tools at the project path. Connect an external agent through MCP to manage project records and request task runs."
+      }
     ],
-    safetyTitle: "It removes a record, never your folders.",
-    safetyBody: "These are not slogans. They are code in the core.",
-    safetyRules: [
-      "All data lives in local SQLite. No account, no sync server.",
-      "Removing a Project or Collection changes RepoAtlas records, never the checkout on disk.",
-      "Git operations are typed, pulls are fast-forward only, and SVN stays read-only.",
-      "MCP cannot write Git, evaluate shell strings, run arbitrary commands, or delete files.",
-      "RepoAtlas stores no model credentials and sends no project files to model providers. The external Agent owns those decisions.",
+    "safetyTitle": "Your project library stays on your computer.",
+    "safetyBody": "RepoAtlas stores project records, settings, and task history locally. You choose which directories it scans.",
+    "safetyRules": [
+      "Use the library offline without creating an account.",
+      "Removing a project or collection removes its records; project files stay on disk.",
+      "Git pulls use fast-forward only. SVN support is read-only.",
+      "Task requests from MCP wait for desktop approval.",
+      "External coding agents manage their own accounts, models, and conversations."
     ],
-    closeTitle: "Give the first inventory pass to your Agent.",
-    closeBody:
-      "Open RepoAtlas, copy the onboarding instruction, and let your Agent register one Project or scan an approved directory. Review the library it builds, then run the first saved task.",
-    closePrimary: "View source",
-    closeSecondary: "Contribute",
-    footerBlurb: "Windows x64 beta · macOS not yet tested · contributors wanted",
-    footerSecurity: "Security policy",
+    "closeTitle": "Start with your project directory.",
+    "closeBody": "Add a Scan Root, review the discovered projects, and save the commands you use most often. The source and setup instructions are on GitHub.",
+    "closePrimary": "View source",
+    "closeSecondary": "Contribute",
+    "footerBlurb": "Windows x64 beta · macOS testing pending · MIT license",
+    "footerSecurity": "Security policy"
   },
-  zh: {
-    lang: "zh-CN",
-    dir: "ltr",
-    title: "RepoAtlas：让编码 Agent 帮你建立本地项目库",
-    description:
-      "让编码 Agent 盘点你授权的目录，再回到本地项目库执行和检查可重复的开发任务。",
-    skip: "跳到主要内容",
-    homeAria: "RepoAtlas 中文首页",
-    navAria: "主导航",
-    navTasks: "任务执行",
-    navLibrary: "项目库",
-    navSafety: "本地规则",
-    navLang: "English",
-    navLangHref: "../",
-    navLangLang: "en",
-    navSource: "GitHub",
-    heroHeadline: [
-      { text: "让 Agent 建好" },
-      { text: "本地项目库。" },
-      { text: "开发任务，" },
-      { text: "留在本地跑。", accent: true },
+  "zh": {
+    "lang": "zh-CN",
+    "dir": "ltr",
+    "title": "RepoAtlas：本地项目管理、Git 与开发任务",
+    "description": "集中查找本地项目，查看文件和 Git 改动，运行开发任务，保留日志与运行记录。",
+    "skip": "跳到主要内容",
+    "homeAria": "RepoAtlas 中文首页",
+    "navAria": "主导航",
+    "navTasks": "任务执行",
+    "navLibrary": "项目管理",
+    "navSafety": "本地数据",
+    "navLang": "English",
+    "navLangHref": "../",
+    "navLangLang": "en",
+    "navSource": "GitHub",
+    "heroHeadline": [
+      {
+        "text": "本地项目，"
+      },
+      {
+        "text": "集中管理。"
+      },
+      {
+        "text": "开发到打包，"
+      },
+      {
+        "text": "点击运行。",
+        "accent": true
+      }
     ],
-    heroSub:
-      "复制一段初始化指令，编码 Agent 会连接 RepoAtlas MCP，询问允许扫描的目录，再根据真实依据补齐 Project 描述、任务和图标。打开桌面端时，项目库已经可以工作。",
-    ctaPrimary: "下载预发布版",
-    ctaSecondary: "看任务怎么跑",
-    heroImageAlt:
-      "RepoAtlas 项目库界面截图：包含项目集合、分支和未提交改动状态，以及待处理中心",
-    marqueeAria: "可以保存成任务反复运行的命令示例",
-    marqueeCommands,
-    tasksTitle: "任务在明处跑，结果留下来。",
-    tasksBody:
-      "任务是程序加参数，不是随手拼的 shell 字符串。跑在真实的 PTY 里，输出实时滚动；开发任务还能声明预期端口，RepoAtlas 会把进程树 CPU、内存、监听端口和安全的 localhost 预览放在终端旁边。",
-    tasksFacts: [
+    "heroSub": "按名称、路径和技术栈查找项目，打开编辑器和终端，查看 Git 改动与项目文件。常用开发命令保存为任务，下次打开即可运行。",
+    "ctaPrimary": "查看发布版本",
+    "ctaSecondary": "查看任务功能",
+    "heroImageAlt": "RepoAtlas 项目库：文件夹目录、项目详情、Git 状态与工具启动按钮",
+    "marqueeAria": "可保存为任务的常用命令示例",
+    "marqueeCommands": marqueeCommands,
+    "tasksTitle": "常用命令存成任务，开发、测试、打包直接运行。",
+    "tasksBody": "每个项目保存自己的开发任务，工作台可并排运行多个终端。查看实时输出、输入交互指令，也可以随时停止任务。",
+    "tasksFacts": [
       {
-        key: "program + args",
-        title: "先看清楚，再开跑",
-        body: "程序、参数向量、工作目录，运行前都摆在面板上，存成任务可以反复用。",
+        "key": "任务配置",
+        "title": "保存命令和运行目录",
+        "body": "为每个任务设置程序、参数和工作目录，切换项目后仍能使用各自的配置。"
       },
       {
-        key: "live PTY",
-        title: "输出实时滚动",
-        body: "长构建、大测试套件也是一行行出来，卡在哪一眼就看到。",
+        "key": "实时终端",
+        "title": "查看输出，输入指令",
+        "body": "构建和测试输出实时显示，支持交互输入和停止运行。"
       },
       {
-        key: "runtime + ports",
-        title: "进程树在做什么，直接看",
-        body: "CPU、内存、子进程、监听端口和安全的 localhost 预览都跟实时终端放在一起。",
+        "key": "运行监控",
+        "title": "查看资源占用与端口",
+        "body": "显示 CPU、内存、子进程和监听端口，可从本地开发地址打开预览页面。"
       },
       {
-        key: "exit + log",
-        title: "退出码和日志随运行存档",
-        body: "过两天回头查那次构建为什么挂，记录还在原地。",
-      },
+        "key": "运行记录",
+        "title": "保留日志和退出码",
+        "body": "按运行记录查看成功或失败状态、耗时、退出码和日志，方便回查。"
+      }
     ],
-    tasksImageAlt:
-      "RepoAtlas 任务工作台截图：包含保存的任务、运行监控和实时终端输出",
-    libraryTitle: "盘点工作交给 Agent，长期记录留在 RepoAtlas。",
-    libraryBody:
-      "可以从当前 checkout 开始，也可以授权一个 Scan Root。RepoAtlas 把结果变成日常可用的本地项目库，而不是又一段散落的对话记录。",
-    libraryCells: [
+    "tasksImageAlt": "RepoAtlas 任务工作台：已保存任务、进程监控与实时终端",
+    "libraryTitle": "找到项目，接着做。",
+    "libraryBody": "添加扫描根目录，发现其中的项目；也可以单独添加一个项目。项目库支持搜索、筛选、收藏和集合分组。",
+    "libraryCells": [
       {
-        title: "Agent 辅助初始化",
-        body: "Agent 先询问允许扫描哪些目录，再登记 Project，并依据真实 checkout 补上描述、可检查的任务和容易识别的图标。",
-        mono: "告诉 Agent：扫描 D:\\work\\legacy-app",
+        "title": "项目发现与技术栈识别",
+        "body": "识别语言、框架、包管理器和项目模块。目录有变化时，手动重新扫描即可更新。",
+        "mono": "项目名称 · 路径 · 语言 · 框架"
       },
       {
-        title: "项目集合和 Project Brief",
-        body: "相关 Project 可以放进一个集合，但身份和路径不变；结构化简介集中展示事实、环境、任务、运行和最近活动。",
+        "title": "Git 状态与改动",
+        "body": "查看当前分支、改动文件和差异，按文件暂存并提交，使用已有 Git 凭据拉取和推送。"
       },
       {
-        title: "只读 Files",
-        body: "目录和路径按需加载，Markdown 与代码可以直接预览，全程不越过 Project 边界，也不提供编辑。",
+        "title": "目录浏览与文件预览",
+        "body": "展开目录、搜索路径，直接阅读 Markdown、源代码和图片，快速查看项目内容。"
       },
       {
-        title: "待处理中心",
-        body: "待审批任务、运行失败、Project 不可用和环境不匹配集中在一张可操作的清单里。",
+        "title": "项目集合与最近访问",
+        "body": "把相关项目放进集合，收藏常用项目，从最近访问继续工作。失败任务和不可用项目集中显示在待处理中心。"
       },
       {
-        title: "外部 Agent + MCP",
-        body: "在 Project 路径打开已安装的编码 Agent。MCP 提供结构化上下文，受保护的执行仍要等桌面审批。",
-      },
+        "title": "编辑器、终端与编码 Agent",
+        "body": "在项目目录打开已安装的工具。外部 Agent 可通过 MCP 管理项目记录、申请运行任务。"
+      }
     ],
-    safetyTitle: "删掉的是记录，不是你的文件夹。",
-    safetyBody: "这些不是宣传语，是核心逻辑里的代码。",
-    safetyRules: [
-      "数据全在本地 SQLite，没有账号，没有同步服务器。",
-      "删掉 Project 或 Collection 只改 RepoAtlas 记录，不动磁盘上的 checkout。",
-      "Git 只做类型化操作，拉取仅限 fast-forward，SVN 维持只读。",
-      "MCP 不能执行 Git 写入、shell 求值、任意命令和文件删除。",
-      "RepoAtlas 不保存模型凭据，也不把项目文件发给模型 Provider；这些决定由外部 Agent 自己负责。",
+    "safetyTitle": "项目资料保存在本机。",
+    "safetyBody": "项目记录、设置和任务历史保存在本地，扫描范围由你选择。",
+    "safetyRules": [
+      "无需注册账号，离线也能打开项目库。",
+      "移除项目或集合只删除管理记录，磁盘上的项目文件保留。",
+      "Git 拉取仅允许快进合并，SVN 提供只读查看。",
+      "MCP 发起的任务运行请求需要在桌面端审批。",
+      "编码 Agent 使用自己的账号、模型和对话。"
     ],
-    closeTitle: "第一次项目盘点，直接交给 Agent。",
-    closeBody:
-      "打开 RepoAtlas，复制初始化指令，让 Agent 登记当前 Project 或扫描你授权的目录。检查它整理出的项目库，再运行第一个保存任务。",
-    closePrimary: "查看源码",
-    closeSecondary: "参与贡献",
-    footerBlurb: "Windows x64 Beta · macOS 尚未真机测试 · 欢迎参与贡献",
-    footerSecurity: "安全策略",
-  },
+    "closeTitle": "从存放项目的目录开始。",
+    "closeBody": "添加扫描根目录，查看发现的项目，再保存常用开发命令。源码和安装说明都在 GitHub。",
+    "closePrimary": "查看源码",
+    "closeSecondary": "参与贡献",
+    "footerBlurb": "Windows x64 Beta · macOS 待实机验证 · MIT 开源",
+    "footerSecurity": "安全策略"
+  }
 };

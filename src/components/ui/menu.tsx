@@ -63,6 +63,7 @@ export function ItemContextMenu({
               <ContextMenu.Item
                 key={item.label}
                 onClick={item.onClick}
+                disabled={item.disabled}
                 className={cn(
                   "menu-item",
                   item.danger && "menu-item-danger",

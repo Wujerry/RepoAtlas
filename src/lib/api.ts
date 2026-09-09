@@ -103,7 +103,7 @@ export const api = {
   getDashboardSnapshot: () => invoke<DashboardSnapshot>("get_dashboard_snapshot"),
   acknowledgeAttentionItem: (itemId: string, sourceVersion: string) => invoke<void>("acknowledge_attention_item", { itemId, sourceVersion }),
   resolvePendingApproval: (approvalId: string, approved: boolean, allowPortConflicts = false) => invoke<PendingApproval>("resolve_pending_approval", { approvalId, approved, allowPortConflicts }),
-  startScan: (rootId?: string) => invoke<void>("start_scan", { rootId: rootId ?? null }),
+  startScan: (rootId?: string, folderPath?: string) => invoke<void>("start_scan", { rootId: rootId ?? null, folderPath: folderPath ?? null }),
   cancelScan: () => invoke<void>("cancel_scan"),
   gitStatus: (projectId: string) => invoke<GitStatus>("git_status", { projectId }),
   gitDiff: (projectId: string, path?: string, staged = false) =>

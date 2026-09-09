@@ -1731,6 +1731,45 @@ impl Core {
         Ok(self.get_scan_root(root_id)?.path)
     }
 
+    /// Resolve a folder refresh to existing authorizations, without adding a
+    /// Scan Root or walking siblings outside the selected folder.
+    pub fn folder_scan_targets(&self, folder: &Path) -> Result<Vec<(String, String)>> {
+        for ancestor in folder.ancestors() {
+            if crate::scan::is_link(&std::fs::symlink_metadata(ancestor)?) {
+                return Err(Error::msg("folder scan does not follow symbolic links"));
+            }
+        }
+        let folder = paths::canonicalize(folder)?;
+        if !folder.is_dir() {
+            return Err(Error::msg("folder scan requires a directory"));
+        }
+        let mut roots = self.list_scan_roots()?;
+        roots.sort_by_key(|root| std::cmp::Reverse(root.path.len()));
+        if let Some(root) = roots
+            .iter()
+            .find(|root| paths::is_within(&folder, Path::new(&root.path)))
+        {
+            return Ok(vec![(root.id.clone(), paths::path_to_string(&folder))]);
+        }
+        roots.retain(|root| paths::is_within(Path::new(&root.path), &folder));
+        roots.sort_by_key(|root| root.path.len());
+        let mut targets: Vec<(String, String)> = Vec::new();
+        for root in roots {
+            if !targets
+                .iter()
+                .any(|(_, parent)| paths::is_within(Path::new(&root.path), Path::new(parent)))
+            {
+                targets.push((root.id, root.path));
+            }
+        }
+        if targets.is_empty() {
+            return Err(Error::msg(
+                "folder is not covered by an authorized Scan Root",
+            ));
+        }
+        Ok(targets)
+    }
+
     /// Scan an authorized Scan Root while keeping the audit lifecycle short
     /// and durable. A `started` event is committed before walking the
     /// directory; the walk itself never holds a SQLite write transaction. A
@@ -1832,6 +1871,21 @@ impl Core {
         found_ids: &HashSet<String>,
         cancelled: bool,
     ) -> Result<u64> {
+        let root_path = self.scan_root_path(root_id)?;
+        self.finalize_folder_scan_ingest(root_id, Path::new(&root_path), found_ids, cancelled)
+    }
+
+    pub fn finalize_folder_scan_ingest(
+        &self,
+        root_id: &str,
+        folder: &Path,
+        found_ids: &HashSet<String>,
+        cancelled: bool,
+    ) -> Result<u64> {
+        let root_path = self.scan_root_path(root_id)?;
+        if !paths::is_within(folder, Path::new(&root_path)) {
+            return Err(Error::msg("folder is outside the authorized Scan Root"));
+        }
         if !cancelled {
             let existing: Vec<(String, String)> = {
                 let mut stmt = self
@@ -1843,28 +1897,37 @@ impl Core {
                 rows
             };
             for (id, path) in existing {
-                if !found_ids.contains(&id) && !PathBuf::from(&path).exists() {
+                if paths::is_within(Path::new(&path), folder)
+                    && !found_ids.contains(&id)
+                    && !PathBuf::from(&path).exists()
+                {
                     self.conn.execute(
                         "UPDATE projects SET availability = 'unavailable', updated_at = ?1 WHERE id = ?2",
                         params![now(), id],
                     )?;
                 }
             }
-            self.conn.execute(
-                "UPDATE scan_roots SET last_scanned_at = ?1 WHERE id = ?2",
-                params![now(), root_id],
-            )?;
+            if paths::is_within(Path::new(&root_path), folder) {
+                self.conn.execute(
+                    "UPDATE scan_roots SET last_scanned_at = ?1 WHERE id = ?2",
+                    params![now(), root_id],
+                )?;
+            }
             for id in found_ids {
                 self.update_missing_modules(id)?;
                 self.record_project_event(id, "scan", "Scan refreshed project", Some(root_id))?;
             }
         }
-        let unavailable: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM projects WHERE scan_root_id = ?1 AND availability = 'unavailable'",
-            params![root_id],
-            |row| row.get(0),
+        let mut statement = self.conn.prepare(
+            "SELECT canonical_path FROM projects WHERE scan_root_id = ?1 AND availability = 'unavailable'",
         )?;
-        Ok(unavailable as u64)
+        let unavailable = statement
+            .query_map(params![root_id], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(unavailable
+            .iter()
+            .filter(|path| paths::is_within(Path::new(path), folder))
+            .count() as u64)
     }
 
     pub fn scan_root(

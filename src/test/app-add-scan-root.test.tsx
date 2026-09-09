@@ -17,7 +17,9 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
 vi.mock("../components/TitleBar", () => ({
   TitleBar: ({ onSettings }: { onSettings: () => void }) => <button onClick={onSettings}>Open settings</button>,
 }));
-vi.mock("../components/ProjectList", () => ({ ProjectList: () => null }));
+vi.mock("../components/ProjectList", () => ({
+  ProjectList: ({ onScanFolder }: { onScanFolder: (path: string) => void }) => <button onClick={() => onScanFolder("C:/RepoAtlas Showcase/Demo/web")}>Rescan folder</button>,
+}));
 vi.mock("../components/SettingsPane", () => ({
   SettingsPane: ({ onAddRoot }: { onAddRoot: () => void }) => <button onClick={onAddRoot}>Add scan root</button>,
 }));
@@ -95,7 +97,15 @@ vi.mock("../lib/api", () => ({
 describe("adding a scan root", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(api.startScan).mockResolvedValue(undefined);
     vi.mocked(open).mockResolvedValue(scanRoot.path);
+  });
+
+  it("passes the selected folder without registering another Scan Root", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Rescan folder" }));
+    await waitFor(() => expect(api.startScan).toHaveBeenCalledWith(undefined, "C:/RepoAtlas Showcase/Demo/web"));
+    expect(api.addScanRoot).not.toHaveBeenCalled();
   });
 
   it("starts a scan for the new root immediately after adding it", async () => {
@@ -104,7 +114,7 @@ describe("adding a scan root", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Add scan root" }));
 
     await waitFor(() => expect(api.addScanRoot).toHaveBeenCalledWith(scanRoot.path));
-    await waitFor(() => expect(api.startScan).toHaveBeenCalledWith("root-1"));
+    await waitFor(() => expect(api.startScan).toHaveBeenCalledWith("root-1", undefined));
   });
 
   it("warns instead of starting a second scan while one is already running", async () => {

@@ -11,6 +11,60 @@ fn write(path: &std::path::Path, content: &str) {
     fs::write(path, content).unwrap();
 }
 
+#[test]
+fn folder_scan_targets_preserve_authorization_and_selected_scope() {
+    let dir = tempdir().unwrap();
+    let outside = tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("web/apps")).unwrap();
+    fs::create_dir_all(dir.path().join("tools")).unwrap();
+    let core = Core::open_in_memory().unwrap();
+    let web = core.add_scan_root(dir.path().join("web")).unwrap();
+    let tools = core.add_scan_root(dir.path().join("tools")).unwrap();
+    let targets = core
+        .folder_scan_targets(&dir.path().join("web/apps"))
+        .unwrap();
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].0, web.id);
+    assert!(std::path::Path::new(&targets[0].1).ends_with("web/apps"));
+    let parent_targets = core.folder_scan_targets(dir.path()).unwrap();
+    assert_eq!(parent_targets.len(), 2);
+    assert!(parent_targets.iter().any(|(id, _)| id == &tools.id));
+    assert!(core.folder_scan_targets(outside.path()).is_err());
+    assert_eq!(core.list_scan_roots().unwrap().len(), 2);
+}
+
+#[test]
+fn folder_scan_finalization_does_not_change_missing_siblings_or_root_timestamp() {
+    let dir = tempdir().unwrap();
+    let selected = dir.path().join("selected");
+    let sibling = dir.path().join("sibling");
+    write(&selected.join("gone/package.json"), r#"{"name":"gone"}"#);
+    write(&sibling.join("package.json"), r#"{"name":"sibling"}"#);
+    let core = Core::open_in_memory().unwrap();
+    let root = core.add_scan_root(dir.path()).unwrap();
+    let gone = core.register_project(selected.join("gone")).unwrap();
+    let other = core.register_project(&sibling).unwrap();
+    fs::remove_dir_all(selected.join("gone")).unwrap();
+    fs::remove_dir_all(&sibling).unwrap();
+    core.finalize_folder_scan_ingest(&root.id, &selected, &Default::default(), true)
+        .unwrap();
+    assert_eq!(
+        core.get_project(&gone.id).unwrap().project.availability,
+        "ready"
+    );
+    core.finalize_folder_scan_ingest(&root.id, &selected, &Default::default(), false)
+        .unwrap();
+    assert_eq!(
+        core.get_project(&gone.id).unwrap().project.availability,
+        "unavailable"
+    );
+    assert_eq!(
+        core.get_project(&other.id).unwrap().project.availability,
+        "ready"
+    );
+    assert_eq!(core.list_scan_roots().unwrap()[0].last_scanned_at, None);
+}
+
 #[cfg(windows)]
 fn system_tool(name: &str) -> String {
     std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into()))

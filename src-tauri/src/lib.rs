@@ -9,7 +9,7 @@ use repoatlas_core::{
 };
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
@@ -809,12 +809,19 @@ fn start_scan(
     app: AppHandle,
     state: State<Arc<AppState>>,
     root_id: Option<String>,
+    folder_path: Option<String>,
 ) -> Result<(), String> {
     state.cancel.store(false, Ordering::Relaxed);
     let cancel = state.cancel.clone();
     let roots = {
         let core = state.core.lock().map_err(|err| err.to_string())?;
-        if let Some(root_id) = root_id {
+        if let Some(folder_path) = folder_path {
+            if root_id.is_some() {
+                return Err("choose a Scan Root or a folder, not both".into());
+            }
+            core.folder_scan_targets(Path::new(&folder_path))
+                .map_err(err_to_string)?
+        } else if let Some(root_id) = root_id {
             vec![(
                 root_id.clone(),
                 core.scan_root_path(&root_id).map_err(err_to_string)?,
@@ -2108,7 +2115,7 @@ fn walk_scan_root(
         .core
         .lock()
         .map_err(|err| err.to_string())?
-        .finalize_scan_ingest(root_id, &found_ids, cancelled)
+        .finalize_folder_scan_ingest(root_id, Path::new(root_path), &found_ids, cancelled)
         .map_err(err_to_string)?;
     emit(ScanProgress {
         scan_id: scan_id.clone(),

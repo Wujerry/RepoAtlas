@@ -358,6 +358,23 @@ describe("ProjectList tree", () => {
     fireEvent.click(screen.getByRole("button", { name: t("removeFolder") }));
     await waitFor(() => expect(onRemoveFolder).toHaveBeenCalledWith("C:\\code", ["atlas", "portal"]));
   });
+  it("rescans the selected folder through its context menu", async () => {
+    const onScanFolder = vi.fn();
+    renderList({ onScanFolder, scanRoots: [{ id: "root", path: "C:\\code", createdAt: "", lastScannedAt: null }] });
+    fireEvent.contextMenu(screen.getByRole("button", { name: /code/ }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("rescanFolder") }));
+    expect(onScanFolder).toHaveBeenCalledExactlyOnceWith("C:\\code");
+  });
+
+  it.each([true, false])("disables folder rescanning when busy or unauthorized (busy=%s)", async (scanning) => {
+    const onScanFolder = vi.fn();
+    renderList({ onScanFolder, scanning, scanRoots: scanning ? [{ id: "root", path: "C:\\code", createdAt: "", lastScannedAt: null }] : [] });
+    fireEvent.contextMenu(screen.getByRole("button", { name: /code/ }));
+    const action = await screen.findByRole("menuitem", { name: t(scanning ? "scanning" : "rescanFolder") });
+    expect(action).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(action);
+    expect(onScanFolder).not.toHaveBeenCalled();
+  });
   it("exposes the sort menu and reports sort changes", async () => {
     const onSort = vi.fn();
     renderList({ onSort });

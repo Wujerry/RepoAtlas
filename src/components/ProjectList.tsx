@@ -75,6 +75,7 @@ interface ProjectListProps {
   onAddRoot: () => void;
   onRegister: () => void;
   onScan: () => void;
+  onScanFolder?: (path: string) => void;
   onCancelScan: () => void;
   onRename?: (id: string, displayName: string) => void | Promise<void>;
   onDescription?: (id: string, description: string | null) => void | Promise<void>;
@@ -111,6 +112,7 @@ export function ProjectList({
   onAddRoot,
   onRegister,
   onScan,
+  onScanFolder,
   onCancelScan,
   onRename,
   onDescription,
@@ -456,6 +458,12 @@ export function ProjectList({
             <span className="path-tree-group-count">{row.projectCount}</span>
           </button>}
           items={[{
+            label: scanning ? t("scanning") : t("rescanFolder"),
+            icon: <ArrowCounterClockwise />,
+            disabled: scanning || !onScanFolder || !scanRoots.some((root) =>
+              isSameOrAncestorPath(root.path, row.path) || isSameOrAncestorPath(row.path, root.path)),
+            onClick: () => onScanFolder?.(row.path),
+          }, {
             label: t("removeFolder"),
             danger: true,
             icon: <Trash />,
