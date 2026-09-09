@@ -6,6 +6,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[cfg(windows)]
 const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
