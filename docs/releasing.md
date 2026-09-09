@@ -67,6 +67,12 @@ The release workflow normalizes whitespace in `TAURI_SIGNING_PRIVATE_KEY` before
 
 When Apple Developer signing credentials are not fully configured, macOS prerelease builds use Tauri's ad-hoc signing identity (`-`) instead of exporting empty Apple certificate variables.
 
+### Public Release assets
+
+Release builds intentionally keep the GitHub Release page small. `tauri-action` runs in build-only mode; all bundle and signature files remain in short-lived Actions artifacts, while the public Release receives only the files users or the updater need.
+
+A normal Windows + macOS release publishes seven assets: one Windows NSIS installer, two macOS DMGs, two macOS updater archives, `latest.json`, and `SHA256SUMS`. Detached `.sig` files and the Windows MSI stay internal; updater verification still works because signature contents are embedded in `latest.json`.
+
 ### Existing releases and reruns
 
 The release workflow is idempotent around the GitHub Release object:
