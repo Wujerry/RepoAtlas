@@ -2,10 +2,11 @@ import { ArrowDown, ArrowUp, CheckCircle, Code, DesktopTower, GitBranch, Play, W
 import { useEffect, useRef, useState } from "react";
 import type { MessageKey } from "../i18n";
 import { formatTime } from "../lib/format";
-import type { EnvironmentInspection, GitStatus, ProjectDetail, ProjectFile, ReadmeDocument, RuntimeStatus, TaskRun } from "../types";
+import type { EnvironmentInspection, ExternalTool, GitStatus, ProjectDetail, ProjectFile, ReadmeDocument, RuntimeStatus, TaskRun, ToastTone } from "../types";
 import { Button } from "./ui/button";
 import { Skeleton } from "./ui/feedback";
 import { InlineLoadError, MarkdownDocument } from "./DashboardShared";
+import { ModulesPanel } from "./ModulesPanel";
 
 export function OverviewWorkspace(props: {
   detail: ProjectDetail;
@@ -29,11 +30,15 @@ export function OverviewWorkspace(props: {
   environmentLoading: boolean;
   environmentError?: string;
   onRetryEnvironment: () => void;
+  notify: (tone: ToastTone, title: string, detail?: string) => void;
+  onRefresh: () => void | Promise<void>;
+  ides: ExternalTool[];
+  agentTools: ExternalTool[];
   onRunTask: (id: string) => void;
   onPreviewFile: (file: ProjectFile) => void;
   onOpenProject?: (id: string) => void;
 }) {
-  const { detail, git, readme, readmeLoading, readmeError, onRetryReadme, agents, agentsLoading, onNeedAgents, t, tagDraft, setTagDraft, onNotes, onTags, tasks, runs, environment, environmentLoading, environmentError, onRetryEnvironment, onRunTask, onPreviewFile, onOpenProject } = props;
+  const { detail, git, readme, readmeLoading, readmeError, onRetryReadme, agents, agentsLoading, onNeedAgents, t, tagDraft, setTagDraft, onNotes, onTags, tasks, runs, environment, environmentLoading, environmentError, onRetryEnvironment, notify, onRefresh, ides, agentTools, onRunTask, onPreviewFile, onOpenProject } = props;
   const project = detail.project;
   useEffect(() => { onNeedAgents(); }, [onNeedAgents, project.id]);
   const factGroup = (kind: string, fallback: string[] = []) => {
@@ -136,6 +141,7 @@ export function OverviewWorkspace(props: {
         </>
       )}
     </section>
+    <ModulesPanel detail={detail} t={t} notify={notify} onRefresh={onRefresh} onOpenProject={onOpenProject} onRunTask={onRunTask} ides={ides} agents={agentTools} id="overview-modules" />
     <section id="overview-readme" className="content-card overview-readme"><div className="section-heading"><div><p className="eyebrow">{readme?.path ?? detail.readmePath ?? "README"}</p><h2>{t("readme")}</h2></div>{readme?.truncated && <span className="status-warning">{t("readmeTruncated")}</span>}</div>
       {readmeLoading ? <Skeleton className="skeleton-code" /> : readmeError ? <InlineLoadError title={t("readmeLoadFailed")} detail={readmeError} retryLabel={t("retry")} onRetry={onRetryReadme} /> : readme?.content || detail.readmeExcerpt ? <MarkdownDocument content={readme?.content ?? detail.readmeExcerpt ?? ""} projectId={detail.project.id} documentPath={readme?.path ?? detail.readmePath ?? "README.md"} /> : <p className="muted-copy">{t("noReadme")}</p>}
     </section>

@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, CaretDown, CaretUp, Copy, Moon, Play, Plus, Square, Sun, Trash, X } from "@phosphor-icons/react";
+import { ArrowDown, ArrowUp, CaretDown, CaretUp, Copy, MagnifyingGlass, Moon, Play, Plus, Square, Sun, Trash, X } from "@phosphor-icons/react";
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 import type { MessageKey } from "../i18n";
 import { formatTime } from "../lib/format";
@@ -18,15 +18,65 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
   const [consoleOpen, setConsoleOpen] = useState(false);
   const [pendingRemoval, setPendingRemoval] = useState<ProjectDetail["tasks"][number]>();
   const [removingTask, setRemovingTask] = useState(false);
+  const [taskQuery, setTaskQuery] = useState("");
+  const [kindFilter, setKindFilter] = useState("");
+  const [sourceFilter, setSourceFilter] = useState<"" | "inferred" | "custom">("");
+  const [stateFilter, setStateFilter] = useState<"" | "running" | "lastFailed" | "lastSucceeded">("");
+  const [sortMode, setSortMode] = useState<"default" | "name" | "runCount" | "lastRun">("default");
+  const [sortAscending, setSortAscending] = useState(true);
   const [consoleTheme, setConsoleTheme] = useState<"dark" | "light">(() => (document.documentElement.dataset.theme === "light" ? "light" : "dark"));
   const logPaneRef = useRef<HTMLPreElement>(null);
   const editorRef = useRef<HTMLFormElement>(null);
   const editorNameRef = useRef<HTMLInputElement>(null);
   const editorReturnFocusRef = useRef<HTMLButtonElement | null>(null);
+  const taskSearchRef = useRef<HTMLInputElement>(null);
   const activeRun = runs.find((run) => run.id === activeRunId);
   const runningRuns = runs.filter((run) => run.status === "running");
   const activeRunning = runningRuns.find((run) => run.id === activeRunId) ?? runningRuns[0];
   const consoleTitle = activeRunning?.kind ?? activeRun?.kind ?? t("taskConsole");
+  const taskKinds = [...new Set(tasks.map((task) => task.kind))].sort((a, b) => a.localeCompare(b));
+  const runStatsByTaskId = new Map<string, { count: number; last?: TaskRun }>();
+  for (const task of tasks) {
+    const matchingRuns = runs.filter((run) => run.taskId === task.id || run.kind === task.kind);
+    runStatsByTaskId.set(task.id, {
+      count: matchingRuns.length,
+      last: matchingRuns.length > 0 ? matchingRuns.reduce((latest, run) => (run.startedAt >= latest.startedAt ? run : latest)) : undefined,
+    });
+  }
+  const normalizedTaskQuery = taskQuery.trim().toLowerCase();
+  const taskFiltersActive = Boolean(normalizedTaskQuery || kindFilter || sourceFilter || stateFilter);
+  const editingTaskId = editor?.mode === "edit" ? editor.taskId : null;
+  const taskMatchesFilters = (task: ProjectDetail["tasks"][number]) => {
+    if (normalizedTaskQuery) {
+      const haystack = [task.name, task.kind, task.description ?? "", task.executable, task.argv.join(" ")].join(" ").toLowerCase();
+      if (!haystack.includes(normalizedTaskQuery)) return false;
+    }
+    if (kindFilter && task.kind !== kindFilter) return false;
+    if (sourceFilter === "inferred" && !task.inferred) return false;
+    if (sourceFilter === "custom" && task.inferred) return false;
+    const stats = runStatsByTaskId.get(task.id);
+    if (stateFilter === "running" && !runningRuns.some((run) => run.taskId === task.id || run.kind === task.kind)) return false;
+    if (stateFilter === "lastFailed" && stats?.last?.status !== "failed") return false;
+    if (stateFilter === "lastSucceeded" && stats?.last?.status !== "succeeded") return false;
+    return true;
+  };
+  const visibleTasks = tasks.flatMap((task, index) => (taskMatchesFilters(task) || task.id === editingTaskId ? [{ task, index }] : []));
+  const sortDirection = sortAscending ? 1 : -1;
+  visibleTasks.sort((a, b) => {
+    if (sortMode === "name") return sortDirection * a.task.name.localeCompare(b.task.name) || a.index - b.index;
+    if (sortMode === "runCount") {
+      return sortDirection * ((runStatsByTaskId.get(a.task.id)?.count ?? 0) - (runStatsByTaskId.get(b.task.id)?.count ?? 0)) || a.index - b.index;
+    }
+    if (sortMode === "lastRun") {
+      const lastA = runStatsByTaskId.get(a.task.id)?.last?.startedAt;
+      const lastB = runStatsByTaskId.get(b.task.id)?.last?.startedAt;
+      if (lastA && lastB) return sortDirection * lastA.localeCompare(lastB) || a.index - b.index;
+      if (lastA) return -1;
+      if (lastB) return 1;
+      return a.index - b.index;
+    }
+    return a.index - b.index;
+  });
   useEffect(() => {
     if (!activeRunning) return;
     setConsoleOpen(true);
@@ -47,6 +97,22 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
   useEffect(() => {
     if (editor?.mode === "edit" && !tasks.some((task) => task.id === editor.taskId)) setEditor(null);
   }, [editor, tasks]);
+  useEffect(() => {
+    function focusTaskSearch(event: KeyboardEvent) {
+      if (event.defaultPrevented || event.key !== "/" || event.ctrlKey || event.metaKey || event.altKey) return;
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable) return;
+      if (target.closest('[role="dialog"]')) return;
+      const search = taskSearchRef.current;
+      if (!search) return;
+      event.preventDefault();
+      search.focus();
+      search.select();
+    }
+    window.addEventListener("keydown", focusTaskSearch);
+    return () => window.removeEventListener("keydown", focusTaskSearch);
+  }, []);
 
   function openNewTask(event: MouseEvent<HTMLButtonElement>) {
     editorReturnFocusRef.current = event.currentTarget;
@@ -116,6 +182,18 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
       return { ...current, argv };
     });
   }
+  function changeTaskSort(value: "default" | "name" | "runCount" | "lastRun") {
+    setSortMode(value);
+    // Run count and last-run read best with the "most" side first, so a mode
+    // switch to them starts descending; name sorts start alphabetically.
+    setSortAscending(value === "default" || value === "name");
+  }
+  function clearTaskFilters() {
+    setTaskQuery("");
+    setKindFilter("");
+    setSourceFilter("");
+    setStateFilter("");
+  }
   async function copyOutput() {
     try {
       await navigator.clipboard.writeText(log);
@@ -172,18 +250,55 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
           <div className="section-heading">
             <div><p className="eyebrow">{t("detectedTasks")}</p><h2>{t("tasks")}</h2></div>
             <div className="task-heading-actions">
-              <span>{tasks.length}</span>
+              <span title={taskFiltersActive ? t("taskResults") : undefined}>{taskFiltersActive ? visibleTasks.length + " / " + tasks.length : tasks.length}</span>
               <Button variant="quiet" disabled={Boolean(editor) || savingTask} onClick={openNewTask}>{t("addTask")}</Button>
             </div>
           </div>
           {editor?.mode === "new" && renderTaskEditor()}
+          {tasks.length > 0 && <div className="task-filter-row" role="group" aria-label={t("filters")}>
+            <label className="search-field">
+              <span className="sr-only">{t("taskSearchHint")}</span><MagnifyingGlass aria-hidden="true" />
+              <input ref={taskSearchRef} type="search" value={taskQuery} placeholder={t("taskSearchHint")} onChange={(event) => setTaskQuery(event.target.value)} />
+            </label>
+            <select aria-label={t("taskFilterKind")} value={kindFilter} onChange={(event) => setKindFilter(event.target.value)}>
+              <option value="">{t("allKinds")}</option>
+              {taskKinds.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
+            </select>
+            <select aria-label={t("taskFilterSource")} value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value as "" | "inferred" | "custom")}>
+              <option value="">{t("allSources")}</option>
+              <option value="inferred">{t("inferredTasks")}</option>
+              <option value="custom">{t("customTasks")}</option>
+            </select>
+            <select aria-label={t("taskFilterState")} value={stateFilter} onChange={(event) => setStateFilter(event.target.value as "" | "running" | "lastFailed" | "lastSucceeded")}>
+              <option value="">{t("allStates")}</option>
+              <option value="running">{t("runningNow")}</option>
+              <option value="lastFailed">{t("lastRunFailed")}</option>
+              <option value="lastSucceeded">{t("lastRunSucceeded")}</option>
+            </select>
+            <div className="task-sort-row">
+              <select aria-label={t("taskSortLabel")} value={sortMode} onChange={(event) => changeTaskSort(event.target.value as "default" | "name" | "runCount" | "lastRun")}>
+                <option value="default">{t("sortDefault")}</option>
+                <option value="name">{t("sortName")}</option>
+                <option value="runCount">{t("sortRunCount")}</option>
+                <option value="lastRun">{t("sortLastRun")}</option>
+              </select>
+              <Button type="button" variant="quiet" size="icon" aria-label={sortAscending ? t("sortAscending") : t("sortDescending")} title={sortAscending ? t("sortAscending") : t("sortDescending")} disabled={sortMode === "default"} onClick={() => setSortAscending((ascending) => !ascending)}>
+                {sortAscending ? <ArrowUp aria-hidden="true" /> : <ArrowDown aria-hidden="true" />}
+              </Button>
+            </div>
+            {taskFiltersActive && <button type="button" className="clear-filters" onClick={clearTaskFilters}>{t("clearTaskFilters")}</button>}
+          </div>}
           {tasks.length === 0 && editor?.mode !== "new" ? (
             <EmptyState compact title={t("noTasks")} body={t("noTasksHint")} actions={<Button variant="primary" onClick={openNewTask}>{t("addTask")}</Button>} />
+          ) : tasks.length > 0 && visibleTasks.length === 0 ? (
+            <p className="task-filter-empty">{t("noTaskMatches")}<button type="button" className="clear-filters" onClick={clearTaskFilters}>{t("clearTaskFilters")}</button></p>
           ) : (
             <div className="task-grid">
-              {tasks.map((task) => {
+              {visibleTasks.map(({ task }) => {
                 const isEditing = editor?.mode === "edit" && editor.taskId === task.id;
-                const taskRunCount = runs.filter((run) => run.taskId === task.id || run.kind === task.kind).length;
+                const taskRunStats = runStatsByTaskId.get(task.id);
+                const taskRunCount = taskRunStats?.count ?? 0;
+                const lastRun = taskRunStats?.last;
                 return (
                 <article className={"task-card" + (runningRuns.some((run) => run.taskId === task.id) ? " is-running" : "") + (isEditing ? " is-editing" : "")} key={task.id}>
                   {isEditing ? renderTaskEditor(true) : <>
@@ -191,10 +306,16 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
                     <div className="task-card-copy">
                       <div className="task-card-kicker">
                         <span className="task-kind-label">{task.kind}</span>
+                        {!task.inferred && <span className="task-source-label">{t("customTasks")}</span>}
                       </div>
                       <div className="task-title-line">
                         <strong>{task.name || task.kind}</strong>
                         {taskRunCount > 0 && <span className="task-run-counter" title={`${taskRunCount} ${t("taskRunCount")}`}>{taskRunCount} {t("taskRunCount")}</span>}
+                        {lastRun && <button type="button" className={"task-last-run " + lastRun.status} title={`${t("lastRunLabel")}: ${t(statusKey(lastRun.status))} ${formatTime(lastRun.startedAt)}`} onClick={() => { setConsoleOpen(true); onHistory(lastRun); }}>
+                          <span className={"run-dot run-" + lastRun.status} aria-hidden="true" />
+                          <span>{t(statusKey(lastRun.status))}</span>
+                          <span className="task-last-run-time">{formatTime(lastRun.startedAt)}</span>
+                        </button>}
                       </div>
                       {task.description && <p className="task-card-description">{task.description}</p>}
                       <code>{formatCommand(task.executable, task.argv)}</code>

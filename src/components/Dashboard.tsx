@@ -75,7 +75,7 @@ export function Dashboard({ detail, t, notify, onFavorite, onArchive, onRefresh,
   const [ides, setIdes] = useState<ExternalTool[]>([]);
   const [terminals, setTerminals] = useState<ExternalTool[]>([]);
   const [agentTools, setAgentTools] = useState<ExternalTool[]>([]);
-  const [overviewSection, setOverviewSection] = useState<"status" | "environment" | "readme" | "agents" | "profile" | "notes">("status");
+  const [overviewSection, setOverviewSection] = useState<"status" | "environment" | "modules" | "readme" | "agents" | "profile" | "notes">("status");
   const [environment, setEnvironment] = useState<EnvironmentInspection>();
   const [environmentLoading, setEnvironmentLoading] = useState(false);
   const [environmentError, setEnvironmentError] = useState<string>();
@@ -227,15 +227,16 @@ export function Dashboard({ detail, t, notify, onFavorite, onArchive, onRefresh,
   }
 
   const overviewLinks = [
-    { id: "status" as const, index: "01", label: t("continueWork") },
-    { id: "environment" as const, index: "02", label: t("environment") },
-    { id: "readme" as const, index: "03", label: t("readme") },
-    { id: "agents" as const, index: "04", label: t("agentsGuide") },
-    { id: "profile" as const, index: "05", label: t("projectProfile") },
-    { id: "notes" as const, index: "06", label: t("tagsAndNotes") },
-  ];
+    { id: "status" as const, label: t("continueWork") },
+    { id: "environment" as const, label: t("environment") },
+    ...((detail.modules?.length ?? 0) > 0 || detail.project.directoryGroup ? [{ id: "modules" as const, label: t("module") }] : []),
+    { id: "readme" as const, label: t("readme") },
+    { id: "agents" as const, label: t("agentsGuide") },
+    { id: "profile" as const, label: t("projectProfile") },
+    { id: "notes" as const, label: t("tagsAndNotes") },
+  ].map((item, position) => ({ ...item, index: String(position + 1).padStart(2, "0") }));
 
-  function scrollToOverview(section: "status" | "environment" | "readme" | "agents" | "profile" | "notes") {
+  function scrollToOverview(section: "status" | "environment" | "modules" | "readme" | "agents" | "profile" | "notes") {
     setOverviewSection(section);
     const root = contentRef.current;
     if (!root) return;
@@ -450,7 +451,7 @@ export function Dashboard({ detail, t, notify, onFavorite, onArchive, onRefresh,
               const sequence = ++agentsSequence.current;
               setAgentsLoading(true); setAgentsMissing(false);
               api.readProjectDocument(project.id, "AGENTS.md").then((value) => { if (sequence === agentsSequence.current) setAgents(value); }).catch(() => { if (sequence === agentsSequence.current) setAgentsMissing(true); }).finally(() => { if (sequence === agentsSequence.current) setAgentsLoading(false); });
-            }} t={t} tagDraft={tagDraft} setTagDraft={setTagDraft} onNotes={onNotes} onTags={onTags} tasks={detail.tasks} runs={runs} environment={environment} environmentLoading={environmentLoading} environmentError={environmentError} onRetryEnvironment={() => { setEnvironmentError(undefined); setEnvironmentLoading(true); api.inspectProjectEnvironment(project.id).then(setEnvironment).catch((error) => setEnvironmentError(String(error))).finally(() => setEnvironmentLoading(false)); }} onRunTask={setPendingTaskId} onOpenProject={onOpenProject} onPreviewFile={(file) => { setPreviewFile(file); setPreviewError(undefined); setPreviewLoading(true); api.readProjectFile(project.id, file.path).then(setPreviewDoc).catch((error) => { setPreviewDoc(undefined); setPreviewError(String(error)); }).finally(() => setPreviewLoading(false)); }} />}
+            }} t={t} tagDraft={tagDraft} setTagDraft={setTagDraft} onNotes={onNotes} onTags={onTags} tasks={detail.tasks} runs={runs} environment={environment} environmentLoading={environmentLoading} environmentError={environmentError} onRetryEnvironment={() => { setEnvironmentError(undefined); setEnvironmentLoading(true); api.inspectProjectEnvironment(project.id).then(setEnvironment).catch((error) => setEnvironmentError(String(error))).finally(() => setEnvironmentLoading(false)); }} notify={notify} onRefresh={onRefresh} ides={ides} agentTools={agentTools} onRunTask={setPendingTaskId} onOpenProject={onOpenProject} onPreviewFile={(file) => { setPreviewFile(file); setPreviewError(undefined); setPreviewLoading(true); api.readProjectFile(project.id, file.path).then(setPreviewDoc).catch((error) => { setPreviewDoc(undefined); setPreviewError(String(error)); }).finally(() => setPreviewLoading(false)); }} />}
             {tab === "git" && <GitWorkspace git={git} loading={gitLoading} error={gitError} busy={gitBusy} commitMessage={commitMessage} setCommitMessage={setCommitMessage} stagedCount={stagedCount} selectedDiff={selectedDiff} diff={diff} diffLoading={diffLoading} t={t} onRetry={() => void loadGit()} onGit={setPendingGit} onDiff={loadDiff} />}
           </div>
         </div>

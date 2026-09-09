@@ -133,3 +133,78 @@ describe("TaskWorkspace console", () => {
     expect(onStopRun).toHaveBeenCalledWith("run-1");
   });
 });
+
+describe("TaskWorkspace task locating", () => {
+  function namedTask(id: string, name: string, kind: string, inferred = true): TaskDefinition {
+    return { ...task(id), name, kind, inferred };
+  }
+
+  function runFor(taskId: string, kind: string, status: string, startedAt: string, index = 0): TaskRun {
+    return { ...run(status), id: `run-${taskId}-${index}`, taskId, kind, startedAt };
+  }
+
+  it("searches tasks and shows the filtered count", () => {
+    const tasks = [namedTask("task-1", "build", "build"), namedTask("task-2", "lint", "check"), namedTask("task-3", "dev", "dev")];
+    const { container } = renderWorkspace({ tasks });
+    fireEvent.change(screen.getByPlaceholderText(t("taskSearchHint")), { target: { value: "lint" } });
+    expect(screen.getByTitle(t("taskResults"))).toHaveTextContent("1 / 3");
+    expect(container.querySelectorAll(".task-card")).toHaveLength(1);
+    expect(container.querySelector(".task-card")).toHaveTextContent("lint");
+
+    fireEvent.change(screen.getByPlaceholderText(t("taskSearchHint")), { target: { value: "nothing-matches" } });
+    expect(screen.getByText(t("noTaskMatches"))).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: t("clearTaskFilters") })[0]);
+    expect(screen.queryByText(t("noTaskMatches"))).not.toBeInTheDocument();
+    expect(container.querySelectorAll(".task-card")).toHaveLength(3);
+  });
+
+  it("filters by last-run state and links the badge to that run", () => {
+    const tasks = [task("task-1"), { ...namedTask("task-2", "lint", "check"), inferred: false }];
+    const runs = [runFor("task-2", "check", "succeeded", "2026-08-24T01:00:00Z"), runFor("task-1", "dev", "failed", "2026-08-24T02:00:00Z")];
+    const onHistory = vi.fn();
+    const { container } = renderWorkspace({ tasks, runs, onHistory });
+    fireEvent.change(screen.getByLabelText(t("taskFilterState")), { target: { value: "lastFailed" } });
+    const cards = container.querySelectorAll(".task-card");
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toHaveTextContent("dev");
+
+    const badge = within(cards[0] as HTMLElement).getByRole("button", { name: new RegExp(t("failed")) });
+    fireEvent.click(badge);
+    expect(onHistory).toHaveBeenCalledWith(runs[1]);
+    expect(screen.getByLabelText("Task console")).toHaveClass("is-open");
+  });
+
+  it("sorts by name and run count with a direction toggle", () => {
+    const tasks = [namedTask("task-1", "ccc", "build"), namedTask("task-2", "aaa", "check"), namedTask("task-3", "bbb", "dev")];
+    const { container } = renderWorkspace({ tasks });
+    const names = () => Array.from(container.querySelectorAll(".task-title-line strong")).map((node) => node.textContent);
+    fireEvent.change(screen.getByLabelText(t("taskSortLabel")), { target: { value: "name" } });
+    expect(names()).toEqual(["aaa", "bbb", "ccc"]);
+    fireEvent.click(screen.getByRole("button", { name: t("sortAscending") }));
+    expect(screen.getByRole("button", { name: t("sortDescending") })).toBeInTheDocument();
+    expect(names()).toEqual(["ccc", "bbb", "aaa"]);
+  });
+
+  it("sorts by run count with the busiest task first", () => {
+    const tasks = [namedTask("task-1", "alpha", "build"), namedTask("task-2", "beta", "check"), namedTask("task-3", "gamma", "dev")];
+    const runs = [
+      runFor("task-1", "build", "succeeded", "2026-08-24T01:00:00Z"),
+      runFor("task-3", "dev", "succeeded", "2026-08-24T02:00:00Z", 1),
+      runFor("task-3", "dev", "failed", "2026-08-24T03:00:00Z", 2),
+    ];
+    const { container } = renderWorkspace({ tasks, runs });
+    fireEvent.change(screen.getByLabelText(t("taskSortLabel")), { target: { value: "runCount" } });
+    const names = Array.from(container.querySelectorAll(".task-title-line strong")).map((node) => node.textContent);
+    expect(names).toEqual(["gamma", "alpha", "beta"]);
+  });
+
+  it("keeps the editing task visible while a filter hides it", () => {
+    const tasks = [namedTask("task-1", "build", "build"), namedTask("task-2", "lint", "check")];
+    const { container } = renderWorkspace({ tasks });
+    fireEvent.click(screen.getAllByRole("button", { name: t("edit") })[1]);
+    fireEvent.change(screen.getByPlaceholderText(t("taskSearchHint")), { target: { value: "build" } });
+    expect(screen.getByRole("form", { name: t("editTask") })).toBeInTheDocument();
+    expect(container.querySelectorAll(".task-card")).toHaveLength(2);
+    expect(container.querySelectorAll(".task-title-line strong")).toHaveLength(1);
+  });
+});

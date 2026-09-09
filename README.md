@@ -43,6 +43,7 @@ Agent changes to the shared library continue to appear after onboarding, includi
 - **Runtime visibility** — see process-tree CPU, memory, child processes, listening ports, and safe localhost previews next to the terminal.
 - **Conservative Git** — review status, diffs, and history; pull fast-forward only. SVN support remains read-only.
 - **Attention and approval** — collect failed runs, unavailable Projects, environment mismatches, and Agent task requests that still need desktop approval.
+- **Signed updates** — when a signed update is found, a title-bar entry opens a panel with the release notes and manual check, download, install, and restart actions. Checks are non-blocking and never touch the local library.
 - **Local-first records** — Project metadata, task output, exit codes, logs, and audit history stay in local SQLite; no RepoAtlas account or sync server is required.
 
 ## Project library

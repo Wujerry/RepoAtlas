@@ -6,6 +6,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useS
 import { CommandPalette } from "./components/CommandPalette";
 import { ProjectList, type ProjectFilters } from "./components/ProjectList";
 import { TitleBar } from "./components/TitleBar";
+import { TitleBarUpdate } from "./components/TitleBarUpdate";
 import { OnboardingDialog, type OnboardingStep } from "./components/OnboardingDialog";
 import { SplashScreen } from "./components/SplashScreen";
 import { TaskWorkbench } from "./components/TaskWorkbench";
@@ -736,7 +737,7 @@ export default function App() {
 
   return <MotionConfig reducedMotion="user" transition={{ duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}><Tooltip.Provider delay={300}><div className="app-shell">
     {!splashDone && <SplashScreen ready={!booting} onFinished={() => setSplashDone(true)} />}
-    <TitleBar title={t("appName")} subtitle={t("appTag")} commandLabel={t("commandShort")} minimizeLabel={t("minimizeWindow")} maximizeLabel={t("maximizeWindow")} closeLabel={t("close")} helpLabel={t("help")} settingsLabel={t("settings")} approvalsLabel={t("attentionCenter")} approvalCount={attentionItems.length} tasksLabel={t("activeTasks")} tasksShortcut="Ctrl + `" tasksCount={activeTaskRuns.length} onTasks={() => { setActiveTasksOpen(true); void loadActiveRuns(); }} activeView={settingsOpen ? "settings" : view} onCommand={() => setPaletteOpen(true)} onLibrary={returnToLibrary} onHelp={openHelp} onSettings={openSettings} onApprovals={() => { setApprovalsOpen(true); void loadApprovals(); }} />
+    <TitleBar title={t("appName")} subtitle={t("appTag")} commandLabel={t("commandShort")} minimizeLabel={t("minimizeWindow")} maximizeLabel={t("maximizeWindow")} closeLabel={t("close")} helpLabel={t("help")} settingsLabel={t("settings")} approvalsLabel={t("attentionCenter")} approvalCount={attentionItems.length} tasksLabel={t("activeTasks")} tasksShortcut="Ctrl + `" tasksCount={activeTaskRuns.length} onTasks={() => { setActiveTasksOpen(true); void loadActiveRuns(); }} activeView={settingsOpen ? "settings" : view} onCommand={() => setPaletteOpen(true)} onLibrary={returnToLibrary} onHelp={openHelp} onSettings={openSettings} onApprovals={() => { setApprovalsOpen(true); void loadApprovals(); }} updateEntry={<TitleBarUpdate state={updateState} locale={settings.locale === "zh" || settings.locale === "en" ? settings.locale : undefined} t={t} onCheck={() => updaterService.checkForUpdates()} onDownload={() => updaterService.downloadUpdate()} onInstall={() => updaterService.installUpdate()} onRestart={() => updaterService.restartApp()} onDefer={() => updaterService.deferUpdate()} />} />
     <div className="workspace workspace-library" style={workspaceStyle}>
       <PaneResizer width={listWidth} label={t("resizeSidebar")} onWidthChange={setListWidth} onWidthCommit={commitListWidth} />
       <>

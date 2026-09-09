@@ -7,11 +7,11 @@ import type { ExternalTool, ProjectDetail, ProjectModule, ToastTone } from "../t
 import { Button } from "./ui/button";
 import { ActionMenu } from "./ui/menu";
 
-export function ModulesPanel({ detail, t, notify, onRefresh, onOpenProject, onRunTask, ides, agents }: {
+export function ModulesPanel({ detail, t, notify, onRefresh, onOpenProject, onRunTask, ides, agents, id }: {
   detail: ProjectDetail; t: (key: MessageKey) => string;
   notify: (tone: ToastTone, title: string, detail?: string) => void;
   onRefresh: () => void | Promise<void>; onOpenProject?: (id: string) => void;
-  onRunTask: (id: string) => void; ides: ExternalTool[]; agents: ExternalTool[];
+  onRunTask: (id: string) => void; ides: ExternalTool[]; agents: ExternalTool[]; id?: string;
 }) {
   const [busy, setBusy] = useState<string>();
   const modules = detail.modules ?? [];
@@ -26,7 +26,7 @@ export function ModulesPanel({ detail, t, notify, onRefresh, onOpenProject, onRu
     const path = await api.resolveModulePath(detail.project.id, module.id);
     await action(path);
   }
-  return <section className="modules-panel" aria-label={t("modules")}>
+  return <section id={id} className="modules-panel" aria-label={t("modules")}>
     <div className="modules-heading"><div><h2>{detail.project.directoryGroup ? t("directoryGroup") : t("modules")}<span className="modules-count">{modules.length}</span></h2><p>{t("modulesHint")}</p></div>
       <Button loading={busy === "group"} disabled={!!busy} onClick={() => void act("group", () => api.setDirectoryGroup(detail.project.id, !detail.project.directoryGroup), true)}>{t(detail.project.directoryGroup ? "restoreProjectMode" : "useDirectoryGroup")}</Button>
     </div>
