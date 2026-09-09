@@ -4,6 +4,10 @@ on:
   push:
     tags:
       - "v*.*.*"
+    branches:
+      - main
+    paths:
+      - ".github/release-trigger-v0.1.0"
 
 permissions:
   contents: read
@@ -15,6 +19,8 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || 'v0.1.0' }}
+  RELEASE_SHA: ${{ github.ref_type == 'tag' && github.sha || '34bac603dff1364a8a4afd66e93ad8c654330276' }}
 
 jobs:
   validate:
@@ -38,13 +44,13 @@ jobs:
 
       - name: Check version and tag
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
         run: node scripts/check-version.mjs --tag "$RELEASE_TAG"
 
       - name: Classify release
         id: classify
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
         run: |
           is_prerelease="$(node -p '/^v\d+\.\d+\.\d+-/.test(process.env.RELEASE_TAG)')"
           echo "prerelease=$is_prerelease" >> "$GITHUB_OUTPUT"
@@ -105,13 +111,23 @@ jobs:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.RELEASE_SHA }}
           persist-credentials: false
+
+      - name: Create release tag for explicit main trigger
+        if: github.ref_type != 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f ref="refs/tags/${RELEASE_TAG}" \
+            -f sha="${RELEASE_SHA}"
 
       - name: Create draft release
         id: create
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
           PRERELEASE: ${{ needs.validate.outputs.prerelease }}
         run: |
           args=("--verify-tag" "--draft" "--title" "RepoAtlas $RELEASE_TAG")
@@ -152,6 +168,7 @@ jobs:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.RELEASE_SHA }}
           persist-credentials: false
 
       - name: Set up pnpm
@@ -290,6 +307,7 @@ jobs:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.RELEASE_SHA }}
           persist-credentials: false
 
       - name: Set up Node.js
@@ -306,7 +324,7 @@ jobs:
 
       - name: Generate updater manifest
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
         run: |
           node scripts/build-updater-manifest.mjs \
             --version "${RELEASE_TAG#v}" \
@@ -317,7 +335,7 @@ jobs:
 
       - name: Generate checksums
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
         run: |
           if compgen -G 'release-assets/*UNSIGNED-BETA*' > /dev/null; then
             echo "# RepoAtlas ${RELEASE_TAG}: Windows artifacts are UNSIGNED-BETA (no Authenticode signature)." > SHA256SUMS
@@ -328,7 +346,7 @@ jobs:
       - name: Upload updater manifest and checksums
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
         run: |
           gh release upload "$RELEASE_TAG" latest.json SHA256SUMS release-assets/* --clobber
           if grep -q 'UNSIGNED-BETA' SHA256SUMS; then
