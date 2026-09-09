@@ -107,7 +107,7 @@ describe("HomeDashboard", () => {
     expect(screen.getByRole("button", { name: /Release train/ })).toHaveTextContent("3 Projects");
     expect(screen.getByRole("button", { name: /RepoAtlas.*main.*Failed/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Tests failed/ })).toBeInTheDocument();
-    expect(mocks.readProjectIcons).toHaveBeenCalledWith([project.id]);
+    await waitFor(() => expect(mocks.readProjectIcons).toHaveBeenCalledWith([project.id]));
   });
 
   it("routes every dashboard entry through its typed callback", async () => {
