@@ -61,12 +61,19 @@ Before applying or enabling SignPath signing:
 Do not claim that a release is SignPath-signed until the project has been accepted and the artifact's Authenticode signature has been verified.
 
 
+### Updater signing key normalization
+
+The release workflow normalizes whitespace in `TAURI_SIGNING_PRIVATE_KEY` before invoking Tauri. Tauri updater keys are base64 strings; a trailing newline introduced while copying the secret must not make a release fail. The workflow validates that the normalized value decodes to a minisign/Tauri secret-key box without printing the key.
+
+When Apple Developer signing credentials are not fully configured, macOS prerelease builds use Tauri's ad-hoc signing identity (`-`) instead of exporting empty Apple certificate variables.
+
 ### Existing releases and reruns
 
 The release workflow is idempotent around the GitHub Release object:
 
 - If no Release exists for the tag, the workflow creates a draft Release.
 - If a Release already exists for the tag, including one created or published from the GitHub web UI, the workflow reuses it instead of trying to create a duplicate.
+- A manual workflow run may reuse an existing tag when that tag points to a commit in `main` history. This allows release-pipeline fixes on `main` to repair an earlier failed build without moving or recreating the tag.
 - Existing draft/published and prerelease state is preserved rather than silently changed.
 - Generated assets are uploaded with replacement semantics so a rerun can repair or refresh the same release.
 - The unsigned-Windows notice is marker-based and is added at most once.
