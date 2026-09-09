@@ -7,7 +7,7 @@ This document describes the intended release path for the public `Wujerry/RepoAt
 - The release branch is `main`.
 - GitHub releases are created as drafts. A maintainer reviews artifacts, notes, signatures, and checksums before publishing.
 - Release tags are `vX.Y.Z` for stable releases (for example, `v0.1.0`) or `vX.Y.Z-<prerelease>` for prereleases (for example, `v0.1.0-beta.1`).
-- The tag version, root `package.json`, workspace `Cargo.toml`, and `src-tauri/tauri.conf.json` must contain the same SemVer version; the tag may add a prerelease suffix. `node scripts/check-version.mjs` is the source-of-truth check.
+- Root `package.json`, workspace `Cargo.toml`, and `src-tauri/tauri.conf.json` must contain the exact release version, including any prerelease suffix (for example, `0.1.0-beta.2`). The release tag is `v` plus that exact version, so tag `v0.1.0-beta.2` requires `0.1.0-beta.2` in all three sources. The Tauri updater compares the installed app version with the `latest.json` manifest version using SemVer, so prerelease builds must carry the suffix in their app version to stay updatable between betas. `node scripts/check-version.mjs` is the source-of-truth check.
 - Prerelease tags create GitHub prerelease drafts. Windows artifacts built without Authenticode credentials are labeled `UNSIGNED-BETA` in their filenames, the checksum report, and the release notes. Stable tags fail the workflow when Windows Authenticode credentials are missing.
 - First-release installer targets are Windows x64, macOS Intel, and macOS Apple Silicon. Linux is checked in CI but is not packaged for the first release.
 
@@ -88,7 +88,7 @@ For the cleanest public launch, prefer letting Actions create a draft and publis
 
 ## Release workflow
 
-1. Update the changelog and the four version sources together.
+1. Update the changelog and set the three in-repo version sources (root `package.json`, workspace `Cargo.toml`, `src-tauri/tauri.conf.json`) to the exact release version, prerelease suffix included; the release tag is `v` plus that version.
 2. Run the local checks listed below.
 3. Choose one release trigger only when the repository is ready to be published:
    - Preferred: open **Actions → Release → Run workflow**, select `main`, and enter the exact release tag (for example `v0.1.0-beta.1`). The workflow validates the release contract and creates the lightweight tag at the selected `main` commit.
@@ -104,6 +104,8 @@ The updater endpoint is:
 ```text
 https://github.com/Wujerry/RepoAtlas/releases/latest/download/latest.json
 ```
+
+GitHub resolves `releases/latest` only to non-prerelease, non-draft releases. Until the first stable release is published, this endpoint returns 404 and installed prerelease builds report "Could not fetch a valid release JSON from the remote" when checking for updates; that behavior is expected during the beta phase and resolves once a stable release (for example, `v0.1.0`) exists.
 
 Tauri updater metadata must contain a valid SemVer version, RFC 3339 publication date, platform-specific URLs, and the complete signature text for each updater artifact. A signature URL is not a substitute for the signature content.
 

@@ -17,6 +17,8 @@ All notable changes to RepoAtlas will be documented here. The project is current
 - Add a dark and a light console theme with a per-console toggle, readable text selection colors, and a light-tuned ANSI palette.
 - Stop running RepoAtlas processes (app and MCP sidecar) in the NSIS installer's pre-install and pre-uninstall hooks, so upgrades no longer fail with "Error opening file for writing" while an MCP session holds the executable.
 
+- Carry the full prerelease version (for example, `0.1.0-beta.2`) in the app version and require release tags to match it exactly, so the updater can compare beta builds by SemVer.
+
 ## [0.1.0-beta.2] - 2026-09-09
 
 - Add a title-bar update entry that appears once a signed update is discovered, downloading, ready to install, or fails, with a release-notes panel and manual check, download, install, restart, and postpone actions.

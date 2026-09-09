@@ -37,7 +37,7 @@ function parseArgs(argv) {
     const argument = argv[index];
 
     if (argument === '--help' || argument === '-h') {
-      console.log('Usage: node scripts/check-version.mjs [--tag vX.Y.Z]');
+      console.log('Usage: node scripts/check-version.mjs [--tag vX.Y.Z or vX.Y.Z-<prerelease>]');
       process.exit(0);
     }
 
@@ -45,7 +45,7 @@ function parseArgs(argv) {
       requestedTag = argv[index + 1];
       index += 1;
       if (!requestedTag) {
-        throw new Error('--tag requires a value such as v0.1.0');
+        throw new Error('--tag requires a value such as v0.1.0-beta.2');
       }
       continue;
     }
@@ -86,18 +86,24 @@ function readCargoWorkspaceVersion() {
   return version;
 }
 
+const VERSION_PATTERN =
+  /^(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:[.][0-9A-Za-z-]+)*))?$/;
+
 function assertVersion(version, source) {
-  if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) {
-    throw new Error(`${source} has unsupported version ${JSON.stringify(version)}; expected X.Y.Z`);
+  if (!VERSION_PATTERN.test(version)) {
+    throw new Error(
+      `${source} has unsupported version ${JSON.stringify(version)}; expected X.Y.Z or X.Y.Z-<prerelease>`,
+    );
   }
 }
 
 function splitTag(tag) {
-  const match = /^(v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/.exec(tag);
+  const versionBody = VERSION_PATTERN.source.slice(1, -1);
+  const match = new RegExp(`^v${versionBody}$`).exec(tag);
   if (!match) {
-    throw new Error(`tag ${JSON.stringify(tag)} must match vX.Y.Z or vX.Y.Z-<prerelease>`);
+    throw new Error(`tag ${JSON.stringify(tag)} must be exactly v plus the project version`);
   }
-  return { version: match[1].slice(1), prerelease: match[2] ?? null };
+  return { version: tag.slice(1), prerelease: match[4] ?? null };
 }
 
 try {
@@ -130,12 +136,14 @@ try {
   if (requestedTag) {
     const parsed = splitTag(requestedTag);
     if (parsed.version !== version) {
-      throw new Error(`tag ${requestedTag} does not match project version ${version}`);
+      throw new Error(
+        `tag ${requestedTag} does not match project version ${version}; the release tag must be exactly v${version}, prerelease suffix included`,
+      );
     }
   }
-  const tagInfo = requestedTag ? splitTag(requestedTag) : null;
-  if (tagInfo?.prerelease) {
-    console.log(`RepoAtlas version check passed: ${version} (prerelease -${tagInfo.prerelease})`);
+  const prerelease = VERSION_PATTERN.exec(version)?.[4] ?? null;
+  if (prerelease) {
+    console.log(`RepoAtlas version check passed: ${version} (prerelease -${prerelease})`);
   } else {
     console.log(`RepoAtlas version check passed: ${version}${requestedTag ? ` (${requestedTag})` : ''}`);
   }
