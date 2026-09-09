@@ -17,6 +17,13 @@ All notable changes to RepoAtlas will be documented here. The project is current
 - Add a dark and a light console theme with a per-console toggle, readable text selection colors, and a light-tuned ANSI palette.
 - Stop running RepoAtlas processes (app and MCP sidecar) in the NSIS installer's pre-install and pre-uninstall hooks, so upgrades no longer fail with "Error opening file for writing" while an MCP session holds the executable.
 
+## [0.1.0-beta.2] - 2026-09-09
+
+- Add a title-bar update entry that appears once a signed update is discovered, downloading, ready to install, or fails, with a release-notes panel and manual check, download, install, restart, and postpone actions.
+- Add task search, kind/source/state filters, and run-count/last-run sorting to the project Tasks view, with a filtered-results count and clear-filters reset.
+- Add an Overview Modules chapter that appears when a Project has detected modules or directory grouping is enabled.
+- Harden the release pipeline: idempotent release runs, trimmed public release assets, and cross-platform updater key normalization.
+
 ## [0.1.0] - Unreleased
 
 Initial pre-release application baseline:
@@ -32,4 +39,5 @@ Initial pre-release application baseline:
 - English and Simplified Chinese interface support with light, dark, and system themes.
 
 [Unreleased]: https://github.com/Wujerry/RepoAtlas/compare/v0.1.0...HEAD
+[0.1.0-beta.2]: https://github.com/Wujerry/RepoAtlas/compare/v0.1.0-beta.1...v0.1.0-beta.2
 [0.1.0]: https://github.com/Wujerry/RepoAtlas/releases/tag/v0.1.0
