@@ -347,11 +347,6 @@ jobs:
           APPLE_SIGNING_IDENTITY: ${{ contains(matrix.target, 'apple-darwin') && '-' || '' }}
         with:
           projectPath: .
-          releaseId: ${{ needs.create-release.outputs.release-id }}
-          releaseDraft: ${{ needs.create-release.outputs.release-draft }}
-          releaseName: RepoAtlas ${{ needs.create-release.outputs.release-tag }}
-          uploadUpdaterJson: false
-          uploadUpdaterSignatures: true
           args: --target ${{ matrix.target }}
 
       - name: Build and upload signed macOS Tauri bundles
@@ -366,11 +361,6 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
         with:
           projectPath: .
-          releaseId: ${{ needs.create-release.outputs.release-id }}
-          releaseDraft: ${{ needs.create-release.outputs.release-draft }}
-          releaseName: RepoAtlas ${{ needs.create-release.outputs.release-tag }}
-          uploadUpdaterJson: false
-          uploadUpdaterSignatures: true
           args: --target ${{ matrix.target }}
 
       - name: Stage updater and installer artifacts
@@ -430,22 +420,50 @@ jobs:
             --output latest.json \
             --base-url "https://github.com/Wujerry/RepoAtlas/releases/download/$RELEASE_TAG"
 
+      - name: Select public release assets
+        run: |
+          mkdir -p publish-assets
+
+          copy_one() {
+            local pattern="$1"
+            local matches=(release-assets/$pattern)
+            if [ "${#matches[@]}" -ne 1 ] || [ ! -f "${matches[0]}" ]; then
+              echo "Expected exactly one release asset matching: $pattern" >&2
+              printf 'Matched: %s\n' "${matches[@]}" >&2
+              exit 1
+            fi
+            cp "${matches[0]}" publish-assets/
+          }
+
+          # Human-facing installers.
+          copy_one 'x86_64-pc-windows-msvc-*-setup-UNSIGNED-BETA.exe'
+          copy_one 'aarch64-apple-darwin-*.dmg'
+          copy_one 'x86_64-apple-darwin-*.dmg'
+
+          # Updater payloads. Detached signatures remain internal because
+          # latest.json embeds their signature contents.
+          copy_one 'aarch64-apple-darwin-*.app.tar.gz'
+          copy_one 'x86_64-apple-darwin-*.app.tar.gz'
+
+          echo 'Public release assets:'
+          find publish-assets -maxdepth 1 -type f -printf '%f\n' | sort
+
       - name: Generate checksums
         env:
           RELEASE_TAG: ${{ needs.create-release.outputs.release-tag }}
         run: |
-          if compgen -G 'release-assets/*UNSIGNED-BETA*' > /dev/null; then
+          if compgen -G 'publish-assets/*UNSIGNED-BETA*' > /dev/null; then
             echo "# RepoAtlas ${RELEASE_TAG}: Windows artifacts are UNSIGNED-BETA (no Authenticode signature)." > SHA256SUMS
           fi
-          (cd release-assets && find . -type f -print0 | sort -z | xargs -0 sha256sum | sed 's#^\./##') >> SHA256SUMS
-          (cd release-assets && sha256sum -c ../SHA256SUMS)
+          (cd publish-assets && find . -type f -print0 | sort -z | xargs -0 sha256sum | sed 's#^\\./##') >> SHA256SUMS
+          (cd publish-assets && sha256sum -c ../SHA256SUMS)
 
-      - name: Upload updater manifest and checksums
+      - name: Upload curated release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ needs.create-release.outputs.release-tag }}
         run: |
-          gh release upload "$RELEASE_TAG" latest.json SHA256SUMS release-assets/* --clobber
+          gh release upload "$RELEASE_TAG" latest.json SHA256SUMS publish-assets/* --clobber
           if grep -q 'UNSIGNED-BETA' SHA256SUMS; then
             body="$(gh release view "$RELEASE_TAG" --json body --jq .body)"
             marker='<!-- repoatlas-unsigned-beta -->'
@@ -456,7 +474,7 @@ jobs:
                 echo "$marker"
                 echo '## UNSIGNED-BETA'
                 echo
-                echo 'The Windows installers in this release have no Authenticode signature. Verify SHA256SUMS before running them; Microsoft SmartScreen may show a warning.'
+                echo 'The Windows installer in this release has no Authenticode signature. Verify SHA256SUMS before running it; Microsoft SmartScreen may show a warning.'
               } | gh release edit "$RELEASE_TAG" --notes-file -
             else
               echo 'UNSIGNED-BETA notice already present; leaving release notes unchanged.'
