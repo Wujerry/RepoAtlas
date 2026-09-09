@@ -241,6 +241,7 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Normalize Tauri updater signing key
+        shell: bash
         env:
           RAW_TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
