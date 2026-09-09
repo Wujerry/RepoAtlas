@@ -71,7 +71,7 @@ When Apple Developer signing credentials are not fully configured, macOS prerele
 
 Release builds intentionally keep the GitHub Release page small. `tauri-action` runs in build-only mode; all bundle and signature files remain in short-lived Actions artifacts, while the public Release receives only the files users or the updater need.
 
-A normal Windows + macOS release publishes seven assets: one Windows NSIS installer, two macOS DMGs, two macOS updater archives, `latest.json`, and `SHA256SUMS`. Detached `.sig` files and the Windows MSI stay internal; updater verification still works because signature contents are embedded in `latest.json`.
+A normal Windows + macOS release publishes seven assets: one Windows NSIS installer, two macOS DMGs, two macOS updater archives, `latest.json`, and `SHA256SUMS`. Detached `.sig` files stay internal; updater verification still works because signature contents are embedded in `latest.json`. Prerelease versions bundle NSIS only because the WiX MSI bundler rejects non-numeric prerelease identifiers; a stable version can still build the MSI locally with `pnpm tauri build --bundles msi`.
 
 ### Existing releases and reruns
 
@@ -132,7 +132,7 @@ release-tag input; the workflow creates that tag only after version, updater-key
 and platform-signing gates pass. Pages is a separate workflow and is not deployed
 as part of release preparation.
 
-On Windows, inspect the generated MSI and NSIS bundles and their `.sig` files. On macOS, inspect both Intel and Apple Silicon bundles, signatures, and notarization results. Keep Rust incremental compilation enabled during local verification.
+On Windows, inspect the generated NSIS bundle and its `.sig` file; for a stable version you can additionally build the MSI with `pnpm tauri build --bundles msi`. On macOS, inspect both Intel and Apple Silicon bundles, signatures, and notarization results. Keep Rust incremental compilation enabled during local verification.
 
 ## Rollback and incident handling
 

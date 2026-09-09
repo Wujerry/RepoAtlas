@@ -31,7 +31,7 @@
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": true,
-    "targets": "all",
+    "targets": ["nsis", "dmg", "app"],
     "windows": {
       "nsis": {
         "installerHooks": "./windows/installer-hooks.nsh"

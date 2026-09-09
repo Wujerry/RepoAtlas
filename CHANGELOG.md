@@ -17,7 +17,10 @@ All notable changes to RepoAtlas will be documented here. The project is current
 - Add a dark and a light console theme with a per-console toggle, readable text selection colors, and a light-tuned ANSI palette.
 - Stop running RepoAtlas processes (app and MCP sidecar) in the NSIS installer's pre-install and pre-uninstall hooks, so upgrades no longer fail with "Error opening file for writing" while an MCP session holds the executable.
 
-- Carry the full prerelease version (for example, `0.1.0-beta.2`) in the app version and require release tags to match it exactly, so the updater can compare beta builds by SemVer.
+## [0.1.0-beta.3] - 2026-09-09
+
+- Carry the full prerelease version (for example, `0.1.0-beta.3`) in the app version and require release tags to match it exactly, so the updater can compare beta builds by SemVer.
+- Bundle Windows installers with NSIS only, alongside the macOS DMG and App targets, because the WiX MSI bundler rejects non-numeric prerelease identifiers.
 
 ## [0.1.0-beta.2] - 2026-09-09
 
@@ -41,5 +44,6 @@ Initial pre-release application baseline:
 - English and Simplified Chinese interface support with light, dark, and system themes.
 
 [Unreleased]: https://github.com/Wujerry/RepoAtlas/compare/v0.1.0...HEAD
+[0.1.0-beta.3]: https://github.com/Wujerry/RepoAtlas/compare/v0.1.0-beta.2...v0.1.0-beta.3
 [0.1.0-beta.2]: https://github.com/Wujerry/RepoAtlas/compare/v0.1.0-beta.1...v0.1.0-beta.2
 [0.1.0]: https://github.com/Wujerry/RepoAtlas/releases/tag/v0.1.0
