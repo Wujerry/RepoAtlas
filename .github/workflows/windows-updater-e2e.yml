@@ -49,6 +49,21 @@ jobs:
         with:
           key: windows-updater-e2e
 
+      - name: Validate PowerShell syntax
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path './scripts/windows-updater-e2e.ps1'),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
+
       - name: Run real Windows updater flow
         shell: pwsh
         run: ./scripts/windows-updater-e2e.ps1
