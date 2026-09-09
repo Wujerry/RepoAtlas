@@ -26,7 +26,9 @@ function Set-RepoAtlasVersion {
 
   $cargoPath = Join-Path $PWD "Cargo.toml"
   $cargo = Get-Content -Raw -LiteralPath $cargoPath
-  $cargoReplacement = '
+  $cargoReplacement = '$' + '{1}' + $Version + '$' + '{2}'
+  $cargoRegex = [regex]::new('(?ms)(\[workspace\.package\].*?^version\s*=\s*")[^"]+(")')
+  $cargo = $cargoRegex.Replace($cargo, $cargoReplacement, 1)
   Set-Content -LiteralPath $cargoPath -Value $cargo -Encoding utf8 -NoNewline
 
   $configPath = Join-Path $PWD "src-tauri\tauri.conf.json"
