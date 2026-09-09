@@ -2,6 +2,7 @@ use super::*;
 use std::{
     fs,
     path::Path,
+    process::Command,
     time::{Duration, Instant},
 };
 
@@ -72,7 +73,6 @@ fn git_waiting_for_a_hook_keeps_core_available_for_other_operations() {
         .try_lock()
         .map(|core| core.dashboard_snapshot().is_ok())
         .unwrap_or(false);
-    // Always release the hook before asserting, including on regressions.
     fs::write(root.join(".git/review-release"), "release").unwrap();
     let result = worker.join().unwrap().unwrap();
     assert!(reached_hook, "Git did not reach the blocking fixture hook");
