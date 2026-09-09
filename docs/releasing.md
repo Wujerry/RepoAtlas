@@ -37,11 +37,28 @@ The matching public key is safe to commit in the Tauri updater configuration. Th
 
 Configure platform credentials only in GitHub encrypted secrets and only when a release is ready to be signed. The release workflow exposes these inputs separately from the updater key:
 
-- `WINDOWS_CERTIFICATE` (base64-encoded PFX) and `WINDOWS_CERTIFICATE_PASSWORD` for Windows Authenticode.
+- Preferred OSS path: SignPath Foundation Windows Authenticode signing after project approval. SignPath keeps the certificate private key in its signing service; do not expect a project-owned PFX in this mode.\n- Fallback/private-certificate path: `WINDOWS_CERTIFICATE` (base64-encoded PFX) and `WINDOWS_CERTIFICATE_PASSWORD` for Windows Authenticode.
 - `APPLE_CERTIFICATE` (base64-encoded P12), `APPLE_CERTIFICATE_PASSWORD`, and `APPLE_SIGNING_IDENTITY` for the macOS Developer ID certificate.
 - `APPLE_TEAM_ID`, `APPLE_ID`, and `APPLE_PASSWORD` (an app-specific password) for notarization.
 
 The release workflow always creates a draft. A stable tag without Windows Authenticode credentials fails before any build starts; a prerelease tag continues without them and stages Windows artifacts as `UNSIGNED-BETA`. Missing platform-signing secrets are reported in the run summary and must not be treated as stable-release approval. The updater signing key remains mandatory for every tag because a Tauri updater artifact without its signature cannot be consumed by existing installations. Before building, the workflow also asserts that `bundle.windows.nsis.installerHooks` is still configured in `src-tauri/tauri.conf.json`, and `scripts/copy-mcp-sidecar.mjs` rebuilds the MCP sidecar for the target platform so installers never ship a stale binary from another target triple.
+
+
+### SignPath Foundation preparation
+
+RepoAtlas is preparing an application to the SignPath Foundation open-source code-signing program. The public [Code signing policy](../CODE_SIGNING_POLICY.md) defines signing roles, privacy commitments, origin verification, and manual approval requirements.
+
+Before applying or enabling SignPath signing:
+
+1. Publish at least one unsigned Windows beta in the same installer form that will later be signed.
+2. Keep the repository, release artifacts, documentation, and license publicly accessible.
+3. Ensure GitHub and SignPath accounts used by the signing team have MFA enabled.
+4. Configure SignPath's GitHub trusted build/origin verification after project approval.
+5. Preserve manual approval for every signing request.
+6. Update the release workflow so the Windows artifact is signed by SignPath before it is attached to the final GitHub Release.
+7. Keep Tauri updater signing enabled independently; SignPath Authenticode does not replace `TAURI_SIGNING_PRIVATE_KEY`.
+
+Do not claim that a release is SignPath-signed until the project has been accepted and the artifact's Authenticode signature has been verified.
 
 ## Release workflow
 
