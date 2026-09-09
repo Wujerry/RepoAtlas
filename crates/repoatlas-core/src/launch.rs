@@ -1140,6 +1140,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(windows, target_os = "macos"))]
     fn lists_at_least_one_terminal_on_supported_platforms() {
         let tools = super::list_external_tools();
         #[cfg(windows)]

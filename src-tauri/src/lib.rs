@@ -10,6 +10,7 @@ use repoatlas_core::{
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+#[cfg(any(windows, target_os = "macos"))]
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
