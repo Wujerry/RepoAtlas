@@ -1,0 +1,54 @@
+name: Windows Updater E2E
+
+on:
+  push:
+    branches:
+      - qa/windows-updater-e2e
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-updater-e2e
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  updater-e2e:
+    name: Upgrade 0.1.0 to 0.1.1
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.20.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24.11.0
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.1
+          target: x86_64-pc-windows-msvc
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-updater-e2e
+
+      - name: Run real Windows updater flow
+        shell: pwsh
+        run: ./scripts/windows-updater-e2e.ps1
