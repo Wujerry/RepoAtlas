@@ -31,6 +31,8 @@ jobs:
     outputs:
       release-tag: ${{ steps.release.outputs.release_tag }}
       prerelease: ${{ steps.classify.outputs.prerelease }}
+      windows-ready: ${{ steps.signing.outputs.windows_ready }}
+      macos-ready: ${{ steps.signing.outputs.macos_ready }}
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -86,6 +88,7 @@ jobs:
           fi
 
       - name: Check platform signing readiness
+        id: signing
         env:
           WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
@@ -106,6 +109,8 @@ jobs:
              [ -z "${APPLE_ID:-}" ] || [ -z "${APPLE_PASSWORD:-}" ]; then
             macos_ready=false
           fi
+          echo "windows_ready=$windows_ready" >> "$GITHUB_OUTPUT"
+          echo "macos_ready=$macos_ready" >> "$GITHUB_OUTPUT"
           if [ "$windows_ready" != "true" ] && [ "${{ steps.classify.outputs.prerelease }}" != "true" ]; then
             echo 'Stable releases require Windows Authenticode credentials (WINDOWS_CERTIFICATE and WINDOWS_CERTIFICATE_PASSWORD).' >&2
             exit 1
@@ -119,7 +124,7 @@ jobs:
             echo 'The workflow always creates a draft release. Stable releases must be Authenticode-signed before publishing; prerelease Windows artifacts without a certificate are labeled UNSIGNED-BETA.'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Create release tag for manual run
+      - name: Create or validate release tag for manual run
         if: github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -127,10 +132,11 @@ jobs:
           RELEASE_SHA: ${{ github.sha }}
         run: |
           if existing_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" --jq '.object.sha' 2>/dev/null)"; then
-            if [ "$existing_sha" = "$RELEASE_SHA" ]; then
-              echo "Tag $RELEASE_TAG already points to $RELEASE_SHA; continuing."
+            git fetch --no-tags origin main
+            if git merge-base --is-ancestor "$existing_sha" origin/main; then
+              echo "Reusing existing tag $RELEASE_TAG at $existing_sha."
             else
-              echo "Tag $RELEASE_TAG already exists at $existing_sha, not $RELEASE_SHA." >&2
+              echo "Tag $RELEASE_TAG points to $existing_sha, which is not in main history." >&2
               exit 1
             fi
           else
@@ -151,6 +157,8 @@ jobs:
       release-draft: ${{ steps.create.outputs.release_draft }}
       release-tag: ${{ needs.validate.outputs.release-tag }}
       prerelease: ${{ needs.validate.outputs.prerelease }}
+      windows-ready: ${{ needs.validate.outputs.windows-ready }}
+      macos-ready: ${{ needs.validate.outputs.macos-ready }}
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -212,7 +220,6 @@ jobs:
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       PRERELEASE: ${{ needs.create-release.outputs.prerelease }}
-      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
       - name: Check out source
@@ -232,6 +239,28 @@ jobs:
           node-version: 24.11.0
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
+
+      - name: Normalize Tauri updater signing key
+        env:
+          RAW_TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const raw = process.env.RAW_TAURI_SIGNING_PRIVATE_KEY ?? '';
+          const key = raw.replace(/\s+/g, '');
+          if (!key) {
+            throw new Error('TAURI_SIGNING_PRIVATE_KEY is empty.');
+          }
+          if (!/^[A-Za-z0-9+/]+={0,2}$/.test(key) || key.length % 4 !== 0) {
+            throw new Error('TAURI_SIGNING_PRIVATE_KEY is not valid base64 after whitespace normalization.');
+          }
+          const decoded = Buffer.from(key, 'base64').toString('utf8');
+          if (!decoded.startsWith('untrusted comment:')) {
+            throw new Error('TAURI_SIGNING_PRIVATE_KEY does not decode to a Tauri/minisign secret key.');
+          }
+          console.log('::add-mask::' + key);
+          fs.appendFileSync(process.env.GITHUB_ENV, 'TAURI_SIGNING_PRIVATE_KEY=' + key + '\n');
+          NODE
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
@@ -308,15 +337,32 @@ jobs:
           key: release-${{ matrix.target }}
 
       - name: Build and upload Tauri bundles
+        if: ${{ !contains(matrix.target, 'apple-darwin') || needs.create-release.outputs.macos-ready != 'true' }}
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
         env:
-          # Only macOS matrix legs receive Apple signing and notarization secrets.
-          APPLE_CERTIFICATE: ${{ contains(matrix.target, 'apple-darwin') && secrets.APPLE_CERTIFICATE || '' }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ contains(matrix.target, 'apple-darwin') && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
-          APPLE_SIGNING_IDENTITY: ${{ contains(matrix.target, 'apple-darwin') && secrets.APPLE_SIGNING_IDENTITY || '' }}
-          APPLE_TEAM_ID: ${{ contains(matrix.target, 'apple-darwin') && secrets.APPLE_TEAM_ID || '' }}
-          APPLE_ID: ${{ contains(matrix.target, 'apple-darwin') && secrets.APPLE_ID || '' }}
-          APPLE_PASSWORD: ${{ contains(matrix.target, 'apple-darwin') && secrets.APPLE_PASSWORD || '' }}
+          # Without Apple Developer credentials, use Tauri's documented ad-hoc
+          # identity on macOS. Do not define APPLE_CERTIFICATE as an empty
+          # variable: Tauri treats its presence as a request to import a cert.
+          APPLE_SIGNING_IDENTITY: ${{ contains(matrix.target, 'apple-darwin') && '-' || '' }}
+        with:
+          projectPath: .
+          releaseId: ${{ needs.create-release.outputs.release-id }}
+          releaseDraft: ${{ needs.create-release.outputs.release-draft }}
+          releaseName: RepoAtlas ${{ needs.create-release.outputs.release-tag }}
+          uploadUpdaterJson: false
+          uploadUpdaterSignatures: true
+          args: --target ${{ matrix.target }}
+
+      - name: Build and upload signed macOS Tauri bundles
+        if: ${{ contains(matrix.target, 'apple-darwin') && needs.create-release.outputs.macos-ready == 'true' }}
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
         with:
           projectPath: .
           releaseId: ${{ needs.create-release.outputs.release-id }}
