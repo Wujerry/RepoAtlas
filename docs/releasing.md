@@ -60,6 +60,19 @@ Before applying or enabling SignPath signing:
 
 Do not claim that a release is SignPath-signed until the project has been accepted and the artifact's Authenticode signature has been verified.
 
+
+### Existing releases and reruns
+
+The release workflow is idempotent around the GitHub Release object:
+
+- If no Release exists for the tag, the workflow creates a draft Release.
+- If a Release already exists for the tag, including one created or published from the GitHub web UI, the workflow reuses it instead of trying to create a duplicate.
+- Existing draft/published and prerelease state is preserved rather than silently changed.
+- Generated assets are uploaded with replacement semantics so a rerun can repair or refresh the same release.
+- The unsigned-Windows notice is marker-based and is added at most once.
+
+For the cleanest public launch, prefer letting Actions create a draft and publish it after the build finishes. Creating and publishing a Release first is supported, but users may briefly see the Release before all CI-built assets arrive.
+
 ## Release workflow
 
 1. Update the changelog and the four version sources together.
@@ -67,7 +80,8 @@ Do not claim that a release is SignPath-signed until the project has been accept
 3. Choose one release trigger only when the repository is ready to be published:
    - Preferred: open **Actions → Release → Run workflow**, select `main`, and enter the exact release tag (for example `v0.1.0-beta.1`). The workflow validates the release contract and creates the lightweight tag at the selected `main` commit.
    - Alternative: create and push the exact `vX.Y.Z` / prerelease tag locally; the existing tag-push trigger remains supported.
-4. GitHub Actions creates a draft Release, builds the three supported targets with `tauri-apps/tauri-action`, and attaches installer/updater artifacts and `.sig` files.
+4. GitHub Actions creates a draft Release when none exists, or reuses an existing Release for the same tag. This makes the workflow safe to rerun and also supports a Release/tag created from the GitHub web UI. Existing draft/published and prerelease state is preserved.
+5. The workflow builds the three supported targets with `tauri-apps/tauri-action` and attaches installer/updater artifacts and `.sig` files using replace-on-conflict uploads.
 6. A final job generates the platform map in `latest.json` and a `SHA256SUMS` file, verifies it with `sha256sum -c`, then uploads both to the same draft. After downloading `SHA256SUMS` and the listed assets into one directory, run `sha256sum -c SHA256SUMS` to verify them locally.
 7. Review the draft on every platform. Verify platform signatures, updater URLs, release notes, and the absence of private paths or credentials.
 8. Publish the draft only after platform signing, installation, upgrade, rollback, and smoke checks are complete.
