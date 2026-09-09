@@ -141,7 +141,7 @@ jobs:
           fi
 
   create-release:
-    name: Create draft release
+    name: Create or reuse release
     needs: validate
     runs-on: ubuntu-latest
     permissions:
@@ -157,20 +157,33 @@ jobs:
           ref: ${{ needs.validate.outputs.release-tag }}
           persist-credentials: false
 
-      - name: Create draft release
+      - name: Create or reuse release
         id: create
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ needs.validate.outputs.release-tag }}
           PRERELEASE: ${{ needs.validate.outputs.prerelease }}
         run: |
-          args=("--verify-tag" "--draft" "--title" "RepoAtlas $RELEASE_TAG")
-          if [ "$PRERELEASE" = "true" ]; then
-            args+=("--prerelease")
+          if release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" 2>/dev/null)"; then
+            release_id="$(jq -r '.id' <<<"$release_json")"
+            release_draft="$(jq -r '.draft' <<<"$release_json")"
+            release_prerelease="$(jq -r '.prerelease' <<<"$release_json")"
+            release_url="$(jq -r '.html_url' <<<"$release_json")"
+            echo "Reusing existing release $RELEASE_TAG (draft=$release_draft, prerelease=$release_prerelease)."
+            echo "Existing release: $release_url"
+            if [ "$release_prerelease" != "$PRERELEASE" ]; then
+              echo "::warning::Existing release prerelease=$release_prerelease but tag classification is prerelease=$PRERELEASE. The workflow will preserve the existing release state."
+            fi
+          else
+            args=("--verify-tag" "--draft" "--title" "RepoAtlas $RELEASE_TAG")
+            if [ "$PRERELEASE" = "true" ]; then
+              args+=("--prerelease")
+            fi
+            gh release create "$RELEASE_TAG" "${args[@]}" \
+              --notes "Draft release for $RELEASE_TAG. Review platform signatures, checksums, updater metadata, installation, and upgrade behavior before publishing."
+            release_id="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq '.id')"
+            echo "Created draft release $RELEASE_TAG."
           fi
-          gh release create "$RELEASE_TAG" "${args[@]}" \
-            --notes "Draft release for $RELEASE_TAG. Review platform signatures, checksums, updater metadata, installation, and upgrade behavior before publishing."
-          release_id="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq '.id')"
           echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
 
   build:
@@ -385,11 +398,17 @@ jobs:
           gh release upload "$RELEASE_TAG" latest.json SHA256SUMS release-assets/* --clobber
           if grep -q 'UNSIGNED-BETA' SHA256SUMS; then
             body="$(gh release view "$RELEASE_TAG" --json body --jq .body)"
-            {
-              echo "$body"
-              echo
-              echo '## UNSIGNED-BETA'
-              echo
-              echo 'The Windows installers in this release have no Authenticode signature. Verify SHA256SUMS before running them; Microsoft SmartScreen may show a warning.'
-            } | gh release edit "$RELEASE_TAG" --notes-file -
+            marker='<!-- repoatlas-unsigned-beta -->'
+            if ! grep -Fq "$marker" <<<"$body"; then
+              {
+                echo "$body"
+                echo
+                echo "$marker"
+                echo '## UNSIGNED-BETA'
+                echo
+                echo 'The Windows installers in this release have no Authenticode signature. Verify SHA256SUMS before running them; Microsoft SmartScreen may show a warning.'
+              } | gh release edit "$RELEASE_TAG" --notes-file -
+            else
+              echo 'UNSIGNED-BETA notice already present; leaving release notes unchanged.'
+            fi
           fi
