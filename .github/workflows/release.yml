@@ -4,12 +4,18 @@ on:
   push:
     tags:
       - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag (for example v0.1.0-beta.1)"
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
   cancel-in-progress: false
 
 env:
@@ -21,8 +27,9 @@ jobs:
     name: Validate release contract
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     outputs:
+      release-tag: ${{ steps.release.outputs.release_tag }}
       prerelease: ${{ steps.classify.outputs.prerelease }}
     steps:
       - name: Check out source
@@ -36,15 +43,35 @@ jobs:
         with:
           node-version: 24.11.0
 
+      - name: Resolve release tag
+        id: release
+        env:
+          MANUAL_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+              echo 'Manual releases must be started from the main branch.' >&2
+              exit 1
+            fi
+            release_tag="$MANUAL_RELEASE_TAG"
+          else
+            release_tag="$GITHUB_REF_NAME"
+          fi
+          if ! [[ "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release tag: $release_tag" >&2
+            exit 1
+          fi
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+
       - name: Check version and tag
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
         run: node scripts/check-version.mjs --tag "$RELEASE_TAG"
 
       - name: Classify release
         id: classify
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
         run: |
           is_prerelease="$(node -p '/^v\d+\.\d+\.\d+-/.test(process.env.RELEASE_TAG)')"
           echo "prerelease=$is_prerelease" >> "$GITHUB_OUTPUT"
@@ -92,6 +119,27 @@ jobs:
             echo 'The workflow always creates a draft release. Stable releases must be Authenticode-signed before publishing; prerelease Windows artifacts without a certificate are labeled UNSIGNED-BETA.'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Create release tag for manual run
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          if existing_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" --jq '.object.sha' 2>/dev/null)"; then
+            if [ "$existing_sha" = "$RELEASE_SHA" ]; then
+              echo "Tag $RELEASE_TAG already points to $RELEASE_SHA; continuing."
+            else
+              echo "Tag $RELEASE_TAG already exists at $existing_sha, not $RELEASE_SHA." >&2
+              exit 1
+            fi
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref="refs/tags/${RELEASE_TAG}" \
+              -f sha="$RELEASE_SHA"
+            echo "Created tag $RELEASE_TAG at $RELEASE_SHA."
+          fi
+
   create-release:
     name: Create draft release
     needs: validate
@@ -100,18 +148,20 @@ jobs:
       contents: write
     outputs:
       release-id: ${{ steps.create.outputs.release_id }}
+      release-tag: ${{ needs.validate.outputs.release-tag }}
       prerelease: ${{ needs.validate.outputs.prerelease }}
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.validate.outputs.release-tag }}
           persist-credentials: false
 
       - name: Create draft release
         id: create
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ needs.validate.outputs.release-tag }}
           PRERELEASE: ${{ needs.validate.outputs.prerelease }}
         run: |
           args=("--verify-tag" "--draft" "--title" "RepoAtlas $RELEASE_TAG")
@@ -152,6 +202,7 @@ jobs:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.create-release.outputs.release-tag }}
           persist-credentials: false
 
       - name: Set up pnpm
@@ -254,7 +305,7 @@ jobs:
           projectPath: .
           releaseId: ${{ needs.create-release.outputs.release-id }}
           releaseDraft: true
-          releaseName: RepoAtlas ${{ github.ref_name }}
+          releaseName: RepoAtlas ${{ needs.create-release.outputs.release-tag }}
           uploadUpdaterJson: false
           uploadUpdaterSignatures: true
           args: --target ${{ matrix.target }}
@@ -290,6 +341,7 @@ jobs:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.create-release.outputs.release-tag }}
           persist-credentials: false
 
       - name: Set up Node.js
@@ -306,7 +358,7 @@ jobs:
 
       - name: Generate updater manifest
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ needs.create-release.outputs.release-tag }}
         run: |
           node scripts/build-updater-manifest.mjs \
             --version "${RELEASE_TAG#v}" \
@@ -317,7 +369,7 @@ jobs:
 
       - name: Generate checksums
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ needs.create-release.outputs.release-tag }}
         run: |
           if compgen -G 'release-assets/*UNSIGNED-BETA*' > /dev/null; then
             echo "# RepoAtlas ${RELEASE_TAG}: Windows artifacts are UNSIGNED-BETA (no Authenticode signature)." > SHA256SUMS
@@ -328,7 +380,7 @@ jobs:
       - name: Upload updater manifest and checksums
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ needs.create-release.outputs.release-tag }}
         run: |
           gh release upload "$RELEASE_TAG" latest.json SHA256SUMS release-assets/* --clobber
           if grep -q 'UNSIGNED-BETA' SHA256SUMS; then
