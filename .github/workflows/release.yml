@@ -148,6 +148,7 @@ jobs:
       contents: write
     outputs:
       release-id: ${{ steps.create.outputs.release_id }}
+      release-draft: ${{ steps.create.outputs.release_draft }}
       release-tag: ${{ needs.validate.outputs.release-tag }}
       prerelease: ${{ needs.validate.outputs.prerelease }}
     steps:
@@ -182,9 +183,11 @@ jobs:
             gh release create "$RELEASE_TAG" "${args[@]}" \
               --notes "Draft release for $RELEASE_TAG. Review platform signatures, checksums, updater metadata, installation, and upgrade behavior before publishing."
             release_id="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq '.id')"
+            release_draft=true
             echo "Created draft release $RELEASE_TAG."
           fi
           echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+          echo "release_draft=$release_draft" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build (${{ matrix.name }})
@@ -317,7 +320,7 @@ jobs:
         with:
           projectPath: .
           releaseId: ${{ needs.create-release.outputs.release-id }}
-          releaseDraft: true
+          releaseDraft: ${{ needs.create-release.outputs.release-draft }}
           releaseName: RepoAtlas ${{ needs.create-release.outputs.release-tag }}
           uploadUpdaterJson: false
           uploadUpdaterSignatures: true
