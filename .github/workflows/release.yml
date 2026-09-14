@@ -169,12 +169,18 @@ jobs:
           RELEASE_TAG: ${{ needs.validate.outputs.release-tag }}
           PRERELEASE: ${{ needs.validate.outputs.prerelease }}
         run: |
-          release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" 2>/dev/null || true)"
+          if ! release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" 2>/dev/null)"; then
+            release_json=""
+          fi
           if [ -z "$release_json" ]; then
             # Draft releases carry the tag name but are not attached to the tag
             # until they are published, so the lookup above cannot find them.
             release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --paginate \
               --jq "[.[] | select(.draft == true and .tag_name == \"$RELEASE_TAG\")] | .[0] // empty" 2>/dev/null || true)"
+          fi
+          if [ -n "$release_json" ] && ! jq -e 'type == "object" and (.id | type == "number")' <<<"$release_json" >/dev/null; then
+            echo "Invalid release response from GitHub." >&2
+            exit 1
           fi
           if [ -n "$release_json" ]; then
             release_id="$(jq -r '.id' <<<"$release_json")"
