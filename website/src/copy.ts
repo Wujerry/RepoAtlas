@@ -177,17 +177,17 @@ export const copy: Record<Locale, Copy> = {
     "lang": "zh-CN",
     "sessionsImageAlt": "RepoAtlas Sessions：跨 Agent 会话列表与选中对话的消息预览",
     "resumeImageAlt": "RepoAtlas 恢复面板：CLI 与 App 选择、工作目录和指定会话命令",
-    "resumeImageLabel": "查看继续会话的启动选项",
-    "showcaseCaption": "桌面应用实拍，图中使用虚构演示数据。",
+    "resumeImageLabel": "查看会话恢复选项",
+    "showcaseCaption": "桌面应用截图，项目与会话内容均为演示数据。",
     "navSessions": "Sessions",
-    "sessionsTitle": "找到那次对话，接着往下做。",
-    "sessionsBody": "在同一个入口搜索不同 Agent 的编码会话。先预览对话、找到所属项目，再回到原 Agent 继续指定会话。",
-    "sessionsSteps": [{"title": "授权历史来源", "body": "逐项确认历史目录的绝对路径，也可以使用“全部授权”。由你决定哪些历史进入本地索引，并允许已连接的 MCP 客户端读取。"}, {"title": "搜索并预览对话", "body": "默认跨 Agent 搜索，也可按项目、日期和归档状态筛选。先读匹配消息，再决定从哪次对话继续。"}, {"title": "恢复指定会话", "body": "查看命令和工作目录，选择 CLI 或支持恢复的 App 入口，再使用原 Agent 和原会话 ID 继续工作。"}],
+    "sessionsTitle": "搜索历史对话，恢复编码会话",
+    "sessionsBody": "统一搜索 Claude Code、Codex 等 Agent 的本地会话记录。查看对话内容和关联项目，选择需要恢复的会话，在原 Agent 中打开。",
+    "sessionsSteps": [{"title": "授权历史来源", "body": "确认需要读取的历史目录，可逐项授权或全部授权。授权后建立本地搜索索引，已连接的 MCP 客户端也可读取这些会话。"}, {"title": "搜索并预览对话", "body": "跨 Agent 搜索会话内容，按项目、日期和归档状态筛选结果。选中会话可预览消息，不会直接启动 Agent。"}, {"title": "恢复指定会话", "body": "确认启动命令和工作目录，选择 CLI 或受支持的桌面应用，恢复指定会话。启动命令也可复制到终端执行。"}],
     "sessionsAgents": "Claude Code · Codex CLI · OpenCode · Cursor CLI · Gemini CLI · GitHub Copilot CLI · Kimi Code · Qwen Code",
     "sessionsNote": "历史读取不修改原文件。撤销来源会清理本地索引，不删除 Agent 历史。恢复需要已安装的 Agent 和可用会话；账号、模型及访问权限由 Agent 管理。",
     "dir": "ltr",
     "title": "RepoAtlas：本地项目、Agent 会话与开发任务",
-    "description": "集中管理本地项目，搜索 Agent 编码会话、继续上次工作，运行开发任务并查看 Git 改动。",
+    "description": "管理本地开发项目，搜索和恢复 Agent 会话，运行常用任务，查看 Git 改动与执行记录。",
     "skip": "跳到主要内容",
     "homeAria": "RepoAtlas 中文首页",
     "navAria": "主导航",
@@ -198,34 +198,20 @@ export const copy: Record<Locale, Copy> = {
     "navLangHref": "../",
     "navLangLang": "en",
     "navSource": "GitHub",
-    "heroHeadline": [
-      {
-        "text": "本地项目，"
-      },
-      {
-        "text": "集中管理。"
-      },
-      {
-        "text": "找到上次进度，"
-      },
-      {
-        "text": "接着做。",
-        "accent": true
-      }
-    ],
-    "heroSub": "打开项目、继续编码会话，或运行已保存的任务。本地项目、Agent 历史、Git 改动和开发工具，都从同一个工作台进入。",
+    "heroHeadline": [{"text": "本地开发项目，"}, {"text": "统一管理。"}, {"text": "Agent 编码会话，"}, {"text": "搜索与恢复。", "accent": true}],
+    "heroSub": "RepoAtlas 是一款本地开发项目管理工具。按名称、路径或技术栈查找项目，搜索并恢复 Agent 会话，运行开发任务，查看 Git 改动。",
     "ctaPrimary": "查看发布版本",
     "ctaSecondary": "了解 Sessions",
     "heroImageAlt": "RepoAtlas 首页工作台：最近 Agent 会话、项目图标、最近项目与任务运行",
     "marqueeAria": "可保存为任务的常用命令示例",
     "marqueeCommands": marqueeCommands,
-    "tasksTitle": "常用命令存成任务，开发、测试、打包直接运行。",
-    "tasksBody": "每个项目保存自己的开发任务，工作台可并排运行多个终端。查看实时输出、输入交互指令，也可以随时停止任务。",
+    "tasksTitle": "保存常用命令，统一管理开发任务",
+    "tasksBody": "为项目配置启动、测试和打包任务，无需反复输入命令或切换目录。支持同时运行多个任务，在终端中查看输出、输入指令或停止进程。",
     "tasksFacts": [
       {
         "key": "任务配置",
         "title": "保存命令和运行目录",
-        "body": "为每个任务设置程序、参数和工作目录，切换项目后仍能使用各自的配置。"
+        "body": "每个项目独立保存任务配置，包含可执行程序、参数和工作目录。"
       },
       {
         "key": "实时终端",
@@ -240,12 +226,12 @@ export const copy: Record<Locale, Copy> = {
       {
         "key": "运行记录",
         "title": "保留日志和退出码",
-        "body": "按运行记录查看成功或失败状态、耗时、退出码和日志，方便回查。"
+        "body": "记录每次运行的状态、耗时、退出码和日志，便于定位失败原因。"
       }
     ],
     "tasksImageAlt": "RepoAtlas 任务工作台：已保存任务、进程监控与实时终端",
-    "libraryTitle": "找到项目，接着做。",
-    "libraryBody": "添加扫描根目录，发现其中的项目；也可以单独添加一个项目。项目库支持搜索、筛选、收藏和集合分组。",
+    "libraryTitle": "按项目组织代码、工具和运行记录",
+    "libraryBody": "添加存放代码的目录作为扫描根目录，或单独添加一个项目。通过名称、路径和技术栈查找项目，用收藏和集合整理常用项目。",
     "libraryCells": [
       {
         "title": "项目发现与技术栈识别",
@@ -262,15 +248,15 @@ export const copy: Record<Locale, Copy> = {
       },
       {
         "title": "工作台与最近项目",
-        "body": "工作台集中显示最近会话、项目图标、最近项目和运行记录。点击项目标题直接进入项目，用收藏和集合整理项目库。"
+        "body": "首页显示最近使用的项目、可恢复的会话和任务运行记录。点击项目名称可进入项目，查看配置、文件和 Git 状态。"
       },
       {
         "title": "编辑器、终端与编码 Agent",
         "body": "在项目目录打开已安装的工具。外部 Agent 可通过 MCP 管理项目记录、申请运行任务。"
       }
     ],
-    "safetyTitle": "项目资料保存在本机。",
-    "safetyBody": "项目记录、设置和任务历史保存在本地，扫描范围由你选择。",
+    "safetyTitle": "数据保存在本地，操作范围由你控制",
+    "safetyBody": "项目记录、设置和任务历史保存在本机。扫描只在你授权的目录内进行，移除管理记录不会删除项目文件。",
     "safetyRules": [
       "无需注册账号，离线也能打开项目库。",
       "移除项目或集合只删除管理记录，磁盘上的项目文件保留。",
@@ -278,8 +264,8 @@ export const copy: Record<Locale, Copy> = {
       "MCP 发起的任务运行请求需要在桌面端审批。",
       "编码 Agent 使用自己的账号、模型和对话。"
     ],
-    "closeTitle": "从存放项目的目录开始。",
-    "closeBody": "添加扫描根目录，查看发现的项目，再保存常用开发命令。源码和安装说明都在 GitHub。",
+    "closeTitle": "安装 RepoAtlas，添加本地项目",
+    "closeBody": "在 GitHub 下载 Windows 安装包，按安装说明启动应用后添加项目。源码、使用说明和问题反馈入口也在仓库中。",
     "closePrimary": "查看源码",
     "closeSecondary": "参与贡献",
     "footerBlurb": "0.1.0 · Windows 未签名 · macOS 实验版、未公证 · 更新包签名验证 · MIT 开源",
