@@ -679,17 +679,29 @@ fn migrate(conn: &Connection) -> Result<()> {
     "#)?;
     migrate_activity_counts(conn)?;
     crate::core::sessions::migrate(conn)?;
-    let indexed: i64 = conn.query_row("SELECT COUNT(*) FROM schema_migrations WHERE version=21", [], |r| r.get(0))?;
+    let indexed: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM schema_migrations WHERE version=21",
+        [],
+        |r| r.get(0),
+    )?;
     if indexed == 0 {
         let tx = conn.unchecked_transaction()?;
         for (source, table, time, id) in [
-            ("git", "project_git_commits", "commit_date", "'git:'||project_id||':'||sha"),
+            (
+                "git",
+                "project_git_commits",
+                "commit_date",
+                "'git:'||project_id||':'||sha",
+            ),
             ("run", "task_runs", "started_at", "'run:'||id"),
             ("event", "project_events", "created_at", "'event:'||id"),
         ] {
             tx.execute_batch(&format!("DROP INDEX IF EXISTS idx_activity_{source}_time; DROP INDEX IF EXISTS idx_activity_{source}_project; CREATE INDEX idx_activity_{source}_time ON {table}(unixepoch({time}) DESC,({id}) DESC); CREATE INDEX idx_activity_{source}_project ON {table}(project_id,unixepoch({time}) DESC,({id}) DESC);"))?;
         }
-        tx.execute("INSERT INTO schema_migrations VALUES(21,datetime('now'))", [])?;
+        tx.execute(
+            "INSERT INTO schema_migrations VALUES(21,datetime('now'))",
+            [],
+        )?;
         tx.commit()?;
     }
     Ok(())
@@ -697,14 +709,22 @@ fn migrate(conn: &Connection) -> Result<()> {
 
 // Counts are derived, local-only data. Triggers also cover writes from a second MCP connection.
 fn migrate_activity_counts(conn: &Connection) -> Result<()> {
-    for (version,label,seconds) in [(18,"hour",3600),(19,"sixhour",21600),(20,"day",86400)] {
-        let applied:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version=?1)",[version],|r|r.get(0))?;
+    for (version, label, seconds) in [
+        (18, "hour", 3600),
+        (19, "sixhour", 21600),
+        (20, "day", 86400),
+    ] {
+        let applied: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version=?1)",
+            [version],
+            |r| r.get(0),
+        )?;
         if applied {
             conn.execute_batch(&format!("CREATE INDEX IF NOT EXISTS activity_{label}_counts_project ON activity_{label}_counts(project_id,bucket_at,category,n);"))?;
             continue;
         }
-        let tx=conn.unchecked_transaction()?;
-        let counts=format!("activity_{label}_counts");
+        let tx = conn.unchecked_transaction()?;
+        let counts = format!("activity_{label}_counts");
         tx.execute_batch(&format!("CREATE TABLE {counts}(bucket_at INTEGER NOT NULL,project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,category TEXT NOT NULL,n INTEGER NOT NULL,PRIMARY KEY(bucket_at,project_id,category)) WITHOUT ROWID; CREATE INDEX {counts}_project ON {counts}(project_id,bucket_at,category,n);"))?;
         for (table,time,category) in [
             ("project_git_commits","commit_date","'git'"),
@@ -721,7 +741,10 @@ fn migrate_activity_counts(conn: &Connection) -> Result<()> {
             let remove=format!("UPDATE {counts} SET n=n-1 WHERE bucket_at={old_bucket} AND project_id=old.project_id AND category={old_category}; DELETE FROM {counts} WHERE bucket_at={old_bucket} AND project_id=old.project_id AND category={old_category} AND n<=0;");
             tx.execute_batch(&format!("CREATE TRIGGER activity_{label}_{table}_insert AFTER INSERT ON {table} BEGIN {add} END; CREATE TRIGGER activity_{label}_{table}_delete AFTER DELETE ON {table} BEGIN {remove} END; CREATE TRIGGER activity_{label}_{table}_update AFTER UPDATE OF {time},project_id{} ON {table} BEGIN {remove} {add} END;",if table=="project_events"{",kind"}else{""}))?;
         }
-        tx.execute("INSERT INTO schema_migrations VALUES(?1,datetime('now'))",[version])?;
+        tx.execute(
+            "INSERT INTO schema_migrations VALUES(?1,datetime('now'))",
+            [version],
+        )?;
         tx.commit()?;
     }
     Ok(())

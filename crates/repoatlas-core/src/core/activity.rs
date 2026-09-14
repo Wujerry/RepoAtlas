@@ -830,7 +830,9 @@ mod tests {
         c.conn
             .execute("DELETE FROM project_events WHERE id='e00000001'", [])
             .unwrap();
-        let summary = c.activity_summary(&[day.clone()], None).unwrap();
+        let summary = c
+            .activity_summary(std::slice::from_ref(&day), None)
+            .unwrap();
         assert_eq!(summary.days[0].total_count, 204);
         assert_eq!(summary.days[0].tool_count, 1);
         assert_eq!(summary.open_counts[0], 203);

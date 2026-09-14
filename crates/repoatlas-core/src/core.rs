@@ -24,10 +24,10 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use uuid::Uuid;
 
-mod approvals;
-pub(crate) mod sessions;
 pub mod activity;
+mod approvals;
 mod modules;
+pub(crate) mod sessions;
 
 pub struct Core {
     conn: Connection,
@@ -2635,7 +2635,7 @@ impl Core {
             .map_err(Into::into)
     }
 
-   pub fn atlas_report(&self, project_id: &str) -> Result<AtlasReport> {
+    pub fn atlas_report(&self, project_id: &str) -> Result<AtlasReport> {
         let detail = self.get_project(project_id)?;
         let environment = self.inspect_project_environment(project_id).ok();
         Ok(AtlasReport {

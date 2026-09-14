@@ -1,5 +1,5 @@
-pub mod broker;
 pub mod agent_sessions;
+pub mod broker;
 pub mod core;
 pub mod db;
 pub mod detect;

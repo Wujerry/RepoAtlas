@@ -20,41 +20,55 @@ fn activity_history_aggregates_git_commits_and_project_events() {
 
     // Init git repo
     let _ = std::process::Command::new("git")
-        .args(&["init"])
+        .args(["init"])
         .current_dir(&repo_dir)
         .output();
     let _ = std::process::Command::new("git")
-        .args(&["config", "user.name", "TestUser"])
+        .args(["config", "user.name", "TestUser"])
         .current_dir(&repo_dir)
         .output();
     let _ = std::process::Command::new("git")
-        .args(&["config", "user.email", "test@example.com"])
+        .args(["config", "user.email", "test@example.com"])
         .current_dir(&repo_dir)
         .output();
     let _ = std::process::Command::new("git")
-        .args(&["add", "."])
+        .args(["add", "."])
         .current_dir(&repo_dir)
         .output();
     let _ = std::process::Command::new("git")
-        .args(&["commit", "-m", "initial commit for demo project"])
+        .args(["commit", "-m", "initial commit for demo project"])
         .current_dir(&repo_dir)
         .output();
 
     let core = Core::open_in_memory().unwrap();
-    let project = core.register_project_with_origin(&repo_dir, "test").unwrap();
+    let project = core
+        .register_project_with_origin(&repo_dir, "test")
+        .unwrap();
 
     // Explicit collection happens outside Core; reads never launch Git.
     let start = chrono::Utc::now().timestamp() - 86400;
     let end = start + 172800;
-    let target = core.prepare_history(Some(&project.id), start, end, true).unwrap().remove(0);
+    let target = core
+        .prepare_history(Some(&project.id), start, end, true)
+        .unwrap()
+        .remove(0);
     let cancel = AtomicBool::new(false);
-    let head = repoatlas_core::git::history_head(&target.path, &cancel).unwrap().unwrap();
-    let commits = repoatlas_core::git::history_batch(&target.path, &head, start, end, 0, &cancel).unwrap();
+    let head = repoatlas_core::git::history_head(&target.path, &cancel)
+        .unwrap()
+        .unwrap();
+    let commits =
+        repoatlas_core::git::history_batch(&target.path, &head, start, end, 0, &cancel).unwrap();
     core.persist_history_batch(&target, &commits).unwrap();
-    let history = core.get_activity_history(None, Some(&project.id), None, None, 50).unwrap();
+    let history = core
+        .get_activity_history(None, Some(&project.id), None, None, 50)
+        .unwrap();
     assert!(!history.days.is_empty(), "Days should not be empty");
     assert!(!history.items.is_empty(), "Items should not be empty");
-    let commit_item = history.items.iter().find(|it| it.category == "git").expect("git item exists");
+    let commit_item = history
+        .items
+        .iter()
+        .find(|it| it.category == "git")
+        .expect("git item exists");
     assert_eq!(commit_item.title, "initial commit for demo project");
     assert_eq!(commit_item.source, "git_history");
     assert!(commit_item.commit_sha.is_some());

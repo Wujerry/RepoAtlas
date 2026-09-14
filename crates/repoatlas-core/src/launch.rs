@@ -413,7 +413,7 @@ pub fn resume_session_app(adapter: &str, id: &str, cwd: &str) -> Result<()> {
     {
         let _ = program; // Discovery only: Store executables must not be spawned directly.
         resolve_project_dir(cwd)?;
-        return open_codex_session_uri(&url);
+        open_codex_session_uri(&url)
     }
     #[cfg(not(any(target_os = "macos", windows)))]
     let spec = LaunchSpec {

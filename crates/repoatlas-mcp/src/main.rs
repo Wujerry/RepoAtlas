@@ -554,20 +554,46 @@ fn call_with_cancel(
             Ok(serde_json::to_string_pretty(&hits).unwrap())
         }
         "list_agent_sessions" | "search_agent_sessions" => {
-            if name == "search_agent_sessions" { required_string(args, "query")?; }
-            let query = serde_json::from_value::<repoatlas_core::agent_sessions::SessionQuery>(args.clone()).map_err(|e|e.to_string())?;
-            serde_json::to_string(&core.search_agent_sessions(query).map_err(|e|e.to_string())?).map_err(|e|e.to_string())
+            if name == "search_agent_sessions" {
+                required_string(args, "query")?;
+            }
+            let query = serde_json::from_value::<repoatlas_core::agent_sessions::SessionQuery>(
+                args.clone(),
+            )
+            .map_err(|e| e.to_string())?;
+            serde_json::to_string(
+                &core
+                    .search_agent_sessions(query)
+                    .map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())
         }
-        "get_agent_session" => {
-            serde_json::to_string(&core.get_agent_session(required_string(args,"id")?).map_err(|e|e.to_string())?).map_err(|e|e.to_string())
-        }
+        "get_agent_session" => serde_json::to_string(
+            &core
+                .get_agent_session(required_string(args, "id")?)
+                .map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string()),
         "get_agent_session_messages" => {
             #[derive(Deserialize)]
             #[serde(deny_unknown_fields)]
-            struct Page { id:String, #[serde(default)] offset:usize, #[serde(default="page_limit")] limit:usize }
-            fn page_limit()->usize {50}
-            let p:Page=serde_json::from_value(args.clone()).map_err(|e|e.to_string())?;
-            serde_json::to_string(&core.agent_session_messages(&p.id,p.offset,p.limit).map_err(|e|e.to_string())?).map_err(|e|e.to_string())
+            struct Page {
+                id: String,
+                #[serde(default)]
+                offset: usize,
+                #[serde(default = "page_limit")]
+                limit: usize,
+            }
+            fn page_limit() -> usize {
+                50
+            }
+            let p: Page = serde_json::from_value(args.clone()).map_err(|e| e.to_string())?;
+            serde_json::to_string(
+                &core
+                    .agent_session_messages(&p.id, p.offset, p.limit)
+                    .map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())
         }
         "get_project" => {
             let id = required_string(args, "id")?;

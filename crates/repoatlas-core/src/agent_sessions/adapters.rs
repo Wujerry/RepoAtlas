@@ -945,7 +945,7 @@ fn wire_fields(bytes: &[u8]) -> Result<Vec<(u64, &[u8])>> {
     Ok(fields)
 }
 fn decode_hex(bytes: &[u8]) -> Option<Vec<u8>> {
-    if bytes.len() % 2 != 0 {
+    if !bytes.len().is_multiple_of(2) {
         return None;
     }
     bytes

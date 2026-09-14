@@ -138,7 +138,12 @@ pub fn log_raw_commits(path: &Path, limit: u32) -> Result<Vec<crate::models::Cac
     let limit = limit.clamp(1, 500).to_string();
     let raw = git_text(
         path,
-        &["log", "-n", &limit, "--format=%H%x1f%h%x1f%s%x1f%an%x1f%aI%x1f%cI%x1f%B%x1e"],
+        &[
+            "log",
+            "-n",
+            &limit,
+            "--format=%H%x1f%h%x1f%s%x1f%an%x1f%aI%x1f%cI%x1f%B%x1e",
+        ],
     )?;
     parse_history(&raw)
 }
@@ -404,7 +409,11 @@ fn git_run_raw(path: &Path, args: &[String]) -> Result<RawGitCommandResult> {
     git_run_raw_cancel(path, args, &std::sync::atomic::AtomicBool::new(false))
 }
 
-fn git_run_raw_cancel(path: &Path, args: &[String], cancel: &std::sync::atomic::AtomicBool) -> Result<RawGitCommandResult> {
+fn git_run_raw_cancel(
+    path: &Path,
+    args: &[String],
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<RawGitCommandResult> {
     // Porcelain paths are always relative to the checkout root, including
     // Projects explicitly registered at a directory inside that checkout.
     let root = repository_root(path).unwrap_or_else(|| path.to_path_buf());
@@ -425,7 +434,8 @@ fn git_run_raw_cancel(path: &Path, args: &[String], cancel: &std::sync::atomic::
     let deadline = Instant::now() + GIT_TIMEOUT;
     let status = loop {
         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-            let _ = child.kill(); let _ = child.wait();
+            let _ = child.kill();
+            let _ = child.wait();
             return Err(Error::msg("history collection canceled"));
         }
         match child.try_wait() {
@@ -573,6 +583,51 @@ fn now() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
+/// Bounded, cancellable local history reads. The caller must not hold the Core lock.
+pub fn history_head(path: &Path, cancel: &std::sync::atomic::AtomicBool) -> Result<Option<String>> {
+    let r = git_run_raw_cancel(
+        path,
+        &strings(&["rev-parse", "--verify", "--quiet", "HEAD"]),
+        cancel,
+    )?;
+    if r.ok {
+        Ok(Some(String::from_utf8_lossy(&r.stdout).trim().to_owned()))
+    } else if r.stderr.is_empty() {
+        Ok(None)
+    } else {
+        Err(Error::msg("Unable to read local Git HEAD"))
+    }
+}
+pub fn history_batch(
+    path: &Path,
+    head: &str,
+    start: i64,
+    end: i64,
+    skip: usize,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<Vec<crate::models::CachedGitCommit>> {
+    if !head.bytes().all(|b| b.is_ascii_hexdigit()) || head.len() < 40 {
+        return Err(Error::msg("invalid history HEAD"));
+    }
+    let args = vec![
+        "log".into(),
+        head.into(),
+        "--max-count=500".into(),
+        format!("--skip={skip}"),
+        format!("--since-as-filter=@{start}"),
+        format!("--until=@{}", end - 1),
+        "--format=%H%x1f%h%x1f%s%x1f%an%x1f%aI%x1f%cI%x1f%B%x1e".into(),
+    ];
+    let r = git_run_raw_cancel(path, &args, cancel)?;
+    if !r.ok {
+        return Err(Error::msg("Unable to read local Git history"));
+    }
+    if r.stdout.len() >= MAX_GIT_OUTPUT_BYTES {
+        return Err(Error::msg("Git history batch exceeds output limit"));
+    }
+    parse_history(&String::from_utf8_lossy(&r.stdout))
+}
+
 #[cfg(test)]
 mod tests {
     use super::parse_porcelain;
@@ -652,24 +707,9 @@ mod tests {
         let cancel = std::sync::atomic::AtomicBool::new(true);
         let started = std::time::Instant::now();
         let error = super::git_run_raw_cancel(directory.path(), &["--version".into()], &cancel)
-            .err().expect("a canceled history request must not succeed");
+            .err()
+            .expect("a canceled history request must not succeed");
         assert!(error.to_string().contains("canceled"));
         assert!(started.elapsed() < std::time::Duration::from_secs(2));
     }
-}
-
-/// Bounded, cancellable local history reads. The caller must not hold the Core lock.
-pub fn history_head(path: &Path, cancel: &std::sync::atomic::AtomicBool) -> Result<Option<String>> {
-    let r=git_run_raw_cancel(path,&strings(&["rev-parse","--verify","--quiet","HEAD"]),cancel)?;
-    if r.ok { Ok(Some(String::from_utf8_lossy(&r.stdout).trim().to_owned())) }
-    else if r.stderr.is_empty() { Ok(None) }
-    else { Err(Error::msg("Unable to read local Git HEAD")) }
-}
-pub fn history_batch(path: &Path, head: &str, start:i64,end:i64,skip:usize,cancel:&std::sync::atomic::AtomicBool)->Result<Vec<crate::models::CachedGitCommit>> {
-    if !head.bytes().all(|b|b.is_ascii_hexdigit()) || head.len()<40 { return Err(Error::msg("invalid history HEAD")); }
-    let args=vec!["log".into(),head.into(),"--max-count=500".into(),format!("--skip={skip}"),format!("--since-as-filter=@{start}"),format!("--until=@{}",end-1),"--format=%H%x1f%h%x1f%s%x1f%an%x1f%aI%x1f%cI%x1f%B%x1e".into()];
-    let r=git_run_raw_cancel(path,&args,cancel)?;
-    if !r.ok {return Err(Error::msg("Unable to read local Git history"));}
-    if r.stdout.len()>=MAX_GIT_OUTPUT_BYTES {return Err(Error::msg("Git history batch exceeds output limit"));}
-    parse_history(&String::from_utf8_lossy(&r.stdout))
 }
