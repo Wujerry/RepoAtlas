@@ -452,6 +452,43 @@ export interface DashboardSnapshot {
   attentionPreview: AttentionItem[];
 }
 
+export interface ActivityHistoryDaySummary {
+  date: string;
+  totalCount: number;
+  gitCount: number;
+  taskCount: number;
+  toolCount: number;
+  maintenanceCount: number;
+}
+
+export interface ActivityHistoryItem {
+  id: string;
+  projectId: string;
+  projectName: string;
+  canonicalPath: string;
+  category: "git" | "task" | "tool" | "open" | "maintenance" | string;
+  kind: string;
+  title: string;
+  detail?: string | null;
+  occurredAt: string;
+  source: "git_history" | "repoatlas" | string;
+  runId?: string | null;
+  commitSha?: string | null;
+  commitShortSha?: string | null;
+  authorName?: string | null;
+  authorDate?: string | null;
+  taskStatus?: string | null;
+  taskDurationMs?: number | null;
+}
+
+export interface ActivityHistoryResponse {
+  days: ActivityHistoryDaySummary[];
+  items: ActivityHistoryItem[];
+  nextCursor?: string | null;
+  selectedDate?: string | null;
+  totalDays: number;
+}
+
 export interface ScanProgress {
   scanId: string;
   rootPath: string;
@@ -597,3 +634,14 @@ export interface McpSetupInfo {
   binaryOrigin?: "installed" | "development" | null;
   workspacePath: string | null;
 }
+
+export interface ActivityQuery { startAt: number; endAt: number; projectId?: string; category?: string; search?: string; cursor?: string; limit?: number }
+export interface ActivityDayRange { date: string; startAt: number; endAt: number }
+export interface ActivitySummary {
+  days: ActivityHistoryDaySummary[]; openCounts: number[]; projectCounts: number[]; latestAt?: number | null;
+  projects: { id: string; name: string }[];
+  coverage: { projectId: string; startAt: number; endAt: number; checkedAt: number; head?: string | null; error?: string | null }[];
+}
+export interface HistoryRefreshRequest { projectId?: string; startAt: number; endAt: number; force: boolean }
+export interface HistoryRefreshStatus { id: string; state: string; completed: number; total: number; commits: number; failures: string[] }
+export type { AgentSession, SessionSource, SessionCapabilities, SessionMessage, SessionMessagePage, SessionSearchHit, SessionSearchResult, SessionQuery, SessionRefreshJob, SessionResumeSpec } from "./lib/sessions";

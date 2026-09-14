@@ -1,8 +1,13 @@
 .home-dashboard {
   min-width: 0;
   min-height: 0;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  box-sizing: border-box;
+  align-self: stretch;
   height: 100%;
-  padding: 28px clamp(20px, 3vw, 44px) 48px;
+  padding: 28px 32px 40px;
   overflow: auto;
   background: var(--bg);
 }
@@ -133,3 +138,26 @@
   .dashboard-collection, .dashboard-attention-item, .dashboard-project, .dashboard-run { transition: none; }
   .dashboard-collection:hover, .dashboard-attention-item:hover, .dashboard-project:hover, .dashboard-run:hover { transform: none; }
 }
+
+/* Start with decisions, then supporting history. */
+.home-dashboard-header { align-items: center; margin-bottom: 18px; }
+.home-dashboard-header h1 { font-size: 26px; }
+.home-dashboard-header .eyebrow { display: none; }
+.home-dashboard-header p { font-size: 12px; margin-top: 6px; }
+.home-status-strip { display: flex; align-items: center; gap: 24px; padding: 12px 0 18px; margin-bottom: 18px; border-bottom: 1px solid var(--line); }
+.home-status-strip > div { display: flex; align-items: baseline; gap: 8px; font-size: 11px; color: var(--muted); }
+.home-status-strip strong { color: var(--text); font-size: 16px; font-weight: 580; }
+.home-status-strip > button { margin-left: auto; }
+.home-dashboard .ah-continue-header { margin-bottom: 12px; }
+.home-dashboard .ah-continue h2 { font-size: 15px; }
+.home-dashboard .ah-section-icon { width: 30px; height: 30px; font-size: 17px; }
+.home-dashboard .dashboard-section { padding: 18px 0; border-radius: 0; background: transparent; }
+.home-dashboard .dashboard-section-heading .eyebrow { display: none; }
+.home-dashboard .dashboard-section-heading h2 { font-size: 15px; }
+.home-dashboard .dashboard-project { padding-block: 12px; }
+.home-dashboard .dashboard-content-grid { gap: 26px; }
+.home-dashboard section[hidden] { display: none; }
+@media (max-width: 1199px) { .home-dashboard { padding: 22px; } .home-status-strip { gap: 14px; flex-wrap: wrap; } }
+
+.home-dashboard .dashboard-content-grid[hidden] { display: none; }
+.home-dashboard .dashboard-content-grid.is-single { grid-template-columns: minmax(0, 1fr); }

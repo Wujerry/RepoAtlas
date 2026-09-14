@@ -13,6 +13,16 @@ export type Copy = {
   skip: string;
   homeAria: string;
   navAria: string;
+  navSessions: string;
+  sessionsTitle: string;
+  sessionsBody: string;
+  sessionsSteps: Cell[];
+  sessionsAgents: string;
+  sessionsNote: string;
+  sessionsImageAlt: string;
+  resumeImageAlt: string;
+  resumeImageLabel: string;
+  showcaseCaption: string;
   navTasks: string;
   navLibrary: string;
   navSafety: string;
@@ -59,9 +69,19 @@ const marqueeCommands = [
 export const copy: Record<Locale, Copy> = {
   "en": {
     "lang": "en",
+    "sessionsImageAlt": "RepoAtlas Sessions with a cross-Agent session list and the selected coding conversation",
+    "resumeImageAlt": "RepoAtlas resume dialog showing CLI and App choices, a working directory and a session command",
+    "resumeImageLabel": "See the resume options",
+    "showcaseCaption": "Captured from the desktop app with fictional demonstration data.",
+    "navSessions": "Sessions",
+    "sessionsTitle": "Find the conversation. Continue the work.",
+    "sessionsBody": "Search coding sessions across Agents in one place. Preview the conversation, find its Project, and reopen the selected session in the original Agent.",
+    "sessionsSteps": [{"title": "Authorize your history sources", "body": "Review the absolute directories individually or use Authorize all. You choose which histories RepoAtlas indexes locally and exposes to connected MCP clients."}, {"title": "Search and preview", "body": "Search across Agents, or narrow by Project, date and archive status. Read matching messages before deciding which conversation to continue."}, {"title": "Resume the selected session", "body": "Review the command and working directory. Choose CLI or a supported App entry, then continue with the original Agent and session ID."}],
+    "sessionsAgents": "Claude Code · Codex CLI · OpenCode · Cursor CLI · Gemini CLI · GitHub Copilot CLI · Kimi Code · Qwen Code",
+    "sessionsNote": "History access is read-only. Revoking a source clears its local index without deleting Agent history. Resume requires the installed Agent and an available session; accounts and model access stay with the Agent.",
     "dir": "ltr",
-    "title": "RepoAtlas: local projects, Git, and development tasks",
-    "description": "Find local projects, inspect files and Git changes, run development tasks, and review logs in one desktop app.",
+    "title": "RepoAtlas: projects, Agent sessions, and development tasks",
+    "description": "Find local projects, search Agent sessions, resume coding conversations, and run development tasks in one desktop app.",
     "skip": "Skip to content",
     "homeAria": "RepoAtlas home",
     "navAria": "Primary navigation",
@@ -77,14 +97,14 @@ export const copy: Record<Locale, Copy> = {
         "text": "Your projects in one place."
       },
       {
-        "text": "Run, build, and check.",
+        "text": "Pick up where you left off.",
         "accent": true
       }
     ],
-    "heroSub": "Find projects by name, path, or technology. Open your editor, inspect Git changes, preview files, and run saved development tasks from the same window.",
+    "heroSub": "Open a Project, resume a coding session, or run a saved task. Keep your local projects, Agent history, Git changes, and development tools within reach.",
     "ctaPrimary": "View releases",
-    "ctaSecondary": "Explore tasks",
-    "heroImageAlt": "RepoAtlas project library showing folders, project details, Git status, and launch buttons",
+    "ctaSecondary": "Explore Sessions",
+    "heroImageAlt": "RepoAtlas home workspace showing recent Agent sessions, project icons, recent Projects and task runs",
     "marqueeAria": "Examples of commands saved as tasks",
     "marqueeCommands": marqueeCommands,
     "tasksTitle": "Save a task. Run it again when you need it.",
@@ -129,8 +149,8 @@ export const copy: Record<Locale, Copy> = {
         "body": "Browse folders, search paths, and read Markdown, source code, and images without opening an editor."
       },
       {
-        "title": "Collections and recent projects",
-        "body": "Group related projects, mark favorites, and return to recently opened work. Failed tasks and unavailable projects appear in the attention center."
+        "title": "Workspace and recent projects",
+        "body": "Start with recent sessions, project icons, recent Projects and task runs. Open a Project from its title; use collections and favorites to organize your library."
       },
       {
         "title": "Editors, terminals, and coding agents",
@@ -150,14 +170,24 @@ export const copy: Record<Locale, Copy> = {
     "closeBody": "Add a Scan Root, review the discovered projects, and save the commands you use most often. The source and setup instructions are on GitHub.",
     "closePrimary": "View source",
     "closeSecondary": "Contribute",
-    "footerBlurb": "Windows x64 beta · macOS testing pending · MIT license",
+    "footerBlurb": "0.1.0 · Windows UNSIGNED · macOS experimental, not notarized · Signed updates · MIT",
     "footerSecurity": "Security policy"
   },
   "zh": {
     "lang": "zh-CN",
+    "sessionsImageAlt": "RepoAtlas Sessions：跨 Agent 会话列表与选中对话的消息预览",
+    "resumeImageAlt": "RepoAtlas 恢复面板：CLI 与 App 选择、工作目录和指定会话命令",
+    "resumeImageLabel": "查看继续会话的启动选项",
+    "showcaseCaption": "桌面应用实拍，图中使用虚构演示数据。",
+    "navSessions": "Sessions",
+    "sessionsTitle": "找到那次对话，接着往下做。",
+    "sessionsBody": "在同一个入口搜索不同 Agent 的编码会话。先预览对话、找到所属项目，再回到原 Agent 继续指定会话。",
+    "sessionsSteps": [{"title": "授权历史来源", "body": "逐项确认历史目录的绝对路径，也可以使用“全部授权”。由你决定哪些历史进入本地索引，并允许已连接的 MCP 客户端读取。"}, {"title": "搜索并预览对话", "body": "默认跨 Agent 搜索，也可按项目、日期和归档状态筛选。先读匹配消息，再决定从哪次对话继续。"}, {"title": "恢复指定会话", "body": "查看命令和工作目录，选择 CLI 或支持恢复的 App 入口，再使用原 Agent 和原会话 ID 继续工作。"}],
+    "sessionsAgents": "Claude Code · Codex CLI · OpenCode · Cursor CLI · Gemini CLI · GitHub Copilot CLI · Kimi Code · Qwen Code",
+    "sessionsNote": "历史读取不修改原文件。撤销来源会清理本地索引，不删除 Agent 历史。恢复需要已安装的 Agent 和可用会话；账号、模型及访问权限由 Agent 管理。",
     "dir": "ltr",
-    "title": "RepoAtlas：本地项目管理、Git 与开发任务",
-    "description": "集中查找本地项目，查看文件和 Git 改动，运行开发任务，保留日志与运行记录。",
+    "title": "RepoAtlas：本地项目、Agent 会话与开发任务",
+    "description": "集中管理本地项目，搜索 Agent 编码会话、继续上次工作，运行开发任务并查看 Git 改动。",
     "skip": "跳到主要内容",
     "homeAria": "RepoAtlas 中文首页",
     "navAria": "主导航",
@@ -176,17 +206,17 @@ export const copy: Record<Locale, Copy> = {
         "text": "集中管理。"
       },
       {
-        "text": "开发到打包，"
+        "text": "找到上次进度，"
       },
       {
-        "text": "点击运行。",
+        "text": "接着做。",
         "accent": true
       }
     ],
-    "heroSub": "按名称、路径和技术栈查找项目，打开编辑器和终端，查看 Git 改动与项目文件。常用开发命令保存为任务，下次打开即可运行。",
+    "heroSub": "打开项目、继续编码会话，或运行已保存的任务。本地项目、Agent 历史、Git 改动和开发工具，都从同一个工作台进入。",
     "ctaPrimary": "查看发布版本",
-    "ctaSecondary": "查看任务功能",
-    "heroImageAlt": "RepoAtlas 项目库：文件夹目录、项目详情、Git 状态与工具启动按钮",
+    "ctaSecondary": "了解 Sessions",
+    "heroImageAlt": "RepoAtlas 首页工作台：最近 Agent 会话、项目图标、最近项目与任务运行",
     "marqueeAria": "可保存为任务的常用命令示例",
     "marqueeCommands": marqueeCommands,
     "tasksTitle": "常用命令存成任务，开发、测试、打包直接运行。",
@@ -231,8 +261,8 @@ export const copy: Record<Locale, Copy> = {
         "body": "展开目录、搜索路径，直接阅读 Markdown、源代码和图片，快速查看项目内容。"
       },
       {
-        "title": "项目集合与最近访问",
-        "body": "把相关项目放进集合，收藏常用项目，从最近访问继续工作。失败任务和不可用项目集中显示在待处理中心。"
+        "title": "工作台与最近项目",
+        "body": "工作台集中显示最近会话、项目图标、最近项目和运行记录。点击项目标题直接进入项目，用收藏和集合整理项目库。"
       },
       {
         "title": "编辑器、终端与编码 Agent",
@@ -252,7 +282,7 @@ export const copy: Record<Locale, Copy> = {
     "closeBody": "添加扫描根目录，查看发现的项目，再保存常用开发命令。源码和安装说明都在 GitHub。",
     "closePrimary": "查看源码",
     "closeSecondary": "参与贡献",
-    "footerBlurb": "Windows x64 Beta · macOS 待实机验证 · MIT 开源",
+    "footerBlurb": "0.1.0 · Windows 未签名 · macOS 实验版、未公证 · 更新包签名验证 · MIT 开源",
     "footerSecurity": "安全策略"
   }
 };

@@ -96,6 +96,17 @@ _Avoid_: Task, command
 
 ## Agent integration
 
+**Agent Session**: An external Agent's existing local conversation, identified by
+its source and Session ID. RepoAtlas indexes authorized visible user/assistant text
+and launches the source Agent to resume it. Conversation ownership remains external.
+
+**Session Source**: An explicitly authorized absolute Agent history directory.
+Authorization permits local indexing and read-only MCP access; it is separate from
+a Scan Root and never grants Project discovery authorization.
+
+**Sessions / Continue Coding**: Search authorized history across Agents, associate
+sessions with Projects, and continue a selected session in its original Agent/cwd.
+
 **Project Brief**:
 A structured local view of a Project's detected facts, environment, tasks, recent runs, and recent activity.
 _Avoid_: AI Summary, README replacement

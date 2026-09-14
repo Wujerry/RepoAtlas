@@ -2,6 +2,9 @@
 
 Status: Accepted
 
+Extension: ADR 0027 permits indexing explicitly authorized external session history
+and source-Agent resume. Conversation ownership and model execution remain external.
+
 ## Context
 
 RepoAtlas already launches installed coding agents and exposes typed local project and task capabilities over MCP. Its built-in provider profiles, summaries, project chat, and AI Memory duplicated the stronger model, context, and conversation workflows those agents already provide. Maintaining both paths blurred the product boundary and required RepoAtlas to own credentials, model protocols, and project-data disclosure without improving its core project-management workflow.
@@ -13,6 +16,8 @@ RepoAtlas does not host model providers, model credentials, project chat, genera
 RepoAtlas remains the local control plane around that Agent: it opens the Agent at a Project location, exposes structured Projects, Scan Roots, detected facts, task definitions, Task Runs, and reports through MCP, and turns protected execution requests into desktop Pending Approvals. Existing MCP prohibitions on Git writes, shell evaluation, arbitrary command execution, and filesystem deletion remain unchanged.
 
 The stdio adapter keeps database requests ordered on one bounded worker. Its input loop remains responsive while that worker runs, so MCP cancellation notifications can stop long Scan Root operations without creating a parallel persistence or policy path.
+
+Each stdio MCP process belongs to its external client connection, not the desktop window. Closing the desktop must not terminate other clients' MCP processes. On stdin EOF/read failure or stdout write/flush failure, the adapter cancels active scans and stops dispatching queued requests. A five-second shutdown deadline bounds remaining work or blocked pipes; it terminates only the current adapter process. A connection whose pipes remain open and idle is not treated as disconnected.
 
 Legacy AI tables and records remain readable through database upgrades, backup, import, and export paths so removing the feature does not destroy user data. They are not exposed in the desktop interface or MCP, and RepoAtlas performs no new external model requests.
 

@@ -384,6 +384,8 @@ pub fn backup_to(conn: &Connection, dest: &Path) -> Result<()> {
     backup.run_to_completion(1000, std::time::Duration::from_millis(50), None)?;
     drop(backup);
     crate::db::sanitize_project_remotes(&backup_conn)?;
+    // A copied database is not authorization to read another machine's histories.
+    backup_conn.execute_batch("UPDATE agent_session_sources SET enabled=0,last_scanned_at=NULL,last_error=NULL; DELETE FROM agent_sessions; DELETE FROM agent_session_files;")?;
     backup_conn.execute_batch("VACUUM")?;
     Ok(())
 }

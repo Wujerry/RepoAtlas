@@ -34,7 +34,8 @@ fn git_waiting_for_a_hook_keeps_core_available_for_other_operations() {
     let core = Core::open_in_memory().unwrap();
     let project = core.register_project(&root).unwrap();
     let state = Arc::new(AppState {
-        core: Mutex::new(core),
+        core: Arc::new(Mutex::new(core)),
+        history: HistoryRefreshManager::default(),
         broker: Broker::new(dir.path().join("logs")).unwrap(),
         cancel: Arc::new(AtomicBool::new(false)),
         runtime_configs: Mutex::new(HashMap::new()),

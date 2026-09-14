@@ -133,6 +133,50 @@ pub fn log(path: &Path, limit: u32) -> Result<Vec<GitLogEntry>> {
         .collect())
 }
 
+pub fn log_raw_commits(path: &Path, limit: u32) -> Result<Vec<crate::models::CachedGitCommit>> {
+    ensure_git(path)?;
+    let limit = limit.clamp(1, 500).to_string();
+    let raw = git_text(
+        path,
+        &["log", "-n", &limit, "--format=%H%x1f%h%x1f%s%x1f%an%x1f%aI%x1f%cI%x1f%B%x1e"],
+    )?;
+    parse_history(&raw)
+}
+
+fn parse_history(raw: &str) -> Result<Vec<crate::models::CachedGitCommit>> {
+    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let mut commits = Vec::new();
+    for entry in raw.split('\u{1e}') {
+        let trimmed = entry.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = trimmed.split('\u{1f}').collect();
+        if parts.len() >= 6 {
+            let sha = parts[0].trim().to_string();
+            let short_sha = parts[1].trim().to_string();
+            let subject = parts[2].trim().to_string();
+            let author_name = parts[3].trim().to_string();
+            let author_date = parts[4].trim().to_string();
+            let commit_date = parts[5].trim().to_string();
+            let message = parts.get(6).unwrap_or(&"").trim().to_string();
+            commits.push(crate::models::CachedGitCommit {
+                id: String::new(), // set by caller or DB
+                project_id: String::new(),
+                sha,
+                short_sha,
+                subject,
+                author_name,
+                author_date,
+                commit_date,
+                message,
+                cached_at: now.clone(),
+            });
+        }
+    }
+    Ok(commits)
+}
+
 pub fn execute(path: &Path, mut op: GitOp) -> Result<GitCommandResult> {
     ensure_git(path)?;
     if let GitOp::Unstage { paths } = &mut op {
@@ -357,6 +401,10 @@ struct RawGitCommandResult {
 }
 
 fn git_run_raw(path: &Path, args: &[String]) -> Result<RawGitCommandResult> {
+    git_run_raw_cancel(path, args, &std::sync::atomic::AtomicBool::new(false))
+}
+
+fn git_run_raw_cancel(path: &Path, args: &[String], cancel: &std::sync::atomic::AtomicBool) -> Result<RawGitCommandResult> {
     // Porcelain paths are always relative to the checkout root, including
     // Projects explicitly registered at a directory inside that checkout.
     let root = repository_root(path).unwrap_or_else(|| path.to_path_buf());
@@ -376,6 +424,10 @@ fn git_run_raw(path: &Path, args: &[String]) -> Result<RawGitCommandResult> {
     let stderr = child.stderr.take().map(read_pipe_limited);
     let deadline = Instant::now() + GIT_TIMEOUT;
     let status = loop {
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            let _ = child.kill(); let _ = child.wait();
+            return Err(Error::msg("history collection canceled"));
+        }
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
@@ -593,4 +645,31 @@ mod tests {
             "https://[::1]:8443/repo.git"
         );
     }
+
+    #[test]
+    fn history_cancellation_terminates_the_spawned_process() {
+        let directory = tempfile::tempdir().unwrap();
+        let cancel = std::sync::atomic::AtomicBool::new(true);
+        let started = std::time::Instant::now();
+        let error = super::git_run_raw_cancel(directory.path(), &["--version".into()], &cancel)
+            .err().expect("a canceled history request must not succeed");
+        assert!(error.to_string().contains("canceled"));
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    }
+}
+
+/// Bounded, cancellable local history reads. The caller must not hold the Core lock.
+pub fn history_head(path: &Path, cancel: &std::sync::atomic::AtomicBool) -> Result<Option<String>> {
+    let r=git_run_raw_cancel(path,&strings(&["rev-parse","--verify","--quiet","HEAD"]),cancel)?;
+    if r.ok { Ok(Some(String::from_utf8_lossy(&r.stdout).trim().to_owned())) }
+    else if r.stderr.is_empty() { Ok(None) }
+    else { Err(Error::msg("Unable to read local Git HEAD")) }
+}
+pub fn history_batch(path: &Path, head: &str, start:i64,end:i64,skip:usize,cancel:&std::sync::atomic::AtomicBool)->Result<Vec<crate::models::CachedGitCommit>> {
+    if !head.bytes().all(|b|b.is_ascii_hexdigit()) || head.len()<40 { return Err(Error::msg("invalid history HEAD")); }
+    let args=vec!["log".into(),head.into(),"--max-count=500".into(),format!("--skip={skip}"),format!("--since-as-filter=@{start}"),format!("--until=@{}",end-1),"--format=%H%x1f%h%x1f%s%x1f%an%x1f%aI%x1f%cI%x1f%B%x1e".into()];
+    let r=git_run_raw_cancel(path,&args,cancel)?;
+    if !r.ok {return Err(Error::msg("Unable to read local Git history"));}
+    if r.stdout.len()>=MAX_GIT_OUTPUT_BYTES {return Err(Error::msg("Git history batch exceeds output limit"));}
+    parse_history(&String::from_utf8_lossy(&r.stdout))
 }

@@ -121,6 +121,336 @@ pub fn open_in_agent(path: &str, agent_id: &str) -> Result<()> {
     spawn_spec(spec_for_agent(spec, &dir))
 }
 
+pub fn session_agent_program(agent_id: &str) -> Result<String> {
+    let agent_id = if agent_id == "opencode" {
+        "opencode-cli"
+    } else {
+        agent_id
+    };
+    discover_agents()
+        .into_iter()
+        .find(|(t, b)| t.id == agent_id && b.cli)
+        .map(|(_, b)| paths::path_to_string(&b.program))
+        .ok_or_else(|| Error::msg("session_agent_missing"))
+}
+
+pub fn resume_session(
+    path: &str,
+    agent_id: &str,
+    args: &[String],
+    env: &std::collections::BTreeMap<String, String>,
+) -> Result<()> {
+    let agent_id = if agent_id == "opencode" {
+        "opencode-cli"
+    } else {
+        agent_id
+    };
+    let dir = resolve_project_dir(path)?;
+    let (_, mut binary) = discover_agents()
+        .into_iter()
+        .find(|(t, b)| t.id == agent_id && b.cli)
+        .ok_or_else(|| Error::msg("session_agent_missing"))?;
+    validate_session_cli(&binary, &dir, env)?;
+    binary.extra_args = args.iter().map(OsString::from).collect();
+    #[cfg(target_os = "macos")]
+    {
+        let exports = env
+            .iter()
+            .map(|(key, value)| format!("export {key}={}; ", shell_single_quote(value)))
+            .collect::<String>();
+        let command = format!(
+            "{exports}cd {} && {} {}",
+            shell_single_quote(&paths::path_to_string(&dir)),
+            shell_single_quote(&paths::path_to_string(&binary.program)),
+            args.iter()
+                .map(|a| shell_single_quote(a))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        let script = format!(
+            "tell application \"Terminal\"\n do script \"{}\"\n activate\nend tell",
+            apple_script_string(&command)
+        );
+        spawn_spec(LaunchSpec {
+            program: PathBuf::from("osascript"),
+            args: vec!["-e".into(), script.into()],
+            current_dir: None,
+            windows_mode: WindowsMode::Gui,
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let spec = windows_session_spec(binary, &dir, env);
+        #[cfg(windows)]
+        if let Some((_, terminal)) = discover_terminals()
+            .into_iter()
+            .find(|(tool, _)| tool.id == "windows-terminal")
+        {
+            // Explicitly name the child shell and every argument. Terminal owns its
+            // console handles instead of inheriting the GUI parent's redirected IO.
+            let mut args = vec![
+                "new-tab".into(),
+                "--startingDirectory".into(),
+                dir.as_os_str().to_owned(),
+                spec.program.into_os_string(),
+            ];
+            args.extend(spec.args);
+            return spawn_spec(LaunchSpec {
+                program: terminal.program,
+                args,
+                current_dir: None,
+                windows_mode: WindowsMode::Gui,
+            });
+        }
+        spawn_spec(spec)
+    }
+}
+
+/// Probe only on an explicit resume action, never while loading/indexing history.
+/// This catches broken npm shims and missing runtimes before opening a terminal.
+fn validate_session_cli(
+    binary: &ToolBinary,
+    dir: &Path,
+    env: &std::collections::BTreeMap<String, String>,
+) -> Result<()> {
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+    #[cfg(windows)]
+    let mut command = {
+        let probe = ToolBinary {
+            program: binary.program.clone(),
+            extra_args: vec!["--version".into()],
+            cli: true,
+        };
+        let mut spec = windows_cli_agent_spec(probe, dir);
+        spec.args.retain(|arg| arg != "-NoExit");
+        let script = spec.args.pop().expect("version probe command");
+        let mut command = Command::new(spec.program);
+        command.args(spec.args);
+        // Propagate native exit status; PowerShell otherwise exits zero after errors.
+        command.arg(format!(
+            "$ErrorActionPreference = 'Stop'; try {{ {}; exit $LASTEXITCODE }} catch {{ exit 1 }}",
+            script.to_string_lossy()
+        ));
+        command
+    };
+    #[cfg(not(windows))]
+    let mut command = {
+        let mut c = Command::new(&binary.program);
+        c.arg("--version");
+        c
+    };
+    command
+        .current_dir(dir)
+        .envs(env)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    suppress_console_window(&mut command);
+    let mut child = command
+        .spawn()
+        .map_err(|_| Error::msg("session_cli_unavailable"))?;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                return if status.success() {
+                    Ok(())
+                } else {
+                    Err(Error::msg("session_cli_unavailable"))
+                }
+            }
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(40)),
+            _ => {
+                #[cfg(windows)]
+                {
+                    let mut kill =
+                        Command::new(windows_system_root().join("System32/taskkill.exe"));
+                    kill.args(["/PID", &child.id().to_string(), "/T", "/F"]);
+                    suppress_console_window(&mut kill);
+                    let _ = kill.stdout(Stdio::null()).stderr(Stdio::null()).status();
+                }
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(Error::msg("session_cli_probe_timeout"));
+            }
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn windows_session_spec(
+    binary: ToolBinary,
+    dir: &Path,
+    env: &std::collections::BTreeMap<String, String>,
+) -> LaunchSpec {
+    let mut spec = spec_for_cli_agent(binary, dir);
+    let exports = env
+        .iter()
+        .map(|(key, value)| format!("$env:{key} = '{}'; ", value.replace('\'', "''")))
+        .collect::<String>();
+    let command = spec.args.pop().expect("CLI resume command");
+    let script = format!("$ErrorActionPreference = 'Stop'; {exports}try {{ {} ; if ($LASTEXITCODE -ne 0) {{ Write-Host ('Agent exit code: ' + $LASTEXITCODE) -ForegroundColor Red }} }} catch {{ Write-Host $_ -ForegroundColor Red }}", command.to_string_lossy());
+    use base64::Engine;
+    let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    spec.args.pop(); // Replace -Command with an encoded UTF-16 command, preserving literal quotes.
+    spec.args.push("-EncodedCommand".into());
+    spec.args.push(
+        base64::engine::general_purpose::STANDARD
+            .encode(bytes)
+            .into(),
+    );
+    spec
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionAppTarget {
+    pub id: String,
+    pub name: String,
+    pub can_resume: bool,
+}
+
+fn codex_app() -> Option<PathBuf> {
+    let direct = find_first(&[
+        applications("Codex.app"),
+        local_app_data().map(|p| p.join("Programs/Codex/Codex.exe")),
+        local_app_data().map(|p| p.join("OpenAI/Codex/Codex.exe")),
+    ]);
+    if direct.is_some() {
+        return direct;
+    }
+    #[cfg(windows)]
+    if let Some(root) = program_files().map(|p| p.join("WindowsApps")) {
+        if let Ok(entries) = std::fs::read_dir(root) {
+            let mut paths: Vec<_> = entries
+                .flatten()
+                .filter(|e| e.file_name().to_string_lossy().starts_with("OpenAI.Codex_"))
+                .map(|e| e.path().join("app/Codex.exe"))
+                .filter(|p| p.is_file())
+                .collect();
+            paths.sort();
+            if let Some(path) = paths.pop() {
+                return Some(path);
+            }
+        }
+    }
+    #[cfg(windows)]
+    {
+        // Store packages can be queried even when WindowsApps cannot be enumerated.
+        let mut command = Command::new(
+            windows_system_root().join("System32/WindowsPowerShell/v1.0/powershell.exe"),
+        );
+        command.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "(Get-AppxPackage -Name OpenAI.Codex | Select-Object -First 1).InstallLocation",
+        ]);
+        suppress_console_window(&mut command);
+        if let Ok(output) = command.output() {
+            let root = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+            if !root.is_empty() {
+                let path = PathBuf::from(root).join("app/Codex.exe");
+                if path.is_file() {
+                    return Some(path);
+                }
+            }
+        }
+    }
+    None
+}
+pub fn session_app_target(adapter: &str) -> Option<SessionAppTarget> {
+    if adapter == "codex" {
+        return codex_app().map(|_| SessionAppTarget {
+            id: "codex-app".into(),
+            name: "Codex App".into(),
+            can_resume: true,
+        });
+    }
+    if adapter == "claude" {
+        return find_first(&[
+            applications("Claude.app"),
+            local_app_data().map(|p| p.join("AnthropicClaude/claude.exe")),
+            local_app_data().map(|p| p.join("Programs/Claude/Claude.exe")),
+        ])
+        .map(|_| SessionAppTarget {
+            id: "claude-app".into(),
+            name: "Claude App".into(),
+            can_resume: false,
+        });
+    }
+    let id = match adapter {
+        "opencode" => "opencode",
+        "kimi" => "kimi-desktop",
+        "cursor-cli" => "cursor",
+        _ => return None,
+    };
+    discover_agents()
+        .into_iter()
+        .find(|(t, b)| t.id == id && !b.cli)
+        .map(|(t, _)| SessionAppTarget {
+            id: t.id,
+            name: t.name,
+            can_resume: false,
+        })
+}
+pub fn resume_session_app(adapter: &str, id: &str, cwd: &str) -> Result<()> {
+    crate::agent_sessions::resume_args(adapter, id)?;
+    if adapter != "codex" {
+        return Err(Error::msg("session_app_resume_unsupported"));
+    }
+    let program = codex_app().ok_or_else(|| Error::msg("session_agent_missing"))?;
+    let url = format!("codex://threads/{id}");
+    #[cfg(target_os = "macos")]
+    let spec = LaunchSpec {
+        program: "open".into(),
+        args: vec!["-a".into(), program.into_os_string(), url.into()],
+        current_dir: None,
+        windows_mode: WindowsMode::Gui,
+    };
+    #[cfg(windows)]
+    {
+        let _ = program; // Discovery only: Store executables must not be spawned directly.
+        resolve_project_dir(cwd)?;
+        return open_codex_session_uri(&url);
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    let spec = LaunchSpec {
+        program,
+        args: vec![url.into()],
+        current_dir: Some(resolve_project_dir(cwd)?),
+        windows_mode: WindowsMode::Gui,
+    };
+    #[cfg(not(windows))]
+    spawn_spec(spec)
+}
+
+#[cfg(windows)]
+fn open_codex_session_uri(url: &str) -> Result<()> {
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    let operation: Vec<u16> = "open".encode_utf16().chain(Some(0)).collect();
+    let uri: Vec<u16> = url.encode_utf16().chain(Some(0)).collect();
+    // SAFETY: Both strings are NUL-terminated and live through the synchronous
+    // call. Optional arguments are null. No executable path or shell is evaluated.
+    let result = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            operation.as_ptr(),
+            uri.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            1,
+        )
+    } as isize;
+    if result <= 32 {
+        return Err(Error::msg(format!(
+            "Codex App protocol launch failed (Windows code {result}). Open Codex App once to register its codex:// handler, or select Codex CLI to resume this session."
+        )));
+    }
+    Ok(())
+}
+
 pub fn open_in_terminal(path: &str, terminal_id: Option<&str>) -> Result<()> {
     let dir = resolve_project_dir(path)?;
     let terminals = discover_terminals();
@@ -297,7 +627,6 @@ fn discover_agents() -> Vec<(ExternalTool, ToolBinary)> {
         find_first(&[
             home_dir().map(|root| root.join(".local").join("bin").join("claude.exe")),
             home_dir().map(|root| root.join(".local").join("bin").join("claude")),
-            applications("Claude.app"),
             which("claude"),
         ]),
     );
@@ -344,6 +673,22 @@ fn discover_agents() -> Vec<(ExternalTool, ToolBinary)> {
         "qwen",
         "Qwen Code",
         find_first(&[which("qwen")]),
+    );
+    push_cli_tool(
+        &mut tools,
+        "copilot",
+        "GitHub Copilot CLI",
+        which("copilot"),
+    );
+    push_cli_tool(
+        &mut tools,
+        "cursor-cli",
+        "Cursor CLI",
+        find_first(&[
+            which("cursor-agent"),
+            home_dir().map(|root| root.join(".local/share/cursor-agent/agent")),
+            home_dir().map(|root| root.join(".local/share/cursor-agent/agent.exe")),
+        ]),
     );
     push_cli_tool(
         &mut tools,
@@ -582,7 +927,8 @@ fn push_cli_tool(
     name: &str,
     program: Option<PathBuf>,
 ) {
-    let Some(program) = program.filter(|path| path.exists() || is_app_bundle(path)) else {
+    // CLI agents must be files, never desktop application bundles or directories.
+    let Some(program) = program.filter(|path| path.is_file() && !is_app_bundle(path)) else {
         return;
     };
     if tools.iter().any(|(tool, _)| tool.id == id) {
@@ -622,6 +968,41 @@ fn spec_for_cli_agent(binary: ToolBinary, dir: &Path) -> LaunchSpec {
 
 #[cfg(not(target_os = "macos"))]
 fn windows_cli_agent_spec(binary: ToolBinary, dir: &Path) -> LaunchSpec {
+    if !binary.extra_args.is_empty() {
+        // PowerShell single-quoted literals preserve paths/arguments, including cmd wrappers.
+        // Avoid cmd /K parsing user data and ensure every resume argument reaches the CLI.
+        let terminal = discover_terminals()
+            .into_iter()
+            .find(|(t, _)| t.id == "pwsh" || t.id == "powershell")
+            .map(|(_, b)| b.program)
+            .unwrap_or_else(|| {
+                windows_system_root().join("System32/WindowsPowerShell/v1.0/powershell.exe")
+            });
+        let quote = |s: &str| format!("'{}'", s.replace('\'', "''"));
+        return LaunchSpec {
+            program: terminal,
+            args: vec![
+                "-NoLogo".into(),
+                "-NoProfile".into(),
+                "-NoExit".into(),
+                "-Command".into(),
+                format!(
+                    "Set-Location -LiteralPath {}; & {} {}",
+                    quote(&paths::path_to_string(dir)),
+                    quote(&paths::path_to_string(&binary.program)),
+                    binary
+                        .extra_args
+                        .iter()
+                        .map(|a| quote(&a.to_string_lossy()))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                )
+                .into(),
+            ],
+            current_dir: Some(dir.to_path_buf()),
+            windows_mode: WindowsMode::Console,
+        };
+    }
     let program = binary.program;
     let quoted = quote_windows(&paths::path_to_string(&program));
     if let Some((_, wt)) = discover_terminals()
@@ -678,9 +1059,15 @@ fn windows_cli_agent_spec(binary: ToolBinary, dir: &Path) -> LaunchSpec {
 #[cfg(target_os = "macos")]
 fn macos_cli_agent_spec(binary: ToolBinary, dir: &Path) -> LaunchSpec {
     let shell_command = format!(
-        "cd {} && {}",
+        "cd {} && {} {}",
         shell_single_quote(&paths::path_to_string(dir)),
-        shell_single_quote(&paths::path_to_string(&binary.program))
+        shell_single_quote(&paths::path_to_string(&binary.program)),
+        binary
+            .extra_args
+            .iter()
+            .map(|a| shell_single_quote(&a.to_string_lossy()))
+            .collect::<Vec<_>>()
+            .join(" ")
     );
     let script = format!(
         "tell application \"Terminal\"\n    do script \"{}\"\n    activate\nend tell",
@@ -1052,6 +1439,105 @@ mod tests {
     };
     use std::fs;
     use std::path::PathBuf;
+
+    #[test]
+    fn resume_launch_preserves_arguments_and_quotes_literal_paths() {
+        let binary = ToolBinary {
+            program: PathBuf::from("C:/Tools/Agent's CLI/codex.cmd"),
+            extra_args: vec!["resume".into(), "session-123".into()],
+            cli: true,
+        };
+        let spec = spec_for_cli_agent(binary, std::path::Path::new("C:/Project's folder"));
+        let arguments = spec
+            .args
+            .iter()
+            .map(|a| a.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(arguments.contains("resume"));
+        assert!(arguments.contains("session-123"));
+        #[cfg(windows)]
+        assert!(arguments.contains("Agent''s CLI") && arguments.contains("Project''s folder"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn resume_executes_command_in_cwd_without_loading_profile() {
+        let root = tempfile::tempdir().unwrap();
+        let cwd = root.path().join("project's folder & work");
+        fs::create_dir(&cwd).unwrap();
+        let cli = root.path().join("agent's cli.cmd");
+        fs::write(
+            &cli,
+            "@echo off\r\necho ARGS:%*\r\necho CWD:\"%CD%\"\r\necho HOME:%CODEX_HOME%\r\n",
+        )
+        .unwrap();
+        let binary = super::ToolBinary {
+            program: cli,
+            extra_args: vec!["resume".into(), "session-123".into()],
+            cli: true,
+        };
+        let spec = super::windows_session_spec(
+            binary,
+            &cwd,
+            &[("CODEX_HOME".into(), "test home".into())]
+                .into_iter()
+                .collect(),
+        );
+        assert!(spec.args.iter().any(|a| a == "-NoProfile"));
+        let mut command = std::process::Command::new(spec.program);
+        command.args(spec.args.into_iter().filter(|a| a != "-NoExit"));
+        super::suppress_console_window(&mut command);
+        let output = command.output().unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(stdout.contains("ARGS:resume session-123"), "{stdout}");
+        assert!(stdout.contains("project's folder & work"), "{stdout}");
+        assert!(stdout.contains("HOME:test home"), "{stdout}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn resume_preflight_detects_broken_shims_and_preserves_environment() {
+        let root = tempfile::tempdir().unwrap();
+        let cli = root.path().join("probe's shim.cmd");
+        let binary = super::ToolBinary {
+            program: cli.clone(),
+            extra_args: vec![],
+            cli: true,
+        };
+        let env = [("CODEX_HOME".into(), "source home".into())]
+            .into_iter()
+            .collect();
+        fs::write(&cli, "@echo off\r\nif not \"%~1\"==\"--version\" exit /b 2\r\nif not \"%CODEX_HOME%\"==\"source home\" exit /b 3\r\nexit /b 0\r\n").unwrap();
+        super::validate_session_cli(&binary, root.path(), &env).unwrap();
+        fs::write(&cli, "@echo off\r\nexit /b 7\r\n").unwrap();
+        assert!(super::validate_session_cli(&binary, root.path(), &env)
+            .unwrap_err()
+            .to_string()
+            .contains("session_cli_unavailable"));
+    }
+
+    #[test]
+    fn cli_discovery_rejects_desktop_bundles_and_accepts_cli_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = dir.path().join("Claude.app");
+        fs::create_dir(&app).unwrap();
+        let mut tools = Vec::new();
+        super::push_cli_tool(&mut tools, "claude", "Claude Code", Some(app));
+        assert!(tools.is_empty());
+
+        let cli = dir.path().join("claude");
+        fs::write(&cli, "test CLI fixture").unwrap();
+        super::push_cli_tool(&mut tools, "claude", "Claude Code", Some(cli.clone()));
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].1.program, cli);
+        assert!(tools[0].1.cli);
+    }
 
     #[test]
     fn resolve_project_dir_uses_parent_for_files() {

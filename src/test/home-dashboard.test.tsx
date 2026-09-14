@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../lib/api", () => ({ api: mocks }));
+vi.mock("../components/AIHistory", () => ({ ContinueCoding: () => null }));
 
 const project: ProjectSummary = {
   id: "project-1",
@@ -132,22 +133,22 @@ describe("HomeDashboard", () => {
     expect(onOpenAttention).toHaveBeenCalledOnce();
   });
 
-  it("opens the featured available Project through the same callback", async () => {
+  it("opens an available recent Project through the same callback", async () => {
     const onOpenProject = vi.fn();
     mocks.getDashboardSnapshot.mockResolvedValue({ ...snapshot, recentProjects: [
       { ...snapshot.recentProjects[0], project: { ...project, id: "unavailable", displayName: "Missing", availability: "missing" } },
       snapshot.recentProjects[0],
     ] });
     render(<HomeDashboard t={t} refreshKey="featured" onOpenProject={onOpenProject} onOpenCollection={vi.fn()} onOpenRun={vi.fn()} onOpenAttention={vi.fn()} onOpenAttentionItem={vi.fn()} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Open Project" }));
+    fireEvent.click(await screen.findByRole("button", { name: /RepoAtlas.*main.*Failed/i }));
     expect(onOpenProject).toHaveBeenCalledWith(project.id);
-    expect(screen.getByRole("region", { name: "Continue" })).toHaveTextContent("RepoAtlas");
+    expect(onOpenProject).not.toHaveBeenCalledWith("unavailable");
   });
 
   it("shows honest guidance without a resume action when no available recent Project exists", async () => {
     mocks.getDashboardSnapshot.mockResolvedValue({ ...snapshot, recentProjects: [] });
     render(<HomeDashboard t={t} refreshKey="empty" onOpenProject={vi.fn()} onOpenCollection={vi.fn()} onOpenRun={vi.fn()} onOpenAttention={vi.fn()} onOpenAttentionItem={vi.fn()} />);
-    expect(await screen.findByRole("heading", { name: "A place for every Project." })).toBeInTheDocument();
+    expect(await screen.findByText(t("dashboardNoRecentProjects"))).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Open Project" })).not.toBeInTheDocument();
   });
 

@@ -17,6 +17,15 @@ RepoAtlas turns scattered local checkouts into one working library. See what eac
 
 > **macOS contributors wanted.** RepoAtlas has not yet been tested on real Mac hardware, so there is no supported macOS build today. If you have a Mac, help us build, test, and document it through [CONTRIBUTING.md](CONTRIBUTING.md), or open an [issue](https://github.com/Wujerry/RepoAtlas/issues) with reproducible results.
 
+> **0.1.0 downloads:** Windows installers are labeled **UNSIGNED** and do not have an Authenticode signature. macOS packages are experimental, ad-hoc signed and not notarized. SmartScreen or Gatekeeper may show a warning. Updater payloads remain signed; release assets include SHA256SUMS.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/en-dark-workspace.jpg" />
+  <img src="assets/screenshots/en-light-workspace.jpg" alt="RepoAtlas home workspace: recent sessions, Projects and task runs" />
+</picture>
+
+Desktop screenshots use fictional demonstration data.
+
 ## Let your AI Agent do the setup
 
 The fastest first run is not filling in a project catalog by hand:
@@ -34,7 +43,8 @@ Agent changes to the shared library continue to appear after onboarding, includi
 
 ## Main features
 
-- **Working dashboard** — start with local Project and Collection status, seven-day Task Run results, recent work, and items that need action.
+- **Home workspace** — open recent Projects, continue coding sessions, review recent runs and handle items that need attention.
+- **Sessions** — search authorized history across eight coding Agents, preview messages and resume a selected session in its original Agent.
 - **Agent-assisted initialization** — let an external AI Agent inventory approved directories and write evidence-backed descriptions, tasks, and icons through MCP.
 - **Project library** — search Projects in English or Chinese, group related work with Project Collections, and relate multiple checkouts through Repository Lineage.
 - **Project Brief and read-only Files** — inspect detected facts, environment requirements, README, source, configuration, recent activity, and run history without turning RepoAtlas into an editor.
@@ -45,6 +55,32 @@ Agent changes to the shared library continue to appear after onboarding, includi
 - **Attention and approval** — collect failed runs, unavailable Projects, environment mismatches, and Agent task requests that still need desktop approval.
 - **Signed updates** — when a signed update is found, a title-bar entry opens a panel with the release notes and manual check, download, install, and restart actions. Checks are non-blocking and never touch the local library.
 - **Local-first records** — Project metadata, task output, exit codes, logs, and audit history stay in local SQLite; no RepoAtlas account or sync server is required.
+
+
+## Sessions & Continue Coding
+
+![Sessions: search and preview coding conversations](assets/screenshots/en-dark-sessions.jpg)
+
+Find a previous coding conversation across Agents and continue the selected session in its original Agent. Open **Sessions** from the title bar or command palette, or use **Continue session** on the home workspace and Project Overview.
+
+1. **Authorize sources.** Review each absolute history directory, or use **Authorize all** to confirm the listed sources together. Authorization enables local indexing and read-only history access for connected MCP clients.
+2. **Search and preview.** Search across Agents, filter by Project, Agent, date or archive status, and read matching messages before launching anything.
+3. **Continue the selected session.** Review its command and working directory, then choose CLI or a supported App entry. Project icons identify recent work; clicking a Project title opens that Project.
+
+Built-in history adapters cover **Claude Code, Codex CLI, OpenCode, Cursor CLI, Gemini CLI, GitHub Copilot CLI, Kimi Code, and Qwen Code**. Cursor IDE and Kimi Desktop histories are separate from their CLI histories and are not indexed by these adapters.
+
+History stays local. Refresh shows cached results first and supports cancellation; revoking a source removes its index and excerpts without changing the Agent's original files. Restored backups require source authorization again.
+
+Resume requires an installed Agent, an available session and a valid working directory. RepoAtlas checks the source and CLI before dispatch, reports errors, and lets you copy the command. Codex App uses a session deep link; App entries without a supported resume interface remain unavailable. The Agent owns login, model access and the actual conversation. Sessions are not migrated between Agents.
+
+Read-only MCP tools: `list_agent_sessions`, `search_agent_sessions`, `get_agent_session`, and `get_agent_session_messages`. They cannot authorize sources or launch a session.
+
+<details>
+<summary>See the session resume options</summary>
+
+![Session resume options](assets/screenshots/en-dark-resume.jpg)
+
+</details>
 
 ## Project library
 
@@ -58,7 +94,7 @@ Projects remain tied to their real paths. Collections organize them without movi
 
 RepoAtlas opens on the Dashboard instead of choosing a Project for you. Collections are quick entries into the existing filtered project tree; the snapshot is calculated from bounded local records and does not scan checkouts, refresh Git, read source files, or contact a remote analytics service.
 
-The Dashboard highlights a recent available Project for quick re-entry, with cached status metrics and direct access to recent Projects, Task Runs, Collections, and Attention.
+The home workspace brings recent coding sessions, Projects and Task Runs together. Project icons identify each entry; select a Project title to open it, preview a session to read its messages, or use Continue session to review its launch options.
 
 The project tree toolbar adds expand-all, collapse-all, collapse-to-selected, and jump-to-current-project controls so long collections stay navigable without scrolling blind.
 
@@ -98,6 +134,8 @@ pnpm tauri dev
 
 The desktop development command builds and copies the MCP sidecar before starting the app; the first run may take longer.
 
+Each external Agent connection starts its own MCP process. Closing RepoAtlas leaves those connections available; multiple MCP processes can be normal. When a connection closes stdin or a response pipe fails, that MCP process cancels scans, stops queued requests, and exits within five seconds. Clients must close their stdio pipes when disconnecting; an open idle connection remains available.
+
 On first launch, choose **Copy for Agent, scan and discover** in the onboarding dialog. RepoAtlas prepares an instruction that lets your Agent configure MCP, ask for the directories you approve, discover Projects, and populate their descriptions, tasks, and icons.
 
 ## Architecture and development
@@ -129,3 +167,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 Scanning continues below a root `package.json` or checkout. A Project can contain Node, Java and other Modules with their own evidence, runtime requirements and tasks. Module task actions run in the Module directory. Independent nested checkouts remain Projects; other candidates can be explicitly promoted with **Manage as independent Project**. **Use as directory group** retains the root entry and promotes its constituents. These choices survive rescans and never change project files.
 
 The Guide starts with copyable **Initialize MCP** and **Scan directories** prompts. Agents must first obtain confirmed absolute paths, call `add_scan_root`, then `scan_root`. `get_project`, `get_project_brief` and `list_modules` expose cached Module evidence. Use `promote_module` / `set_directory_group` only for a user's explicit management choice. Module task IDs use their parent Project; promoted Modules use their own Project. `run_task` still requires desktop approval.
+
+
+### Footprints
+
+Open **Footprints** from the title bar to browse a 30-day activity track, search an entire day's records, filter by Project/category, and inspect commits or task runs. Opening first reads the local cache, then updates stale local Git history in the background (last 90 days, current HEAD, no network fetch). Updates show progress and can be canceled. New records appear through an explicit update action so your reading position stays stable. Select a Project and use **Load this history** to collect an older displayed period. Empty repositories and incomplete coverage are reported separately from an empty activity day.
+
+Footprints supports English and Chinese, light and dark themes, and keyboard navigation. Search covers the selected day’s records, including records outside the current page.

@@ -10,6 +10,8 @@
 @import "./styles/50-feedback-settings.css";
 @import "./styles/60-command-dialog.css";
 @import "./styles/70-extensions.css";
+@import "./styles/75-footprints.css";
+@import "./styles/76-ai-history.css";
 @import "./styles/80-help-settings.css";
 @import "./styles/81-updater.css";
 @import "./styles/82-onboarding.css";
@@ -41,3 +43,17 @@
 .module-actions, .module-tasks { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .module-chevron { width: 12px; height: 12px; flex: none; color: var(--muted); }
 .module-row[open] .module-chevron { transform: rotate(90deg); }
+
+/* Footprints: scoped light treatment, shared token ownership. */
+:root {
+  --fp-glow: rgba(255, 163, 26, .16);
+  --fp-glow-soft: rgba(255, 163, 26, .045);
+  --fp-track: rgba(255, 255, 255, .13);
+  --fp-selection: rgba(255, 163, 26, .055);
+}
+:root[data-theme="light"] {
+  --fp-glow: rgba(255, 163, 26, .14);
+  --fp-glow-soft: rgba(255, 163, 26, .025);
+  --fp-track: rgba(0, 0, 0, .16);
+  --fp-selection: rgba(255, 163, 26, .06);
+}

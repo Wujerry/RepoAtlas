@@ -124,6 +124,7 @@ export function SettingsPane({
         <p>{t("settingsIntro")}</p>
       </header>
       <div className="settings-content">
+        <section className="settings-card"><h2>{t("ahSources")}</h2><p>{t("ahSourcesHint")}</p><Button onClick={() => window.dispatchEvent(new CustomEvent("repoatlas:session-history", { detail: { sources: true } }))}>{t("ahSources")}</Button></section>
         <section className="settings-card">
           <div className="settings-card-heading">
             <div><p className="eyebrow">01</p><h2>{t("appearance")}</h2></div>

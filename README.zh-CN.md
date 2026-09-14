@@ -17,6 +17,15 @@ RepoAtlas 把散落在各个磁盘里的本地 checkout 变成一个真正能干
 
 > **欢迎 macOS 用户参与贡献。** RepoAtlas 还没有经过 Mac 真机测试，目前不提供受支持的 macOS 安装包。如果你手上有 Mac，欢迎按照 [CONTRIBUTING.md](CONTRIBUTING.md) 帮忙构建、测试和补充文档，也可以把可复现的问题提交到 [Issue](https://github.com/Wujerry/RepoAtlas/issues)。
 
+> **0.1.0 下载说明：** Windows 安装包标注 **UNSIGNED**，未做 Authenticode 签名；macOS 包为实验性构建，仅临时签名，未经公证。系统可能显示 SmartScreen 或 Gatekeeper 提示。更新包仍有签名验证，发布附件提供 SHA256SUMS。
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/zh-dark-workspace.jpg" />
+  <img src="assets/screenshots/zh-light-workspace.jpg" alt="RepoAtlas 首页工作台：最近会话、项目和任务运行" />
+</picture>
+
+桌面应用实拍，图中使用虚构演示数据。
+
 ## 把初始化工作交给 AI Agent
 
 第一次使用不需要手工填写一套项目档案：
@@ -34,7 +43,8 @@ RepoAtlas 把散落在各个磁盘里的本地 checkout 变成一个真正能干
 
 ## 主要功能
 
-- **工作总览**：突出最近可用项目的一键入口，搭配本地缓存状态，以及最近项目、任务运行、项目集合和待处理事项。
+- **首页工作台**：集中显示最近会话、项目和任务运行，以及需要关注的事项；点击项目标题即可进入项目。
+- **Sessions**：跨八种编码 Agent 搜索已授权历史，预览消息，再回到原 Agent 继续指定会话。
 - **Agent 辅助初始化**：让外部 AI Agent 盘点你授权的目录，通过 MCP 写入有依据的项目描述、任务和图标。
 - **本地项目库**：中英文搜索 Project，用 Project Collection 整理相关工作，并用 Repository Lineage 关联同一仓库的多个 checkout。
 - **Project Brief 和只读 Files**：集中查看技术栈、环境要求、README、源码、配置、最近活动和运行历史，但不把 RepoAtlas 变成代码编辑器。
@@ -46,6 +56,32 @@ RepoAtlas 把散落在各个磁盘里的本地 checkout 变成一个真正能干
 - **签名更新**：发现新版本时顶栏出现更新入口，面板展示更新日志，并可手动检查、下载、安装和重启。检查是非阻塞的，不影响本地项目库。
 - **数据留在本机**：项目资料、任务输出、退出码、日志和审计记录都保存在本地 SQLite，不需要 RepoAtlas 账号或同步服务器。
 
+
+## Sessions 与继续会话
+
+![Sessions：搜索并预览编码会话](assets/screenshots/zh-light-sessions.jpg)
+
+跨 Agent 找到之前的编码对话，再回到原 Agent 继续指定会话。从标题栏或命令面板打开 **Sessions**，也可以在首页工作台和项目概览使用 **继续会话**。
+
+1. **授权来源。** 逐项确认历史目录的绝对路径，或通过 **全部授权** 一起确认列出的来源。授权后建立本地索引，并允许已连接的 MCP 客户端只读访问这些历史。
+2. **搜索并预览。** 默认跨 Agent 搜索，可按项目、Agent、日期和归档状态筛选。先查看匹配消息，再决定恢复哪次对话。
+3. **继续指定会话。** 查看命令和工作目录，选择 CLI 或支持恢复的 App 入口。最近会话显示项目图标，点击项目标题即可进入项目。
+
+内置 **Claude Code、Codex CLI、OpenCode、Cursor CLI、Gemini CLI、GitHub Copilot CLI、Kimi Code、Qwen Code** 历史适配器。Cursor IDE 与 Kimi Desktop 的历史独立于 CLI，不在这些适配器的索引范围内。
+
+历史保留在本机。刷新时先显示缓存，支持取消；撤销来源会清理对应索引和摘录，不修改 Agent 原始历史文件。恢复备份后需要重新授权来源。
+
+恢复需要已安装的 Agent、可用会话和有效工作目录。RepoAtlas 在发送启动请求前检查来源与 CLI，显示失败原因，并提供命令复制。Codex App 使用指定会话链接；没有受支持恢复接口的 App 入口保持不可用。账号登录、模型访问和实际对话由 Agent 管理，不做跨 Agent 会话迁移。
+
+只读 MCP 工具：`list_agent_sessions`、`search_agent_sessions`、`get_agent_session`、`get_agent_session_messages`。这些接口不能授权来源或启动会话。
+
+<details>
+<summary>查看继续会话的启动选项</summary>
+
+![会话恢复选项](assets/screenshots/zh-light-resume.jpg)
+
+</details>
+
 ## 项目库
 
 ![RepoAtlas 项目库：包含 Project Collection、不同的项目图标、分支状态和待处理事项](assets/screenshots/zh-dark-library.png)
@@ -56,7 +92,7 @@ RepoAtlas 把散落在各个磁盘里的本地 checkout 变成一个真正能干
 
 Project 始终对应真实路径。Collection 只负责整理，不移动目录；从 RepoAtlas 移除记录，也不会删除磁盘上的 checkout。
 
-RepoAtlas 启动后先显示工作总览，不会替你选中某个 Project。点击 Collection 卡片会进入现有的项目树筛选结果；总览只聚合有边界的本地记录，不会触发扫描、刷新 Git、读取源码，也不会连接远程统计服务。
+RepoAtlas 启动后先显示工作台，不会替你选中某个 Project。最近会话显示项目图标，点击标题进入项目，点击预览阅读对话，通过“继续会话”查看启动选项。项目与任务状态来自本地缓存；已授权的会话来源在后台增量刷新，不扫描项目源码。
 
 ## 任务工作台
 

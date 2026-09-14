@@ -8,6 +8,9 @@ import { ProjectList, type ProjectFilters } from "./components/ProjectList";
 import { TitleBar } from "./components/TitleBar";
 import { TitleBarUpdate } from "./components/TitleBarUpdate";
 import { OnboardingDialog, type OnboardingStep } from "./components/OnboardingDialog";
+import { FootprintsDialog } from "./components/FootprintsDialog";
+import { AIHistory } from "./components/AIHistory";
+import { openSessionHistory } from "./lib/sessions";
 import { SplashScreen } from "./components/SplashScreen";
 import { TaskWorkbench } from "./components/TaskWorkbench";
 import { CollectionControls } from "./components/CollectionControls";
@@ -57,6 +60,8 @@ export default function App() {
   const [sort, setSort] = useState<ProjectSort>("default");
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [approvalsOpen, setApprovalsOpen] = useState(false);
+  const [footprintsOpen, setFootprintsOpen] = useState(false);
+  const [sessionHistoryOpen, setSessionHistoryOpen] = useState(false);
   const [approvals, setApprovals] = useState<PendingApproval[]>([]);
   const [attentionItems, setAttentionItems] = useState<AttentionItem[]>([]);
   const [transientAttention, setTransientAttention] = useState<AttentionItem[]>([]);
@@ -276,13 +281,25 @@ export default function App() {
     }
   }, []);
 
+  const closePageOverlays = useCallback(() => {
+    setFootprintsOpen(false); setSettingsOpen(false); setApprovalsOpen(false); setActiveTasksOpen(false); setView("library");
+    window.dispatchEvent(new Event("repoatlas:close-sessions"));
+  }, []);
+  useEffect(() => {
+    const sessions = () => { setFootprintsOpen(false); setSettingsOpen(false); setApprovalsOpen(false); setActiveTasksOpen(false); setView("library"); };
+    window.addEventListener("repoatlas:session-history", sessions);
+    return () => window.removeEventListener("repoatlas:session-history", sessions);
+  }, []);
+
   const returnToLibrary = useCallback(() => {
+    closePageOverlays();
     setSettingsOpen(false);
     setView("library");
     setLibrarySurface("dashboard");
   }, []);
 
   const openSettings = useCallback(() => {
+    closePageOverlays();
     setView("library");
     setSettingsOpen(true);
   }, []);
@@ -292,6 +309,7 @@ export default function App() {
   }, []);
 
   const openHelp = useCallback(() => {
+    closePageOverlays();
     setSettingsOpen(false);
     setView("help");
   }, []);
@@ -640,7 +658,7 @@ export default function App() {
     },
     onError: () => setOnboardingCheckFailed(true),
   });
-  function selectProject(id: string) { if (id === selectedId && librarySurface === "project") return; setView("library"); setLibrarySurface("project"); void loadProjectDetail(id); void api.markOpened(id).catch(() => undefined); }
+  function selectProject(id: string) { closePageOverlays(); if (id === selectedId && librarySurface === "project") return; setView("library"); setLibrarySurface("project"); void loadProjectDetail(id); void api.markOpened(id).catch(() => undefined); }
   async function openProjectFromPalette(id: string) {
     const queryRequest = ++querySequence.current;
     const detailRequest = ++detailSequence.current;
@@ -705,6 +723,8 @@ export default function App() {
     { id: "open-help", title: t("openHelp"), run: openHelp }, { id: "open-settings", title: t("openSettings"), run: openSettings },
     { id: "scan-all", title: t("scanAll"), run: () => void startScan() }, { id: "add-root", title: t("addRoot"), run: () => void chooseDirectory(false) }, { id: "register", title: t("register"), run: () => void chooseDirectory(true) },
     { id: "open-tasks", title: t("activeTasks"), run: () => { setActiveTasksOpen(true); void loadActiveRuns(); } },
+    { id: "open-footprints", title: t("footprints"), run: () => setFootprintsOpen(true) },
+    { id: "open-ai-history", title: t("ahTitle"), run: () => openSessionHistory() },
     { id: "open-approvals", title: t("attentionCenter"), run: () => { setApprovalsOpen(true); void loadApprovals(); } },
     { id: "clear-filters", title: t("clear"), run: () => { setQuery(""); setFilters(emptyFilters); } },
     { id: "check-updates", title: t("checkForUpdates"), run: () => { openSettings(); void updaterService.checkForUpdates(); } },
@@ -737,8 +757,8 @@ export default function App() {
 
   return <MotionConfig reducedMotion="user" transition={{ duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}><Tooltip.Provider delay={300}><div className="app-shell">
     {!splashDone && <SplashScreen ready={!booting} onFinished={() => setSplashDone(true)} />}
-    <TitleBar title={t("appName")} subtitle={t("appTag")} commandLabel={t("commandShort")} minimizeLabel={t("minimizeWindow")} maximizeLabel={t("maximizeWindow")} closeLabel={t("close")} helpLabel={t("help")} settingsLabel={t("settings")} approvalsLabel={t("attentionCenter")} approvalCount={attentionItems.length} tasksLabel={t("activeTasks")} tasksShortcut="Ctrl + `" tasksCount={activeTaskRuns.length} onTasks={() => { setActiveTasksOpen(true); void loadActiveRuns(); }} activeView={settingsOpen ? "settings" : view} onCommand={() => setPaletteOpen(true)} onLibrary={returnToLibrary} onHelp={openHelp} onSettings={openSettings} onApprovals={() => { setApprovalsOpen(true); void loadApprovals(); }} updateEntry={<TitleBarUpdate state={updateState} locale={settings.locale === "zh" || settings.locale === "en" ? settings.locale : undefined} t={t} onCheck={() => updaterService.checkForUpdates()} onDownload={() => updaterService.downloadUpdate()} onInstall={() => updaterService.installUpdate()} onRestart={() => updaterService.restartApp()} onDefer={() => updaterService.deferUpdate()} />} />
-    <div className="workspace workspace-library" style={workspaceStyle}>
+    <TitleBar historyOpen={sessionHistoryOpen} historyLabel={t("ahTitle")} title={t("appName")} subtitle={t("appTag")} commandLabel={t("commandShort")} minimizeLabel={t("minimizeWindow")} maximizeLabel={t("maximizeWindow")} closeLabel={t("close")} helpLabel={t("help")} settingsLabel={t("settings")} approvalsLabel={t("attentionCenter")} approvalCount={attentionItems.length} footprintsLabel={t("footprints")} footprintsOpen={footprintsOpen} onFootprints={() => { closePageOverlays(); setFootprintsOpen(true); }} tasksLabel={t("activeTasks")} tasksShortcut="Ctrl + `" tasksCount={activeTaskRuns.length} onTasks={() => { closePageOverlays(); setActiveTasksOpen(true); void loadActiveRuns(); }} activeView={settingsOpen ? "settings" : view} onCommand={() => setPaletteOpen(true)} onLibrary={returnToLibrary} onHelp={openHelp} onSettings={openSettings} onApprovals={() => { closePageOverlays(); setApprovalsOpen(true); void loadApprovals(); }} updateEntry={<TitleBarUpdate state={updateState} locale={settings.locale === "zh" || settings.locale === "en" ? settings.locale : undefined} t={t} onCheck={() => updaterService.checkForUpdates()} onDownload={() => updaterService.downloadUpdate()} onInstall={() => updaterService.installUpdate()} onRestart={() => updaterService.restartApp()} onDefer={() => updaterService.deferUpdate()} />} />
+    <div className="workspace workspace-library" inert={sessionHistoryOpen || footprintsOpen || settingsOpen || view === "help"} style={workspaceStyle}>
       <PaneResizer width={listWidth} label={t("resizeSidebar")} onWidthChange={setListWidth} onWidthCommit={commitListWidth} />
       <>
         <ProjectList projects={visibleProjects} allProjects={scopeProjects} selectedId={librarySurface === "project" ? selectedId : undefined} onSelect={(id) => void selectProject(id)} query={query} onQuery={setQuery} filters={filters} onFilters={setFilters} sort={sort} onSort={setSort} scope={scope} onScope={setScope} scanning={scanning} progress={progress} t={t} empty={emptyMessage} onAddRoot={() => void chooseDirectory(false)} onRegister={() => void chooseDirectory(true)} onScan={() => void startScan()} onScanFolder={(path) => void startScan(undefined, path)} onCancelScan={() => void cancelScan()} collectionControls={<CollectionControls collections={collections} selectedId={selectedCollectionId} t={t} notify={notify} onSelect={(id) => { scopeCache.current = undefined; setSelectedCollectionId(id); }} onChanged={async (id) => { scopeCache.current = undefined; await reload(undefined, id ?? null); setSelectedCollectionId(id); }} />} collections={collections} selectedCollectionId={selectedCollectionId} onAddToCollection={(projectId, collectionId) => updateCollectionMembership(projectId, collectionId, true)} onRemoveFromCollection={(projectId, collectionId) => updateCollectionMembership(projectId, collectionId, false)} onRename={async (id, displayName) => { try { await api.updateProject(id, { displayName }); await reload(id); } catch (error) { notify("error", t("saveFailed"), String(error)); throw error; } }} onDescription={async (id, description) => { try { await api.updateProject(id, { description }); await reload(id); } catch (error) { notify("error", t("saveFailed"), String(error)); throw error; } }} scanRoots={scanRoots} onRemoveProject={async (id) => { try { await removeProjectRecord(id); } catch (error) { notify("error", t("removeRecordFailed"), String(error)); } }} onRemoveFolder={async (path, projectIds) => { try { await removeFolderRecords(path, projectIds); } catch (error) { notify("error", t("removeFolderFailed"), String(error)); } }} onIconError={(error) => notify("error", t("projectIconFailed"), String(error))} onReveal={(path) => void api.openInExplorer(path).catch((error) => notify("error", t("openFailed"), String(error)))} onRelocate={(id) => void relocateProject(id)} />
@@ -749,7 +769,7 @@ export default function App() {
         </div>
       </>
     </div>
-    <Dialog.Root open={view === "help"} onOpenChange={(open) => { if (!open) closeHelp(); }}>
+    <Dialog.Root modal={false} open={view === "help"} onOpenChange={(open) => { if (!open) closeHelp(); }}>
       <Dialog.Portal>
         <Dialog.Backdrop className="settings-page-backdrop" />
         <Dialog.Popup className="settings-page-dialog" aria-labelledby="help-page-title">
@@ -759,7 +779,7 @@ export default function App() {
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>
-    <Dialog.Root open={settingsOpen} onOpenChange={(open) => { if (!open) closeSettings(); }}>
+    <Dialog.Root modal={false} open={settingsOpen} onOpenChange={(open) => { if (!open) closeSettings(); }}>
       <Dialog.Portal>
         <Dialog.Backdrop className="settings-page-backdrop" />
         <Dialog.Popup className="settings-page-dialog" aria-labelledby="settings-page-title">
@@ -770,9 +790,9 @@ export default function App() {
       </Dialog.Portal>
     </Dialog.Root>
     <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} t={t} projects={visibleProjects} actions={paletteActions} onProject={(id) => void openProjectFromPalette(id)} />
-    <Dialog.Root open={approvalsOpen} onOpenChange={setApprovalsOpen}>
+    <Dialog.Root modal={false} open={approvalsOpen} onOpenChange={setApprovalsOpen}>
       <Dialog.Portal>
-        <Dialog.Backdrop className="dialog-backdrop" />
+        <Dialog.Backdrop className="dialog-backdrop attention-page-backdrop" />
         <Dialog.Popup className="dialog-popup approval-dialog">
           <Dialog.Title className="dialog-title">{t("attentionCenter")}</Dialog.Title>
           <Dialog.Description className="dialog-description">{t("attentionCenterHint")}</Dialog.Description>
@@ -785,6 +805,15 @@ export default function App() {
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>
+    <AIHistory t={t} onVisibilityChange={setSessionHistoryOpen} />
+    <FootprintsDialog
+      open={footprintsOpen}
+      onOpenChange={setFootprintsOpen}
+      t={t}
+      notify={notify}
+      onJumpToProject={(projectId) => void jumpToProject(projectId)}
+      onOpenTaskRun={(runId) => void openTaskRun(runId).then(() => setActiveTasksOpen(true)).catch((error) => notify("error", t("tasksLoadFailed"), String(error)))}
+    />
     {activeTasksOpen && <TaskWorkbench
       open={activeTasksOpen}
       t={t}

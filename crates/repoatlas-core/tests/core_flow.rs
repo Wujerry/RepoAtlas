@@ -12,6 +12,55 @@ fn write(path: &std::path::Path, content: &str) {
 }
 
 #[test]
+fn activity_history_aggregates_git_commits_and_project_events() {
+    let dir = tempdir().unwrap();
+    let repo_dir = dir.path().join("repo");
+    fs::create_dir_all(&repo_dir).unwrap();
+    write(&repo_dir.join("package.json"), r#"{"name": "demo-proj"}"#);
+
+    // Init git repo
+    let _ = std::process::Command::new("git")
+        .args(&["init"])
+        .current_dir(&repo_dir)
+        .output();
+    let _ = std::process::Command::new("git")
+        .args(&["config", "user.name", "TestUser"])
+        .current_dir(&repo_dir)
+        .output();
+    let _ = std::process::Command::new("git")
+        .args(&["config", "user.email", "test@example.com"])
+        .current_dir(&repo_dir)
+        .output();
+    let _ = std::process::Command::new("git")
+        .args(&["add", "."])
+        .current_dir(&repo_dir)
+        .output();
+    let _ = std::process::Command::new("git")
+        .args(&["commit", "-m", "initial commit for demo project"])
+        .current_dir(&repo_dir)
+        .output();
+
+    let core = Core::open_in_memory().unwrap();
+    let project = core.register_project_with_origin(&repo_dir, "test").unwrap();
+
+    // Explicit collection happens outside Core; reads never launch Git.
+    let start = chrono::Utc::now().timestamp() - 86400;
+    let end = start + 172800;
+    let target = core.prepare_history(Some(&project.id), start, end, true).unwrap().remove(0);
+    let cancel = AtomicBool::new(false);
+    let head = repoatlas_core::git::history_head(&target.path, &cancel).unwrap().unwrap();
+    let commits = repoatlas_core::git::history_batch(&target.path, &head, start, end, 0, &cancel).unwrap();
+    core.persist_history_batch(&target, &commits).unwrap();
+    let history = core.get_activity_history(None, Some(&project.id), None, None, 50).unwrap();
+    assert!(!history.days.is_empty(), "Days should not be empty");
+    assert!(!history.items.is_empty(), "Items should not be empty");
+    let commit_item = history.items.iter().find(|it| it.category == "git").expect("git item exists");
+    assert_eq!(commit_item.title, "initial commit for demo project");
+    assert_eq!(commit_item.source, "git_history");
+    assert!(commit_item.commit_sha.is_some());
+}
+
+#[test]
 fn folder_scan_targets_preserve_authorization_and_selected_scope() {
     let dir = tempdir().unwrap();
     let outside = tempdir().unwrap();

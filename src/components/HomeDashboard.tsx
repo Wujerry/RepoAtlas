@@ -3,7 +3,6 @@ import {
   ArrowRight,
   CheckCircle,
   Clock,
-  FolderSimple,
   GitBranch,
   WarningCircle,
   XCircle,
@@ -16,6 +15,7 @@ import type { DashboardSnapshot, ProjectIcon } from "../types";
 import type { MessageKey } from "../i18n";
 import { Button } from "./ui/button";
 import { EmptyState } from "./ui/feedback";
+import { ContinueCoding } from "./AIHistory";
 
 type Translator = (key: MessageKey) => string;
 
@@ -91,7 +91,6 @@ export function HomeDashboard({ t, refreshKey, onOpenProject, onOpenCollection, 
     return <main id="main-content" className="home-dashboard"><EmptyState title={t("dashboardLoadFailed")} body={error ?? t("dashboardLoadFailed")} actions={<Button variant="primary" onClick={() => setReloadToken((value) => value + 1)}>{t("retry")}</Button>} /></main>;
   }
 
-  const featured = snapshot.recentProjects.find(({ project }) => project.availability === "ready" && !project.archived);
 
   const metrics = [
     { label: t("projects"), value: snapshot.projectCount, note: `${snapshot.availableProjectCount} ${t("available")} · ${snapshot.unavailableProjectCount} ${t("unavailable")}` },
@@ -108,25 +107,16 @@ export function HomeDashboard({ t, refreshKey, onOpenProject, onOpenCollection, 
 
     {error && <div className="dashboard-inline-error" role="status"><WarningCircle aria-hidden="true" />{t("dashboardRefreshFailed")}<Button variant="quiet" onClick={() => setReloadToken((value) => value + 1)}>{t("retry")}</Button></div>}
 
-    <div className="dashboard-launchpad">
-      <section className="dashboard-feature" aria-label={t("continueWork")}>
-        <div className="dashboard-feature-heading"><span className="eyebrow">{t(featured ? "continueWork" : "dashboardWelcome")}</span><FolderSimple aria-hidden="true" /></div>
-        <h2 title={featured?.project.displayName}>{featured?.project.displayName ?? t("dashboardWelcomeTitle")}</h2>
-        <p>{featured?.project.description || t(featured ? "dashboardResumeHint" : "dashboardNoRecentProjects")}</p>
-        {featured && <>
-          <div className="dashboard-feature-stack">{stackOf(featured.project).slice(0, 3).map(value => <span key={value}>{value}</span>)}{featured.git?.branch && <span><GitBranch aria-hidden="true" />{featured.git.branch}</span>}</div>
-          <div className="dashboard-feature-footer"><code title={featured.project.canonicalPath}>{featured.project.canonicalPath}</code><Button variant="primary" onClick={() => onOpenProject(featured.project.id)}>{t("dashboardResumeProject")}<ArrowRight aria-hidden="true" /></Button></div>
-        </>}
-      </section>
-      <section className="dashboard-metric-grid" aria-label={t("dashboardStatusSummary")}>
-        {metrics.map((metric) => <article className="dashboard-metric" key={metric.label}><div><span>{metric.label}</span><strong>{metric.value}</strong><small>{metric.note}</small></div></article>)}
-      </section>
-    </div>
+    <section className="home-status-strip" aria-label={t("dashboardStatusSummary")}>
+      {metrics.map(metric => <div key={metric.label}><span>{metric.label}</span><strong>{metric.value}</strong></div>)}
+      <Button variant="quiet" onClick={onOpenAttention}>{t("attentionCenter")}<ArrowRight /></Button>
+    </section>
+    <ContinueCoding t={t} compact onOpenProject={onOpenProject} />
 
     <div className="dashboard-content-grid dashboard-recent-grid">
       <section className="dashboard-section">
         <div className="dashboard-section-heading"><div><span className="eyebrow">{t("quickOpen")}</span><h2>{t("recentProjects")}</h2></div></div>
-        {snapshot.recentProjects.length === 0 ? <p className="dashboard-empty-copy">{t("dashboardNoRecentProjects")}</p> : <div className="dashboard-project-list">{snapshot.recentProjects.map(({ project, git, latestRun }) => <button key={project.id} className="dashboard-project" onClick={() => onOpenProject(project.id)}>
+        {snapshot.recentProjects.length === 0 ? <p className="dashboard-empty-copy">{t("dashboardNoRecentProjects")}</p> : <div className="dashboard-project-list">{snapshot.recentProjects.slice(0, 5).map(({ project, git, latestRun }) => <button key={project.id} className="dashboard-project" onClick={() => onOpenProject(project.id)}>
           <span className="project-identity-mark" aria-hidden="true">{icons[project.id]?.dataUrl ? <img src={icons[project.id].dataUrl ?? undefined} alt="" /> : <LanguageGlyph language={languageFallback(project)} />}</span>
           <span className="dashboard-project-copy"><strong>{project.displayName}</strong><code title={project.canonicalPath}>{project.canonicalPath}</code><span>{stackOf(project).slice(0, 3).map((value) => <small className="badge" key={value}>{value}</small>)}</span></span>
           <span className="dashboard-project-state">{project.availability !== "ready" ? <small className="is-danger">{t("unavailable")}</small> : git?.branch ? <small><GitBranch aria-hidden="true" />{git.branch}{git.dirty === true ? ` · ${t("dirty")}` : ""}</small> : null}{latestRun && <small className={statusClass(latestRun.status)}>{statusLabel(latestRun.status, t)} · {formatTime(latestRun.finishedAt ?? latestRun.startedAt)}</small>}</span>
@@ -140,8 +130,8 @@ export function HomeDashboard({ t, refreshKey, onOpenProject, onOpenCollection, 
       </section>
     </div>
 
-    <div className="dashboard-content-grid">
-      <section className="dashboard-section dashboard-collections">
+    <div className={`dashboard-content-grid${snapshot.collections.length === 0 ? " is-single" : ""}`} hidden={snapshot.collections.length === 0 && snapshot.attentionCount === 0}>
+      <section className="dashboard-section dashboard-collections" hidden={snapshot.collections.length === 0}>
         <div className="dashboard-section-heading"><div><span className="eyebrow">{t("projectOrganization")}</span><h2>{t("collections")}</h2></div></div>
         {snapshot.collections.length === 0 ? <p className="dashboard-empty-copy">{t("dashboardNoCollections")}</p> : <div className="dashboard-collection-list">{snapshot.collections.map((collection) => <button className="dashboard-collection" key={collection.id} onClick={() => onOpenCollection(collection.id)}>
           <span className="dashboard-collection-top"><span><strong>{collection.name}</strong>{collection.description && <small>{collection.description}</small>}</span><ArrowRight aria-hidden="true" /></span>
@@ -156,7 +146,7 @@ export function HomeDashboard({ t, refreshKey, onOpenProject, onOpenCollection, 
       </section>
     </div>
 
-    <section className="dashboard-section dashboard-results">
+    <section className="dashboard-section dashboard-results" hidden={snapshot.sevenDayRuns.total === 0}>
       <div className="dashboard-section-heading"><div><span className="eyebrow">{t("lastSevenDays")}</span><h2>{t("taskRunResults")}</h2></div><strong>{snapshot.sevenDayRuns.total}</strong></div>
       <div className="dashboard-result-grid">
         <div className="dashboard-result is-success"><CheckCircle weight="fill" aria-hidden="true" /><span>{t("succeeded")}</span><strong>{snapshot.sevenDayRuns.succeeded}</strong></div>

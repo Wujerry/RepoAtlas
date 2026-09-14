@@ -23,6 +23,8 @@ fn configure(conn: &Connection) -> Result<()> {
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
     conn.pragma_update(None, "busy_timeout", 5000)?;
+    // Bound the connection page-cache budget to 64 MiB for large local history queries.
+    conn.pragma_update(None, "cache_size", -65536)?;
     Ok(())
 }
 
@@ -630,6 +632,97 @@ fn migrate(conn: &Connection) -> Result<()> {
              INSERT INTO schema_migrations (version, applied_at) VALUES (16, datetime('now'));",
         )?;
         transaction.commit()?;
+    }
+    let applied17: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = 17)",
+        [],
+        |row| row.get(0),
+    )?;
+    if !applied17 {
+        conn.execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS project_git_commits (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                sha TEXT NOT NULL,
+                short_sha TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                author_name TEXT NOT NULL,
+                author_date TEXT NOT NULL,
+                commit_date TEXT NOT NULL,
+                message TEXT NOT NULL,
+                cached_at TEXT NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                UNIQUE(project_id, sha)
+            );
+            CREATE INDEX IF NOT EXISTS idx_project_git_commits_project_date
+                ON project_git_commits(project_id, datetime(commit_date) DESC);
+            CREATE INDEX IF NOT EXISTS idx_project_git_commits_date
+                ON project_git_commits(datetime(commit_date) DESC);
+            INSERT INTO schema_migrations (version, applied_at) VALUES (17, datetime('now'));
+            "#,
+        )?;
+    }
+    conn.execute_batch(r#"
+        CREATE INDEX IF NOT EXISTS idx_activity_git_time ON project_git_commits(unixepoch(commit_date) DESC, project_id, sha);
+        CREATE INDEX IF NOT EXISTS idx_activity_git_project ON project_git_commits(project_id, unixepoch(commit_date) DESC, sha);
+        CREATE INDEX IF NOT EXISTS idx_activity_event_time ON project_events(unixepoch(created_at) DESC, id);
+        CREATE INDEX IF NOT EXISTS idx_activity_event_project ON project_events(project_id, unixepoch(created_at) DESC, id);
+        CREATE INDEX IF NOT EXISTS idx_activity_run_time ON task_runs(unixepoch(started_at) DESC, id);
+        CREATE INDEX IF NOT EXISTS idx_activity_run_project ON task_runs(project_id, unixepoch(started_at) DESC, id);
+        CREATE TABLE IF NOT EXISTS git_history_coverage (
+            project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            start_at INTEGER NOT NULL, end_at INTEGER NOT NULL,
+            checked_at INTEGER NOT NULL, head TEXT, error TEXT,
+            PRIMARY KEY(project_id, start_at, end_at)
+        );
+    "#)?;
+    migrate_activity_counts(conn)?;
+    crate::core::sessions::migrate(conn)?;
+    let indexed: i64 = conn.query_row("SELECT COUNT(*) FROM schema_migrations WHERE version=21", [], |r| r.get(0))?;
+    if indexed == 0 {
+        let tx = conn.unchecked_transaction()?;
+        for (source, table, time, id) in [
+            ("git", "project_git_commits", "commit_date", "'git:'||project_id||':'||sha"),
+            ("run", "task_runs", "started_at", "'run:'||id"),
+            ("event", "project_events", "created_at", "'event:'||id"),
+        ] {
+            tx.execute_batch(&format!("DROP INDEX IF EXISTS idx_activity_{source}_time; DROP INDEX IF EXISTS idx_activity_{source}_project; CREATE INDEX idx_activity_{source}_time ON {table}(unixepoch({time}) DESC,({id}) DESC); CREATE INDEX idx_activity_{source}_project ON {table}(project_id,unixepoch({time}) DESC,({id}) DESC);"))?;
+        }
+        tx.execute("INSERT INTO schema_migrations VALUES(21,datetime('now'))", [])?;
+        tx.commit()?;
+    }
+    Ok(())
+}
+
+// Counts are derived, local-only data. Triggers also cover writes from a second MCP connection.
+fn migrate_activity_counts(conn: &Connection) -> Result<()> {
+    for (version,label,seconds) in [(18,"hour",3600),(19,"sixhour",21600),(20,"day",86400)] {
+        let applied:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version=?1)",[version],|r|r.get(0))?;
+        if applied {
+            conn.execute_batch(&format!("CREATE INDEX IF NOT EXISTS activity_{label}_counts_project ON activity_{label}_counts(project_id,bucket_at,category,n);"))?;
+            continue;
+        }
+        let tx=conn.unchecked_transaction()?;
+        let counts=format!("activity_{label}_counts");
+        tx.execute_batch(&format!("CREATE TABLE {counts}(bucket_at INTEGER NOT NULL,project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,category TEXT NOT NULL,n INTEGER NOT NULL,PRIMARY KEY(bucket_at,project_id,category)) WITHOUT ROWID; CREATE INDEX {counts}_project ON {counts}(project_id,bucket_at,category,n);"))?;
+        for (table,time,category) in [
+            ("project_git_commits","commit_date","'git'"),
+            ("task_runs","started_at","'task'"),
+            ("project_events","created_at","CASE kind WHEN 'git' THEN 'git' WHEN 'task' THEN 'task' WHEN 'ide' THEN 'tool' WHEN 'agent' THEN 'tool' WHEN 'terminal' THEN 'tool' WHEN 'explorer' THEN 'tool' WHEN 'open' THEN 'open' ELSE 'maintenance' END"),
+        ] {
+            let bucket=format!("(unixepoch({time})-((unixepoch({time})%{seconds}+{seconds})%{seconds}))");
+            tx.execute_batch(&format!("INSERT INTO {counts} SELECT {bucket},project_id,{category},COUNT(*) FROM {table} WHERE unixepoch({time}) IS NOT NULL GROUP BY 1,2,3 ON CONFLICT(bucket_at,project_id,category) DO UPDATE SET n=n+excluded.n;"))?;
+            let new_bucket=bucket.replace(time,&format!("new.{time}"));
+            let old_bucket=bucket.replace(time,&format!("old.{time}"));
+            let new_category=category.replace("kind","new.kind");
+            let old_category=category.replace("kind","old.kind");
+            let add=format!("INSERT INTO {counts} SELECT {new_bucket},new.project_id,{new_category},1 WHERE unixepoch(new.{time}) IS NOT NULL ON CONFLICT(bucket_at,project_id,category) DO UPDATE SET n=n+1;");
+            let remove=format!("UPDATE {counts} SET n=n-1 WHERE bucket_at={old_bucket} AND project_id=old.project_id AND category={old_category}; DELETE FROM {counts} WHERE bucket_at={old_bucket} AND project_id=old.project_id AND category={old_category} AND n<=0;");
+            tx.execute_batch(&format!("CREATE TRIGGER activity_{label}_{table}_insert AFTER INSERT ON {table} BEGIN {add} END; CREATE TRIGGER activity_{label}_{table}_delete AFTER DELETE ON {table} BEGIN {remove} END; CREATE TRIGGER activity_{label}_{table}_update AFTER UPDATE OF {time},project_id{} ON {table} BEGIN {remove} {add} END;",if table=="project_events"{",kind"}else{""}))?;
+        }
+        tx.execute("INSERT INTO schema_migrations VALUES(?1,datetime('now'))",[version])?;
+        tx.commit()?;
     }
     Ok(())
 }

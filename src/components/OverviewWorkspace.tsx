@@ -7,6 +7,7 @@ import { Button } from "./ui/button";
 import { Skeleton } from "./ui/feedback";
 import { InlineLoadError, MarkdownDocument } from "./DashboardShared";
 import { ModulesPanel } from "./ModulesPanel";
+import { ContinueCoding } from "./AIHistory";
 
 export function OverviewWorkspace(props: {
   detail: ProjectDetail;
@@ -83,6 +84,7 @@ export function OverviewWorkspace(props: {
   const startHere = detail.startHere?.length ? detail.startHere : quickTasks.map((task) => ({ taskId: task.id, kind: task.kind, name: task.name, source: t("inferredTask"), inferred: task.inferred }));
   const recentEvents = (detail.recentEvents ?? []).filter((event) => !(event.kind === "open" && !event.detail));
   return <div className="overview-layout">
+    <ContinueCoding key={project.id} projectId={project.id} t={t} />
     <section id="overview-status" aria-labelledby="overview-status-title" className="content-card continue-card">
       <div className="section-heading overview-card-heading"><div><p className="eyebrow">{t("workspaceState")}</p><h2 id="overview-status-title">{t("continueWork")}</h2></div><span className={`overview-health ${git?.snapshot.dirty ? "is-warning" : "is-ok"}`}>{git?.snapshot.dirty ? <WarningCircle weight="fill" /> : <CheckCircle weight="fill" />}{git?.snapshot.dirty ? t("dirty") : project.vcsKind === "git" ? t("clean") : project.vcsKind}</span></div>
       <div className="continue-command-center">

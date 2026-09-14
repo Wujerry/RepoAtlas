@@ -111,17 +111,13 @@ jobs:
           fi
           echo "windows_ready=$windows_ready" >> "$GITHUB_OUTPUT"
           echo "macos_ready=$macos_ready" >> "$GITHUB_OUTPUT"
-          if [ "$windows_ready" != "true" ] && [ "${{ steps.classify.outputs.prerelease }}" != "true" ]; then
-            echo 'Stable releases require Windows Authenticode credentials (WINDOWS_CERTIFICATE and WINDOWS_CERTIFICATE_PASSWORD).' >&2
-            exit 1
-          fi
           {
             echo '### Release signing gate'
             echo
             echo "- Windows Authenticode credentials: $windows_ready"
             echo "- macOS Developer ID and notarization credentials: $macos_ready"
             echo
-            echo 'The workflow always creates a draft release. Stable releases must be Authenticode-signed before publishing; prerelease Windows artifacts without a certificate are labeled UNSIGNED-BETA.'
+            echo 'The workflow always creates a draft release. Windows artifacts without a certificate are labeled UNSIGNED; updater signatures remain required.'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Create or validate release tag for manual run
@@ -289,12 +285,8 @@ jobs:
           PRERELEASE: ${{ needs.create-release.outputs.prerelease }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE) -or [string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_PASSWORD)) {
-            if ($env:PRERELEASE -eq 'true') {
-              Write-Output '::warning::Windows signing secrets are not configured; Windows artifacts are staged as UNSIGNED-BETA.'
-              exit 0
-            }
-            Write-Error 'Stable releases require Windows Authenticode secrets (WINDOWS_CERTIFICATE and WINDOWS_CERTIFICATE_PASSWORD).'
-            exit 1
+            Write-Output '::warning::Windows signing secrets are not configured; Windows artifacts are staged as UNSIGNED.'
+            exit 0
           }
           $certificateDirectory = Join-Path $env:RUNNER_TEMP 'repoatlas-certificate'
           New-Item -ItemType Directory -Force -Path $certificateDirectory | Out-Null
@@ -379,7 +371,7 @@ jobs:
       - name: Stage updater and installer artifacts
         shell: pwsh
         env:
-          STAGE_LABEL: ${{ matrix.target == 'x86_64-pc-windows-msvc' && steps.windows-signing.outputs.signed != 'true' && 'UNSIGNED-BETA' || '' }}
+          STAGE_LABEL: ${{ matrix.target == 'x86_64-pc-windows-msvc' && steps.windows-signing.outputs.signed != 'true' && 'UNSIGNED' || '' }}
         run: |
           $arguments = @('scripts/stage-release-artifacts.mjs', '--target', '${{ matrix.target }}', '--output', 'release-assets')
           if ($env:STAGE_LABEL) {
@@ -428,7 +420,7 @@ jobs:
         run: |
           node scripts/build-updater-manifest.mjs \
             --version "${RELEASE_TAG#v}" \
-            --label UNSIGNED-BETA \
+            --label UNSIGNED \
             --artifacts release-assets \
             --output latest.json \
             --base-url "https://github.com/Wujerry/RepoAtlas/releases/download/$RELEASE_TAG"
@@ -465,8 +457,8 @@ jobs:
         env:
           RELEASE_TAG: ${{ needs.create-release.outputs.release-tag }}
         run: |
-          if compgen -G 'publish-assets/*UNSIGNED-BETA*' > /dev/null; then
-            echo "# RepoAtlas ${RELEASE_TAG}: Windows artifacts are UNSIGNED-BETA (no Authenticode signature)." > SHA256SUMS
+          if compgen -G 'publish-assets/*UNSIGNED*' > /dev/null; then
+            echo "# RepoAtlas ${RELEASE_TAG}: Windows artifacts are UNSIGNED (no Authenticode signature)." > SHA256SUMS
           fi
           (cd publish-assets && find . -type f -print0 | sort -z | xargs -0 sha256sum | sed 's#^\\./##') >> SHA256SUMS
           (cd publish-assets && sha256sum -c ../SHA256SUMS)
@@ -477,19 +469,19 @@ jobs:
           RELEASE_TAG: ${{ needs.create-release.outputs.release-tag }}
         run: |
           gh release upload "$RELEASE_TAG" latest.json SHA256SUMS publish-assets/* --clobber
-          if grep -q 'UNSIGNED-BETA' SHA256SUMS; then
+          if grep -q 'UNSIGNED' SHA256SUMS; then
             body="$(gh release view "$RELEASE_TAG" --json body --jq .body)"
-            marker='<!-- repoatlas-unsigned-beta -->'
+            marker='<!-- repoatlas-unsigned -->'
             if ! grep -Fq "$marker" <<<"$body"; then
               {
                 echo "$body"
                 echo
                 echo "$marker"
-                echo '## UNSIGNED-BETA'
+                echo '## UNSIGNED'
                 echo
                 echo 'The Windows installer in this release has no Authenticode signature. Verify SHA256SUMS before running it; Microsoft SmartScreen may show a warning.'
               } | gh release edit "$RELEASE_TAG" --notes-file -
             else
-              echo 'UNSIGNED-BETA notice already present; leaving release notes unchanged.'
+              echo 'UNSIGNED notice already present; leaving release notes unchanged.'
             fi
           fi

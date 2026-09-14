@@ -101,6 +101,64 @@ pub struct GitLogEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct CachedGitCommit {
+    pub id: String,
+    pub project_id: String,
+    pub sha: String,
+    pub short_sha: String,
+    pub subject: String,
+    pub author_name: String,
+    pub author_date: String,
+    pub commit_date: String,
+    pub message: String,
+    pub cached_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityHistoryDaySummary {
+    pub date: String,
+    pub total_count: u64,
+    pub git_count: u64,
+    pub task_count: u64,
+    pub tool_count: u64,
+    pub maintenance_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityHistoryItem {
+    pub id: String,
+    pub project_id: String,
+    pub project_name: String,
+    pub canonical_path: String,
+    pub category: String,
+    pub kind: String,
+    pub title: String,
+    pub detail: Option<String>,
+    pub occurred_at: String,
+    pub source: String,
+    pub run_id: Option<String>,
+    pub commit_sha: Option<String>,
+    pub commit_short_sha: Option<String>,
+    pub author_name: Option<String>,
+    pub author_date: Option<String>,
+    pub task_status: Option<String>,
+    pub task_duration_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityHistoryResponse {
+    pub days: Vec<ActivityHistoryDaySummary>,
+    pub items: Vec<ActivityHistoryItem>,
+    pub next_cursor: Option<String>,
+    pub selected_date: Option<String>,
+    pub total_days: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct GitStatus {
     pub snapshot: GitSnapshot,
     pub files: Vec<GitFileStatus>,

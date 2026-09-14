@@ -1,7 +1,10 @@
+use repoatlas_core::core::activity::{ActivityQuery, ActivityDayRange, ActivitySummary, HistoryRefreshManager, HistoryRefreshRequest, HistoryRefreshStatus};
+mod sessions;
 use repoatlas_core::{
     launch,
     project_files::{self, ProjectPathIndex, ProjectPathSearchResult},
     scan::ScanEngine,
+    ActivityHistoryResponse,
     AppSettings, AtlasReport, AttentionCenterState, Broker, Core, DashboardSnapshot, ExternalTools,
     GitDiff, GitOp, GitStatus, LogChunk, PendingApproval, PortConflict, ProjectCollection,
     ProjectPatch, ProjectQuery, ProjectRemoval, ProjectSummary, ScanProgress, ScanResult, ScanRoot,
@@ -34,7 +37,8 @@ struct CachedPortPreflight {
 }
 
 pub struct AppState {
-    pub core: Mutex<Core>,
+    pub core: Arc<Mutex<Core>>,
+    history: HistoryRefreshManager,
     pub broker: Broker,
     pub cancel: Arc<AtomicBool>,
     runtime_configs: Mutex<HashMap<String, TaskRuntimeConfig>>,
@@ -787,6 +791,28 @@ fn get_dashboard_snapshot(state: State<Arc<AppState>>) -> Result<DashboardSnapsh
         .dashboard_snapshot()
         .map_err(err_to_string)
 }
+
+#[tauri::command]
+async fn get_activity_history(state: State<'_, Arc<AppState>>, query: ActivityQuery) -> Result<ActivityHistoryResponse, String> {
+    let core=state.core.clone();
+    tauri::async_runtime::spawn_blocking(move || core.lock().map_err(|e|e.to_string())?.activity_page(&query).map_err(err_to_string)).await.map_err(|e|e.to_string())?
+}
+#[tauri::command]
+async fn get_activity_summary(state: State<'_, Arc<AppState>>, days: Vec<ActivityDayRange>, project_id: Option<String>) -> Result<ActivitySummary,String> {
+    let core=state.core.clone();
+    tauri::async_runtime::spawn_blocking(move || core.lock().map_err(|e|e.to_string())?.activity_summary(&days,project_id.as_deref()).map_err(err_to_string)).await.map_err(|e|e.to_string())?
+}
+#[tauri::command]
+async fn get_activity_detail(state: State<'_, Arc<AppState>>, id:String) -> Result<repoatlas_core::ActivityHistoryItem,String> {
+    let core=state.core.clone();
+    tauri::async_runtime::spawn_blocking(move || core.lock().map_err(|e|e.to_string())?.activity_detail(&id).map_err(err_to_string)).await.map_err(|e|e.to_string())?
+}
+#[tauri::command]
+fn start_git_history_refresh(state: State<Arc<AppState>>, request:HistoryRefreshRequest)->Result<HistoryRefreshStatus,String>{state.history.start(state.core.clone(),request).map_err(err_to_string)}
+#[tauri::command]
+fn get_git_history_refresh_status(state: State<Arc<AppState>>)->HistoryRefreshStatus{state.history.status()}
+#[tauri::command]
+fn cancel_git_history_refresh(state: State<Arc<AppState>>,id:String){state.history.cancel(&id);}
 
 #[tauri::command]
 fn acknowledge_attention_item(
@@ -2163,7 +2189,8 @@ pub fn run() {
                 .join("task-logs");
             let broker = Broker::new(log_dir).map_err(|err| err.to_string())?;
             app.manage(Arc::new(AppState {
-                core: Mutex::new(core),
+                core: Arc::new(Mutex::new(core)),
+                history: HistoryRefreshManager::default(),
                 broker,
                 cancel: Arc::new(AtomicBool::new(false)),
                 runtime_configs: Mutex::new(HashMap::new()),
@@ -2190,6 +2217,19 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            sessions::session_sources,
+            sessions::set_session_source,
+            sessions::search_agent_sessions,
+            sessions::get_agent_session,
+            sessions::continue_agent_sessions,
+            sessions::agent_session_messages,
+            sessions::link_agent_session,
+            sessions::agent_session_resume_spec,
+            sessions::resume_agent_session,
+            sessions::session_refresh_status,
+            sessions::cancel_session_refresh,
+            sessions::refresh_agent_sessions,
+            sessions::rebuild_session_index,
             bootstrap,
             get_data_version,
             get_settings,
@@ -2242,6 +2282,12 @@ pub fn run() {
             list_attention_items,
             get_attention_center,
             get_dashboard_snapshot,
+            get_activity_history,
+            get_activity_summary,
+            get_activity_detail,
+            start_git_history_refresh,
+            get_git_history_refresh_status,
+            cancel_git_history_refresh,
             acknowledge_attention_item,
             resolve_pending_approval,
             export_json,

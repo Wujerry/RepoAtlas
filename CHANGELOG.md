@@ -1,8 +1,14 @@
 # Changelog
 
-All notable changes to RepoAtlas will be documented here. The project is currently pre-release; dates and package availability are not promises until a release is published.
+All notable changes to RepoAtlas will be documented here. Package availability is recorded in GitHub Releases.
 
-## [Unreleased]
+## [0.1.0] - 2026-09-14
+
+- Add Sessions: authorized local history search, message previews, and original-Agent resume for eight coding Agents.
+- Add CLI/App resume selection, copyable commands, source controls, and read-only MCP session tools.
+- Improve the home workspace, project navigation, focus states, and cached Footprints timeline.
+- Refresh the bilingual website and README with desktop screenshots using fictional data.
+- Label unsigned Windows installers and retain signed updater metadata. macOS packages are experimental and not notarized.
 
 - Prepare bilingual open-source documentation and contribution policies.
 - Prepare reproducible CI, security checks, draft release packaging, and GitHub Pages deployment workflows.
@@ -47,3 +53,5 @@ Initial pre-release application baseline:
 [0.1.0-beta.3]: https://github.com/Wujerry/RepoAtlas/compare/v0.1.0-beta.2...v0.1.0-beta.3
 [0.1.0-beta.2]: https://github.com/Wujerry/RepoAtlas/compare/v0.1.0-beta.1...v0.1.0-beta.2
 [0.1.0]: https://github.com/Wujerry/RepoAtlas/releases/tag/v0.1.0
+
+[0.1.0]: https://github.com/Wujerry/RepoAtlas/compare/v0.1.0-beta.3...v0.1.0

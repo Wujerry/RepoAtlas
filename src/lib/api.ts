@@ -1,4 +1,6 @@
+import type { ActivityQuery, ActivityDayRange, ActivitySummary, ActivityHistoryItem, HistoryRefreshRequest, HistoryRefreshStatus } from "../types";
 import { invoke } from "@tauri-apps/api/core";
+export { sessionApi } from "./sessions";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AppSettings,
@@ -35,6 +37,7 @@ import type {
   AttentionItem,
   AttentionCenterState,
   DashboardSnapshot,
+  ActivityHistoryResponse,
   ProjectDirectoryListing,
   ProjectFilePreview,
   ProjectPathIndexStatus,
@@ -101,6 +104,12 @@ export const api = {
   listAttentionItems: () => invoke<AttentionItem[]>("list_attention_items"),
   getAttentionCenter: () => invoke<AttentionCenterState>("get_attention_center"),
   getDashboardSnapshot: () => invoke<DashboardSnapshot>("get_dashboard_snapshot"),
+  getActivityHistory: (query: ActivityQuery) => invoke<ActivityHistoryResponse>("get_activity_history", { query }),
+  getActivitySummary: (days: ActivityDayRange[], projectId?: string) => invoke<ActivitySummary>("get_activity_summary", { days, projectId }),
+  getActivityDetail: (id: string) => invoke<ActivityHistoryItem>("get_activity_detail", { id }),
+  startGitHistoryRefresh: (request: HistoryRefreshRequest) => invoke<HistoryRefreshStatus>("start_git_history_refresh", { request }),
+  getGitHistoryRefreshStatus: () => invoke<HistoryRefreshStatus>("get_git_history_refresh_status"),
+  cancelGitHistoryRefresh: (id: string) => invoke<void>("cancel_git_history_refresh", { id }),
   acknowledgeAttentionItem: (itemId: string, sourceVersion: string) => invoke<void>("acknowledge_attention_item", { itemId, sourceVersion }),
   resolvePendingApproval: (approvalId: string, approved: boolean, allowPortConflicts = false) => invoke<PendingApproval>("resolve_pending_approval", { approvalId, approved, allowPortConflicts }),
   startScan: (rootId?: string, folderPath?: string) => invoke<void>("start_scan", { rootId: rootId ?? null, folderPath: folderPath ?? null }),
