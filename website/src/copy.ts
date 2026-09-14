@@ -170,7 +170,7 @@ export const copy: Record<Locale, Copy> = {
     "closeBody": "Add a Scan Root, review the discovered projects, and save the commands you use most often. The source and setup instructions are on GitHub.",
     "closePrimary": "View source",
     "closeSecondary": "Contribute",
-    "footerBlurb": "0.1.0 · Windows UNSIGNED · macOS experimental, not notarized · Signed updates · MIT",
+    "footerBlurb": "0.1.1 · Windows UNSIGNED · macOS experimental, not notarized · Signed updates · MIT",
     "footerSecurity": "Security policy"
   },
   "zh": {
@@ -268,7 +268,7 @@ export const copy: Record<Locale, Copy> = {
     "closeBody": "在 GitHub 下载 Windows 安装包，按安装说明启动应用后添加项目。源码、使用说明和问题反馈入口也在仓库中。",
     "closePrimary": "查看源码",
     "closeSecondary": "参与贡献",
-    "footerBlurb": "0.1.0 · Windows 未签名 · macOS 实验版、未公证 · 更新包签名验证 · MIT 开源",
+    "footerBlurb": "0.1.1 · Windows 未签名 · macOS 实验版、未公证 · 更新包签名验证 · MIT 开源",
     "footerSecurity": "安全策略"
   }
 };

@@ -31,6 +31,8 @@ export function useFootprints(open: boolean) {
   const alive = useRef(open);
   const openEpoch = useRef(0);
   const initialLoaded = useRef(false);
+  const preparedKey = useRef<string | undefined>(undefined);
+  const landing = useRef<"start" | "end">("start");
   const days = useMemo(() => calendarDays(calendarEnd), [calendarEnd]);
   const query = useMemo(() => ({ ...dayRange(date), projectId: project || undefined, category: category || undefined, search: debounced || undefined, limit: 50 }), [date, project, category, debounced]);
   const key = JSON.stringify(query);
@@ -56,6 +58,11 @@ export function useFootprints(open: boolean) {
     if (!open) return;
     const request = ++serial.current; pending.current = false; setError(""); setPageKey(key);
     const cached = cache.current.get(key);
+    if (preparedKey.current === key && cached) {
+      preparedKey.current = undefined; setPage(cached); setLoading(false); initialLoaded.current = true;
+      return;
+    }
+    landing.current = "start";
     if (cached) { setPage(cached); setLoading(false); initialLoaded.current = true; }
     else { setPage({ items: [], pages: 0 }); setLoading(true); }
     pending.current = true;
@@ -115,6 +122,28 @@ export function useFootprints(open: boolean) {
     finally { if (request === serial.current) { pending.current = false; setLoading(false); } }
   }, [page.nextCursor, query, key, saveCache]);
 
+  // Prepare the adjacent day without clearing the day the user is still reading.
+  const loadAdjacentDay = useCallback(async (direction: -1 | 1) => {
+    if (pending.current || pageKey !== key || (direction === -1 && page.nextCursor)) return;
+    const target = offsetDate(date, direction);
+    if (target > localDate()) return;
+    const request = serial.current;
+    pending.current = true; setLoading(true); setError("");
+    const targetQuery = { ...query, ...dayRange(target) };
+    const targetKey = JSON.stringify(targetQuery);
+    try {
+      const result = await api.getActivityHistory(targetQuery);
+      const items = result.items;
+      if (request !== serial.current || !alive.current) return;
+      const value = { items: [...new Map(items.map(item => [item.id, item])).values()], nextCursor: result.nextCursor, pages: Math.max(1, Math.ceil(items.length / 50)) };
+      saveCache(targetKey, value); preparedKey.current = targetKey;
+      landing.current = direction === 1 && !result.nextCursor ? "end" : "start";
+      setPage(value); setPageKey(targetKey); setDate(target);
+      if (target > calendarEnd || target < offsetDate(calendarEnd, -29)) setCalendarEnd(target);
+    } catch (reason) { if (request === serial.current) setError(String(reason)); }
+    finally { if (request === serial.current) { pending.current = false; setLoading(false); } }
+  }, [date, calendarEnd, query, key, pageKey, page.nextCursor, saveCache]);
+
   const startRefresh = useCallback(async (automatic = false, historical = false) => {
     setStarting(true); setRefreshError("");
     const today = localDate();
@@ -172,7 +201,7 @@ export function useFootprints(open: boolean) {
   }, [calendarEnd]);
   return { date, selectDate, calendarEnd, setCalendarEnd, project, setProject, category, setCategory, search, setSearch,
     page: pageKey === key ? page : { items: [], pages: 0 }, summary, loading: loading || pageKey !== key, error, summaryError, selectedId, setSelectedId, detail, detailError, refresh, refreshError,
-    starting, hasUpdates, days, key, loadMore, nextWindow, startRefresh, reload,
+    starting, hasUpdates, days, key, landing, loadAdjacentDay, loadMore, nextWindow, startRefresh, reload,
     cancelRefresh: async () => { if (refresh) { try { await api.cancelGitHistoryRefresh(refresh.id); } catch (reason) { setRefreshError(String(reason)); } } },
   };
 }

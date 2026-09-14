@@ -2,6 +2,13 @@
 
 All notable changes to RepoAtlas will be documented here. Package availability is recorded in GitHub Releases.
 
+## [0.1.1] - 2026-09-14
+
+- Load adjacent local dates when scrolling at the Footprints list boundaries, with wheel and keyboard support.
+- Preserve visible records while the next date loads, retain filters, and reject stale responses after date changes.
+- Keep same-day pagination ahead of previous-day navigation and retain empty calendar dates.
+- Stabilize the overview environment test by waiting for asynchronous content to render.
+
 ## [0.1.0] - 2026-09-14
 
 - Add Sessions: authorized local history search, message previews, and original-Agent resume for eight coding Agents.
@@ -49,7 +56,8 @@ Initial pre-release application baseline:
 - stdio MCP adapter sharing the Rust core and its safety boundaries;
 - English and Simplified Chinese interface support with light, dark, and system themes.
 
-[Unreleased]: https://github.com/Wujerry/RepoAtlas/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Wujerry/RepoAtlas/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/Wujerry/RepoAtlas/compare/v0.1.0...v0.1.1
 [0.1.0-beta.3]: https://github.com/Wujerry/RepoAtlas/compare/v0.1.0-beta.2...v0.1.0-beta.3
 [0.1.0-beta.2]: https://github.com/Wujerry/RepoAtlas/compare/v0.1.0-beta.1...v0.1.0-beta.2
 [0.1.0]: https://github.com/Wujerry/RepoAtlas/releases/tag/v0.1.0

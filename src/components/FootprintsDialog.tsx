@@ -2,7 +2,7 @@ import { Dialog } from "@base-ui/react/dialog";
 import { ArrowClockwise, ArrowSquareOut, CalendarBlank, CaretLeft, CaretRight, Check, CircleNotch, Code, Copy, Footprints, FolderOpen, GitCommit, MagnifyingGlass, Robot, TerminalWindow, Wrench, X } from "@phosphor-icons/react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { motion, useReducedMotion } from "framer-motion";
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import type { MessageKey } from "../i18n";
 import { api } from "../lib/api";
@@ -61,6 +61,8 @@ export function FootprintsDialog(props: Props) {
   const [icons, setIcons] = useState<Record<string, ProjectIcon>>({});
   const iconCache = useRef(new Map<string, ProjectIcon>());
   const scroll = useRef<HTMLDivElement>(null);
+  const previousScroll = useRef(0);
+  const lastDayNavigation = useRef(0);
   const locale = t("footprints") === "足迹" ? "zh-CN" : "en-US";
   const timeFormat = useMemo(() => new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit", hour12: false }), [locale]);
   const hourFormat = useMemo(() => new Intl.DateTimeFormat(locale, { hour: "2-digit", hour12: false }), [locale]);
@@ -116,7 +118,24 @@ export function FootprintsDialog(props: Props) {
     return () => document.removeEventListener("visibilitychange", update);
   }, [open]);
   useEffect(() => { if (open) virtual.measure(); }, [open]);
-  useEffect(() => { scroll.current?.scrollTo({ top: 0 }); }, [f.key]);
+  useLayoutEffect(() => {
+    const top = f.landing.current === "end" ? Math.max(0, virtual.getTotalSize() - (scroll.current?.clientHeight ?? 0)) : 0;
+    scroll.current?.scrollTo({ top }); previousScroll.current = top;
+    f.landing.current = "start";
+  }, [f.key]);
+  const navigateAtEdge = (direction: -1 | 1) => {
+    const element = scroll.current;
+    if (!element || f.loading || Date.now() - lastDayNavigation.current < 600) return;
+    const atEdge = direction === 1 ? element.scrollTop <= 1 : element.scrollTop + element.clientHeight >= element.scrollHeight - 1;
+    if (!atEdge) return;
+    if (direction === -1 && f.page.nextCursor) {
+      if (f.page.pages >= 10) void f.nextWindow().then(() => scroll.current?.scrollTo({ top: 0 }));
+      else void f.loadMore();
+      return;
+    }
+    lastDayNavigation.current = Date.now();
+    void f.loadAdjacentDay(direction);
+  };
   useEffect(() => { setCopied(false); }, [f.selectedId]);
   useEffect(() => {
     if (!open || f.error || f.loading || f.page.pages >= 10) return;
@@ -199,7 +218,15 @@ export function FootprintsDialog(props: Props) {
         <div className="fp-body">
           <section className="fp-feed">
             <div className="fp-feed-heading"><span>{t("fpTimeline")}</span><span>{f.loading ? t("loading") : `${f.page.items.length} ${t("fpRecords")}`}</span></div>
-            <div ref={scroll} className="fp-scroll" role="listbox" aria-label={t("fpTimeline")} aria-busy={f.loading} tabIndex={0} aria-activedescendant={selectedVisible && f.selectedId ? `fp-row-${f.selectedId}` : undefined} onKeyDown={onListKey}>
+            <div ref={scroll} className="fp-scroll" role="listbox" aria-label={t("fpTimeline")} aria-busy={f.loading} tabIndex={0} aria-activedescendant={selectedVisible && f.selectedId ? `fp-row-${f.selectedId}` : undefined}
+              onScroll={event => { const top = event.currentTarget.scrollTop; const prior = previousScroll.current; previousScroll.current = top; if (top !== prior) navigateAtEdge(top > prior ? -1 : 1); }}
+              onWheel={event => { if (event.deltaY) navigateAtEdge(event.deltaY > 0 ? -1 : 1); }}
+              onKeyDown={event => {
+                if (["PageDown", "PageUp"].includes(event.key)) navigateAtEdge(event.key === "PageDown" ? -1 : 1);
+                else if (event.key === "ArrowDown" && selectedIndex === rows.length - 1) navigateAtEdge(-1);
+                else if (event.key === "ArrowUp" && selectedIndex <= 1) navigateAtEdge(1);
+                onListKey(event);
+              }}>
               {!f.page.items.length ? <div className="fp-empty">{f.loading ? <CircleNotch className="fp-spinner" /> : <Footprints weight="thin" />}<h3>{t(f.loading ? "loading" : f.search || f.category || f.project ? "fpNoMatch" : "noFootprintsForDate")}</h3><p>{t("fpEmptyHint")}</p>
                 {!f.loading && latest && latest !== f.date && <Button variant="quiet" onClick={() => f.selectDate(latest)}>{t("fpLatest")}<ArrowSquareOut /></Button>}
               </div> : <div className="fp-virtual" style={{ height: virtual.getTotalSize() }}>{virtualRows.map(v => {

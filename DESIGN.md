@@ -124,6 +124,8 @@
 
 ## Footprints time navigator
 
+Explicit scrolling at the timeline boundaries navigates adjacent local dates: down to the previous day after its current pages finish, up to the next day no later than today. Wheel input also works on empty or short days; Page Up/Down provides keyboard access. Keep the old records visible during the request, then update the date and list together without entry animation. Empty days are not skipped. A newer day with a single page lands at the bottom; a paginated newer day opens at its first page to preserve bounded loading and access to all its records. Repeated wheel events are throttled and requests remain single-flight.
+
 Footprints occupies the content area below the 48px title bar and returns focus to its entry when closed. A large local date, continuous 30-day activity track, fixed-height virtual timeline, and 340px inspector form its hierarchy (300px inspector at the minimum window). Zero-activity dates remain visible; choosing a day never silently selects another day. Search applies to the entire selected local day, not just loaded rows. Project filters are keyboard-searchable.
 
 This surface deliberately extends the visual contract: subtle static amber radial light and a local date-track gradient are allowed in Footprints only. Graphite/white theme tokens, monochrome category icons and semantic result colors remain shared. No particles, full-screen blur, cursor lighting or continuous decorative motion. Phosphor regular/duotone layers crossfade without changing geometry.

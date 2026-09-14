@@ -31,6 +31,67 @@ beforeEach(() => {
   vi.mocked(api.getActivitySummary).mockImplementation(async days => ({ days: days.map(d => ({ date: d.date, totalCount: d.date === today ? 1 : 0, gitCount: 1, taskCount: 0, toolCount: 0, maintenanceCount: 0 })), openCounts: days.map(() => 0), projectCounts: days.map(() => 1), latestAt: Date.now() / 1000, projects: [{ id: "p1", name: "RepoAtlas" }], coverage: [] }));
 });
 describe("Footprints time navigator", () => {
+  it("ignores adjacent-day results after an explicit date change", async () => {
+    let finish!: (value: ActivityHistoryResponse) => void;
+    vi.mocked(api.getActivityHistory).mockResolvedValueOnce(response([item]))
+      .mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }))
+      .mockResolvedValue(response([{ ...item, id: "chosen", title: "Chosen date" }]));
+    render(<FootprintsDialog {...props()} />);
+    await screen.findByText("Full commit body");
+    fireEvent.wheel(screen.getByRole("listbox"), { deltaY: 100 });
+    fireEvent.change(screen.getByLabelText("Choose date", { selector: "input" }), { target: { value: offsetDate(today, -5) } });
+    await screen.findByRole("option", { name: /Chosen date/ });
+    await act(async () => finish(response([{ ...item, id: "late", title: "Stale adjacent day" }])));
+    expect(screen.queryByRole("option", { name: /Stale adjacent day/ })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Choose date", { selector: "input" })).toHaveValue(offsetDate(today, -5));
+  });
+  it("finishes same-day pagination before crossing the lower boundary", async () => {
+    let finish!: (value: ActivityHistoryResponse) => void;
+    vi.mocked(api.getActivityHistory).mockResolvedValueOnce({ ...response([item]), nextCursor: "page-two" })
+      .mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    render(<FootprintsDialog {...props()} />);
+    await waitFor(() => expect(api.getActivityHistory).toHaveBeenCalledWith(expect.objectContaining({ ...dayRange(today), cursor: "page-two" })));
+    fireEvent.wheel(screen.getByRole("listbox"), { deltaY: 100 });
+    expect(api.getActivityHistory).toHaveBeenCalledTimes(2);
+    await act(async () => finish(response([{ ...item, id: "second", title: "Second page" }])));
+    expect(screen.getByLabelText("Choose date", { selector: "input" })).toHaveValue(today);
+  });
+  it("keeps the current list visible until scrolling into the previous day completes", async () => {
+    let finish!: (value: ActivityHistoryResponse) => void;
+    vi.mocked(api.getActivityHistory).mockResolvedValueOnce(response([item]))
+      .mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    render(<FootprintsDialog {...props()} />);
+    await screen.findByText("Full commit body");
+    fireEvent.wheel(screen.getByRole("listbox"), { deltaY: 100 });
+    await waitFor(() => expect(api.getActivityHistory).toHaveBeenLastCalledWith(expect.objectContaining(dayRange(offsetDate(today, -1)))));
+    expect(document.getElementById(`fp-row-${item.id}`)).toBeInTheDocument();
+    expect(screen.getByLabelText("Choose date", { selector: "input" })).toHaveValue(today);
+    await act(async () => finish(response([{ ...item, id: "yesterday", title: "Yesterday entry" }])));
+    await screen.findByRole("option", { name: /Yesterday entry/ });
+    expect(screen.getByLabelText("Choose date", { selector: "input" })).toHaveValue(offsetDate(today, -1));
+    expect(api.getActivityHistory).toHaveBeenCalledTimes(2);
+  });
+  it("scrolls upward into the next day but never past today", async () => {
+    render(<FootprintsDialog {...props()} />);
+    await screen.findByText("Full commit body");
+    fireEvent.change(screen.getByLabelText("Choose date", { selector: "input" }), { target: { value: offsetDate(today, -1) } });
+    await waitFor(() => expect(api.getActivityHistory).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByRole("listbox")).toHaveAttribute("aria-busy", "false"));
+    fireEvent.wheel(screen.getByRole("listbox"), { deltaY: -100 });
+    await waitFor(() => expect(screen.getByLabelText("Choose date", { selector: "input" })).toHaveValue(today));
+    expect(api.getActivityHistory).toHaveBeenCalledTimes(3);
+    fireEvent.wheel(screen.getByRole("listbox"), { deltaY: -100 });
+    expect(api.getActivityHistory).toHaveBeenCalledTimes(3);
+  });
+  it("retains the current date and records when adjacent loading fails", async () => {
+    vi.mocked(api.getActivityHistory).mockResolvedValueOnce(response([item])).mockRejectedValueOnce(new Error("history unavailable"));
+    render(<FootprintsDialog {...props()} />);
+    await screen.findByText("Full commit body");
+    fireEvent.wheel(screen.getByRole("listbox"), { deltaY: 100 });
+    await screen.findByText("Error: history unavailable");
+    expect(document.getElementById(`fp-row-${item.id}`)).toBeInTheDocument();
+    expect(screen.getByLabelText("Choose date", { selector: "input" })).toHaveValue(today);
+  });
   it("renders thirty calendar days and loads full detail independently", async () => {
     const p = props(); render(<FootprintsDialog {...p} />);
     expect(await screen.findByText("Full commit body", {}, { timeout: 5000 })).toBeInTheDocument();

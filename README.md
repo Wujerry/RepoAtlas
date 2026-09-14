@@ -17,7 +17,7 @@ RepoAtlas turns scattered local checkouts into one working library. See what eac
 
 > **macOS contributors wanted.** RepoAtlas has not yet been tested on real Mac hardware, so there is no supported macOS build today. If you have a Mac, help us build, test, and document it through [CONTRIBUTING.md](CONTRIBUTING.md), or open an [issue](https://github.com/Wujerry/RepoAtlas/issues) with reproducible results.
 
-> **0.1.0 downloads:** Windows installers are labeled **UNSIGNED** and do not have an Authenticode signature. macOS packages are experimental, ad-hoc signed and not notarized. SmartScreen or Gatekeeper may show a warning. Updater payloads remain signed; release assets include SHA256SUMS.
+> **0.1.1 downloads:** Windows installers are labeled **UNSIGNED** and do not have an Authenticode signature. macOS packages are experimental, ad-hoc signed and not notarized. SmartScreen or Gatekeeper may show a warning. Updater payloads remain signed; release assets include SHA256SUMS.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/en-dark-workspace.jpg" />
@@ -112,7 +112,7 @@ Open the global workbench to follow active runs across Projects. Runtime observa
 2. Verify its SHA-256 checksum against the published `SHA256SUMS`:
 
    ```powershell
-   Get-FileHash .\RepoAtlas_0.1.0_x64-setup.exe -Algorithm SHA256
+   Get-FileHash .\RepoAtlas_0.1.1_x64-setup.exe -Algorithm SHA256
    ```
 
 3. Run the installer. SmartScreen will show an “unknown publisher” warning for the unsigned beta. Choose **More info**, then **Run anyway**.
@@ -174,3 +174,5 @@ The Guide starts with copyable **Initialize MCP** and **Scan directories** promp
 Open **Footprints** from the title bar to browse a 30-day activity track, search an entire day's records, filter by Project/category, and inspect commits or task runs. Opening first reads the local cache, then updates stale local Git history in the background (last 90 days, current HEAD, no network fetch). Updates show progress and can be canceled. New records appear through an explicit update action so your reading position stays stable. Select a Project and use **Load this history** to collect an older displayed period. Empty repositories and incomplete coverage are reported separately from an empty activity day.
 
 Footprints supports English and Chinese, light and dark themes, and keyboard navigation. Search covers the selected day’s records, including records outside the current page.
+
+Scroll down at the end of a day's records to load the previous day, or scroll up at the top to load the next day (up to today). Page Up/Down also work at list boundaries. The current records remain visible until the adjacent day loads; filters stay applied and empty dates remain selectable. Large days continue paging before moving to the previous day.

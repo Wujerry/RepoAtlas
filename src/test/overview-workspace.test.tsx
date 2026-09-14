@@ -185,7 +185,7 @@ describe("overview workspace", () => {
     expect(within(continueRegion).getByLabelText("Ahead 0")).toBeInTheDocument();
     expect(within(continueRegion).getByLabelText("Behind 0")).toBeInTheDocument();
     const environmentRegion = screen.getByRole("region", { name: t("environment") });
-    expect(within(environmentRegion).getAllByText(t("versionMatch")).length).toBeGreaterThan(0);
+    expect((await within(environmentRegion).findAllByText(t("versionMatch"))).length).toBeGreaterThan(0);
     expect(within(environmentRegion).getAllByText(t("versionMismatch")).length).toBeGreaterThan(0);
     expect(within(environmentRegion).getAllByText(t("versionMissing")).length).toBeGreaterThan(0);
     expect(within(environmentRegion).getAllByText(t("undeclaredVersion")).length).toBeGreaterThan(0);
