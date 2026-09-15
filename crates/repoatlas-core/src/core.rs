@@ -2650,8 +2650,7 @@ impl Core {
             .facts
             .iter()
             .find(|fact| fact.kind == "lineage")
-            .map(|fact| fact.value.clone())
-            .or_else(|| crate::git::origin_url(Path::new(&detail.project.canonical_path)));
+            .map(|fact| fact.value.clone());
         let Some(remote_url) = remote else {
             return Ok(None);
         };

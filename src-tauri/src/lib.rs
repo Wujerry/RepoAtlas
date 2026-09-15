@@ -498,16 +498,11 @@ fn search_projects(state: State<Arc<AppState>>, query: String) -> Result<Vec<Sea
 }
 
 #[tauri::command]
-fn get_project(
-    state: State<Arc<AppState>>,
+async fn get_project(
+    state: State<'_, Arc<AppState>>,
     id: String,
 ) -> Result<repoatlas_core::ProjectDetail, String> {
-    state
-        .core
-        .lock()
-        .map_err(|err| err.to_string())?
-        .get_project(&id)
-        .map_err(err_to_string)
+    run_blocking(state.inner().clone(), move |core| core.get_project(&id)).await
 }
 
 #[tauri::command]
@@ -693,13 +688,14 @@ async fn refresh_project(
 }
 
 #[tauri::command]
-fn mark_project_opened(state: State<Arc<AppState>>, id: String) -> Result<ProjectSummary, String> {
-    state
-        .core
-        .lock()
-        .map_err(|err| err.to_string())?
-        .mark_opened_with_origin(&id, "desktop")
-        .map_err(err_to_string)
+async fn mark_project_opened(
+    state: State<'_, Arc<AppState>>,
+    id: String,
+) -> Result<ProjectSummary, String> {
+    run_blocking(state.inner().clone(), move |core| {
+        core.mark_opened_with_origin(&id, "desktop")
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1570,8 +1566,10 @@ fn open_in_explorer(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn list_external_tools() -> ExternalTools {
-    launch::list_external_tools()
+async fn list_external_tools() -> Result<ExternalTools, String> {
+    tauri::async_runtime::spawn_blocking(launch::list_external_tools)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]

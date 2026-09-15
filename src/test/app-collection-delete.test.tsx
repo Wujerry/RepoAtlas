@@ -1,3 +1,4 @@
+import { invalidateOverviewCache } from "../lib/overview-cache";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
@@ -107,6 +108,7 @@ vi.mock("../lib/api", () => ({
 
 describe("deleting a collection", () => {
   beforeEach(() => {
+    invalidateOverviewCache();
     vi.clearAllMocks();
   });
 

@@ -58,6 +58,10 @@
 .task-card:hover { border-color: var(--line-strong); background: color-mix(in srgb, var(--bg-elevated) 90%, var(--bg-hover)); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08); transform: translateY(-1px); }
 .task-card.is-running { border-color: color-mix(in srgb, var(--accent-fill) 40%, var(--line)); background: color-mix(in srgb, var(--accent-wash) 40%, var(--bg-elevated)); box-shadow: 0 0 0 1px var(--accent-wash); }
 .task-card.is-running .task-icon { box-shadow: 0 0 0 3px var(--accent-wash); }
+.task-card.is-located { border-color: var(--accent-fill); background: color-mix(in srgb, var(--accent-wash) 55%, var(--bg-elevated)); box-shadow: 0 0 0 2px var(--accent-wash); }
+.task-card:focus-visible { outline: 2px solid var(--accent-fill); outline-offset: 3px; }
+.run-list strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-list .run-command { grid-column: 2 / -1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 10px; color: var(--muted); }
 .task-icon { display: grid; width: 30px; height: 30px; border-radius: 8px; place-items: center; background: var(--accent-wash); color: var(--accent-fill); flex: 0 0 auto; }
 .task-icon svg { width: 13px; height: 13px; }
 .task-card-copy { display: grid; min-width: 0; gap: 2px; }

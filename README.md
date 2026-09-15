@@ -88,6 +88,10 @@ Read-only MCP tools: `list_agent_sessions`, `search_agent_sessions`, `get_agent_
 
 Every canonical checkout is a **Project**. A **Scan Root** is a directory you explicitly authorize for discovery. Scanning is manual, stays under those roots, and never turns into a whole-disk crawler or filesystem watcher.
 
+Project Overview loads saved details without probing Git for missing Repository Lineage. Use Project refresh to update detected remote information. Desktop detail loading, open-activity recording and installed-tool discovery run off the UI thread.
+
+Reopening a recently viewed Project shows its in-memory overview immediately, then checks for updated details. Git, environment, documents and installed tools reuse short-lived cached results; expired results update in the background. Project refresh, edits, scanning and external database changes invalidate Project overview caches. Cached content remains visible if a background update fails, with a retry action.
+
 Right-click a folder in the project list and choose **Rescan folder** to refresh that folder within existing Scan Root authorizations. Scanning shows progress and can be cancelled. Folders without an authorized scan area have this action disabled; add a Scan Root in Settings first.
 
 Projects remain tied to their real paths. Collections organize them without moving directories, and removing a RepoAtlas record does not delete the checkout on disk.
@@ -99,6 +103,12 @@ The home workspace brings recent coding sessions, Projects and Task Runs togethe
 The project tree toolbar adds expand-all, collapse-all, collapse-to-selected, and jump-to-current-project controls so long collections stay navigable without scrolling blind.
 
 ## Task workbench
+
+Project task history shows task names and recorded commands. Select an entry to open its output and locate the corresponding task card, including tasks hidden by filters. Removed tasks keep their recorded command and output.
+
+Manually ending a running task is shown as **Stopped**, including development servers and interrupted builds. It is separate from successful completion or failure.
+
+Task status follows the process exit code, even when a terminal output stream remains open. Completed tasks leave the running list immediately on the exit event; final log loading does not delay their status update.
 
 ![The RepoAtlas global task workbench with a runtime monitor and live terminal output](assets/screenshots/en-light-tasks.png)
 

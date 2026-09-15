@@ -18,5 +18,5 @@ export function formatCommand(executable: string, argv: string[]) {
 }
 
 export function statusKey(status: string): MessageKey {
-  return status === "succeeded" ? "succeeded" : status === "failed" ? "failed" : status === "cancelled" ? "cancelled" : "running";
+  return status === "succeeded" ? "succeeded" : status === "failed" ? "failed" : status === "cancelled" ? "stopped" : "running";
 }

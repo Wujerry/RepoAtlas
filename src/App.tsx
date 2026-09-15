@@ -23,6 +23,8 @@ import { api, onAttentionChanged, onScanCompleted, onScanFailed, onScanProgress,
 import { getActiveTaskRunsSnapshot, openTaskRun, refreshTaskRuns, startTaskRunListeners, subscribeActiveTaskRuns } from "./lib/task-runs";
 import { isSameOrAncestorPath, scanRootsUnderPath, type ProjectSort } from "./lib/project-tree";
 import { updaterService } from "./lib/updater";
+import { overviewDetails, invalidateOverviewCache } from "./lib/overview-cache";
+import { InvalidatedResource } from "./lib/resource-cache";
 import { useLibrarySync } from "./lib/library-sync";
 import { buildAgentScanInstruction } from "./lib/mcp-setup";
 import { readOnboardingState, resolveOnboardingVisibility, useOnboardingProjectWatch, writeOnboardingState } from "./lib/onboarding";
@@ -80,6 +82,7 @@ export default function App() {
   const [libraryRevision, setLibraryRevision] = useState(0);
   const [splashDone, setSplashDone] = useState(false);
   const [projectLoading, setProjectLoading] = useState(false);
+  const [projectRefreshing, setProjectRefreshing] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const updateState = useSyncExternalStore(updaterService.subscribe, updaterService.getSnapshot, updaterService.getSnapshot);
   const booted = useRef(false);
@@ -126,24 +129,32 @@ export default function App() {
 
   const loadProjectDetail = useCallback(async (id?: string) => {
     const sequence = ++detailSequence.current;
-    if (!id) { setSelectedId(undefined); setDetail(null); setProjectLoading(false); return true; }
+    if (!id) { setSelectedId(undefined); setDetail(null); setProjectLoading(false); setProjectRefreshing(false); return true; }
     setSelectedId(id);
-    setProjectLoading(true);
+    const cached = overviewDetails.peek(id)?.value;
+    if (cached) setDetail(cached);
+    setProjectLoading(!cached);
+    setProjectRefreshing(Boolean(cached));
     try {
-      const next = await api.getProject(id);
+      const next = await overviewDetails.read(id);
       if (sequence === detailSequence.current) setDetail(next);
       return sequence === detailSequence.current;
     } catch (error) {
-      if (sequence === detailSequence.current) { setDetail(null); notify("error", t("projectLoadFailed"), String(error)); }
+      if (error instanceof InvalidatedResource) return false;
+      if (sequence === detailSequence.current) { setDetail(cached ?? null); notify("error", t("projectLoadFailed"), String(error)); }
       return false;
     } finally {
-      if (sequence === detailSequence.current) setProjectLoading(false);
+      if (sequence === detailSequence.current) { setProjectLoading(false); setProjectRefreshing(false); }
     }
 
   }, [notify, t]);
 
   const reload = useCallback(async (nextSelected?: string, collectionOverride?: string | null) => {
     const sequence = ++querySequence.current;
+    detailSequence.current += 1;
+    setProjectRefreshing(false);
+    setProjectLoading(false);
+    invalidateOverviewCache();
     try {
       let effectiveCollectionId = collectionOverride === undefined ? selectedCollectionId : collectionOverride ?? undefined;
       const baseQuery = queryForScope(scope, "", effectiveCollectionId);
@@ -663,7 +674,8 @@ export default function App() {
     const queryRequest = ++querySequence.current;
     const detailRequest = ++detailSequence.current;
     try {
-      const next = await api.getProject(id);
+      const cached = overviewDetails.peek(id)?.value;
+      const next = cached ?? await overviewDetails.read(id);
       const nextScope = next.project.archived ? "archived" : "projects";
       const nextProjects = await api.listProjects(queryForScope(nextScope));
       if (queryRequest !== querySequence.current || detailRequest !== detailSequence.current) return;
@@ -675,6 +687,7 @@ export default function App() {
       setView("library"); setScope(nextScope); setQuery(""); setFilters(emptyFilters);
       setLibrarySurface("project");
       setSelectedId(id); setDetail(next); setProjectLoading(false);
+      if (cached) void loadProjectDetail(id);
       try { await api.markOpened(id); } catch { /* non-blocking */ }
     } catch (error) { notify("error", t("projectLoadFailed"), String(error)); }
   }
@@ -764,7 +777,7 @@ export default function App() {
         <ProjectList projects={visibleProjects} allProjects={scopeProjects} selectedId={librarySurface === "project" ? selectedId : undefined} onSelect={(id) => void selectProject(id)} query={query} onQuery={setQuery} filters={filters} onFilters={setFilters} sort={sort} onSort={setSort} scope={scope} onScope={setScope} scanning={scanning} progress={progress} t={t} empty={emptyMessage} onAddRoot={() => void chooseDirectory(false)} onRegister={() => void chooseDirectory(true)} onScan={() => void startScan()} onScanFolder={(path) => void startScan(undefined, path)} onCancelScan={() => void cancelScan()} collectionControls={<CollectionControls collections={collections} selectedId={selectedCollectionId} t={t} notify={notify} onSelect={(id) => { scopeCache.current = undefined; setSelectedCollectionId(id); }} onChanged={async (id) => { scopeCache.current = undefined; await reload(undefined, id ?? null); setSelectedCollectionId(id); }} />} collections={collections} selectedCollectionId={selectedCollectionId} onAddToCollection={(projectId, collectionId) => updateCollectionMembership(projectId, collectionId, true)} onRemoveFromCollection={(projectId, collectionId) => updateCollectionMembership(projectId, collectionId, false)} onRename={async (id, displayName) => { try { await api.updateProject(id, { displayName }); await reload(id); } catch (error) { notify("error", t("saveFailed"), String(error)); throw error; } }} onDescription={async (id, description) => { try { await api.updateProject(id, { description }); await reload(id); } catch (error) { notify("error", t("saveFailed"), String(error)); throw error; } }} scanRoots={scanRoots} onRemoveProject={async (id) => { try { await removeProjectRecord(id); } catch (error) { notify("error", t("removeRecordFailed"), String(error)); } }} onRemoveFolder={async (path, projectIds) => { try { await removeFolderRecords(path, projectIds); } catch (error) { notify("error", t("removeFolderFailed"), String(error)); } }} onIconError={(error) => notify("error", t("projectIconFailed"), String(error))} onReveal={(path) => void api.openInExplorer(path).catch((error) => notify("error", t("openFailed"), String(error)))} onRelocate={(id) => void relocateProject(id)} />
         <div className={"detail-pane" + (librarySurface === "project" && projectLoading && detail ? " is-switching" : "")}>
           <Suspense fallback={<div className="detail-pane-shell"><AppSkeleton /></div>}>
-          {booting ? <div className="detail-pane-shell"><AppSkeleton /></div> : bootError ? <div className="detail-pane-shell"><main id="main-content" className="main-pane"><EmptyState title={t("startupFailed")} body={bootError} actions={<Button variant="primary" onClick={() => void bootstrapApp()}>{t("retry")}</Button>} /></main></div> : librarySurface === "dashboard" ? <div className="detail-pane-shell"><HomeDashboard t={t} refreshKey={dashboardRefreshKey} onOpenProject={(id) => void openProjectFromPalette(id)} onOpenCollection={(id) => void openCollectionFromDashboard(id)} onOpenRun={(runId) => void openTaskRun(runId).then(() => setActiveTasksOpen(true)).catch((error) => notify("error", t("tasksLoadFailed"), String(error)))} onOpenAttention={() => { setApprovalsOpen(true); void loadApprovals(); }} onOpenAttentionItem={openDashboardAttentionItem} /></div> : detail ? <div className="detail-pane-shell"><Dashboard detail={detail} t={t} notify={notify} onFavorite={async () => { await api.updateProject(detail.project.id, { favorite: !detail.project.favorite }); await reload(detail.project.id); }} onArchive={async () => { await api.updateProject(detail.project.id, { archived: !detail.project.archived }); notify("success", detail.project.archived ? t("projectRestored") : t("projectArchived")); await reload(); }} onRefresh={async () => { await api.refreshProject(detail.project.id); await reload(detail.project.id); }} onRemove={async () => { try { await removeProjectRecord(detail.project.id); } catch (error) { notify("error", t("removeRecordFailed"), String(error)); } }} onOpenExplorer={() => void api.openInExplorer(detail.project.canonicalPath).catch((error) => notify("error", t("openFailed"), String(error)))} onOpenTerminal={(terminal) => void api.openInTerminal(detail.project.canonicalPath, terminal).catch((error) => notify("error", t("openFailed"), String(error)))} onOpenIde={(ide) => void api.openInIde(detail.project.canonicalPath, ide).then(() => reload(detail.project.id)).catch((error) => notify("error", t("openFailed"), String(error)))} onOpenAgent={(agent) => void api.openInAgent(detail.project.canonicalPath, agent).then(() => reload(detail.project.id)).catch((error) => notify("error", t("openFailed"), String(error)))} onOpenProject={(id) => void openProjectFromPalette(id)} onRelocate={() => void relocateProject(detail.project.id)} onDescription={async (description) => { try { await api.updateProject(detail.project.id, { description }); await reload(detail.project.id); } catch (error) { notify("error", t("saveFailed"), String(error)); throw error; } }} onNotes={(notes) => void api.updateProject(detail.project.id, { notes }).then(() => { notify("success", t("settingsSaved")); return reload(detail.project.id); }).catch((error) => notify("error", t("saveFailed"), String(error)))} onTags={(tags) => void api.updateProject(detail.project.id, { tags }).then(() => { notify("success", t("settingsSaved")); return reload(detail.project.id); }).catch((error) => notify("error", t("saveFailed"), String(error)))} /></div> : projectLoading ? <div className="detail-pane-shell"><AppSkeleton /></div> : <div className="detail-pane-shell"><main id="main-content" className="main-pane"><EmptyState title={t("noSelection")} body={t("selectProjectHint")} actions={<Button variant="primary" onClick={() => void chooseDirectory(false)}>{t("addRoot")}</Button>} /></main></div>}
+          {booting ? <div className="detail-pane-shell"><AppSkeleton /></div> : bootError ? <div className="detail-pane-shell"><main id="main-content" className="main-pane"><EmptyState title={t("startupFailed")} body={bootError} actions={<Button variant="primary" onClick={() => void bootstrapApp()}>{t("retry")}</Button>} /></main></div> : librarySurface === "dashboard" ? <div className="detail-pane-shell"><HomeDashboard t={t} refreshKey={dashboardRefreshKey} onOpenProject={(id) => void openProjectFromPalette(id)} onOpenCollection={(id) => void openCollectionFromDashboard(id)} onOpenRun={(runId) => void openTaskRun(runId).then(() => setActiveTasksOpen(true)).catch((error) => notify("error", t("tasksLoadFailed"), String(error)))} onOpenAttention={() => { setApprovalsOpen(true); void loadApprovals(); }} onOpenAttentionItem={openDashboardAttentionItem} /></div> : detail ? <div className="detail-pane-shell"><Dashboard detail={detail} refreshing={projectRefreshing} t={t} notify={notify} onFavorite={async () => { await api.updateProject(detail.project.id, { favorite: !detail.project.favorite }); await reload(detail.project.id); }} onArchive={async () => { await api.updateProject(detail.project.id, { archived: !detail.project.archived }); notify("success", detail.project.archived ? t("projectRestored") : t("projectArchived")); await reload(); }} onRefresh={async () => { await api.refreshProject(detail.project.id); await reload(detail.project.id); }} onRemove={async () => { try { await removeProjectRecord(detail.project.id); } catch (error) { notify("error", t("removeRecordFailed"), String(error)); } }} onOpenExplorer={() => void api.openInExplorer(detail.project.canonicalPath).catch((error) => notify("error", t("openFailed"), String(error)))} onOpenTerminal={(terminal) => void api.openInTerminal(detail.project.canonicalPath, terminal).catch((error) => notify("error", t("openFailed"), String(error)))} onOpenIde={(ide) => void api.openInIde(detail.project.canonicalPath, ide).then(() => reload(detail.project.id)).catch((error) => notify("error", t("openFailed"), String(error)))} onOpenAgent={(agent) => void api.openInAgent(detail.project.canonicalPath, agent).then(() => reload(detail.project.id)).catch((error) => notify("error", t("openFailed"), String(error)))} onOpenProject={(id) => void openProjectFromPalette(id)} onRelocate={() => void relocateProject(detail.project.id)} onDescription={async (description) => { try { await api.updateProject(detail.project.id, { description }); await reload(detail.project.id); } catch (error) { notify("error", t("saveFailed"), String(error)); throw error; } }} onNotes={(notes) => void api.updateProject(detail.project.id, { notes }).then(() => { notify("success", t("settingsSaved")); return reload(detail.project.id); }).catch((error) => notify("error", t("saveFailed"), String(error)))} onTags={(tags) => void api.updateProject(detail.project.id, { tags }).then(() => { notify("success", t("settingsSaved")); return reload(detail.project.id); }).catch((error) => notify("error", t("saveFailed"), String(error)))} /></div> : projectLoading ? <div className="detail-pane-shell"><AppSkeleton /></div> : <div className="detail-pane-shell"><main id="main-content" className="main-pane"><EmptyState title={t("noSelection")} body={t("selectProjectHint")} actions={<Button variant="primary" onClick={() => void chooseDirectory(false)}>{t("addRoot")}</Button>} /></main></div>}
           </Suspense>
         </div>
       </>

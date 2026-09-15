@@ -437,6 +437,50 @@ fn git_status_and_typed_commit() {
 }
 
 #[test]
+fn project_detail_uses_saved_lineage_until_explicit_refresh() {
+    let dir = tempdir().unwrap();
+    write(
+        &dir.path().join("package.json"),
+        r#"{"name":"cached-detail"}"#,
+    );
+    let git = |args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{:?}", output);
+    };
+    git(&["init"]);
+    let core = Core::open_in_memory().unwrap();
+    let project = core.register_project(dir.path()).unwrap();
+    assert!(core.get_project(&project.id).unwrap().lineage.is_none());
+
+    // A detail read must not discover a newly added remote by starting Git.
+    git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://example.com/team/project.git",
+    ]);
+    assert!(core.get_project(&project.id).unwrap().lineage.is_none());
+    core.refresh_project(&project.id).unwrap();
+    assert_eq!(
+        core.get_project(&project.id)
+            .unwrap()
+            .lineage
+            .unwrap()
+            .remote_url
+            .as_deref(),
+        Some("https://example.com/team/project.git")
+    );
+    // Saved detail also remains readable while the checkout is unavailable.
+    let moved = dir.path().join(".git-away");
+    fs::rename(dir.path().join(".git"), moved).unwrap();
+    assert!(core.get_project(&project.id).unwrap().lineage.is_some());
+}
+
+#[test]
 fn git_project_inside_repository_uses_parent_root_without_changing_identity() {
     let dir = tempdir().unwrap();
     let repository = dir.path().join("mono-repo");

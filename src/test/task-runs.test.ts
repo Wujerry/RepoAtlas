@@ -29,7 +29,56 @@ import {
   startTaskRunListeners,
   subscribeActiveTaskRuns,
   subscribeTaskRuns,
+  rememberStartedRun,
+  refreshTaskRuns,
+  openTaskRun,
 } from "../lib/task-runs";
+import { api } from "../lib/api";
+
+function taskRun(id: string): TaskRun {
+  return { id, projectId: "project", taskId: null, kind: "build", executable: "pnpm", argv: ["build"], cwd: "C:/project", shellMode: false, status: "running", exitCode: null, logPath: "build.log", startedAt: "2026-09-15T00:00:00Z", finishedAt: null };
+}
+
+it("publishes completion before the final log read and rejects a late start response", async () => {
+  await startTaskRunListeners();
+  const run = taskRun("fast-build");
+  rememberStartedRun(run);
+  let resolveLog!: (text: string) => void;
+  vi.mocked(api.readTaskLog).mockImplementationOnce(() => new Promise((resolve) => { resolveLog = resolve; }));
+  const listener = vi.fn();
+  const unsubscribe = subscribeActiveTaskRuns(listener);
+  const completion = handlers.exit?.({ ...run, status: "succeeded", exitCode: 0 });
+  expect(listener).toHaveBeenCalled();
+  expect(getTaskRunSnapshot().runs.some((item) => item.id === run.id)).toBe(false);
+  rememberStartedRun(run);
+  expect(getTaskRunSnapshot().runs.some((item) => item.id === run.id)).toBe(false);
+  resolveLog("done");
+  await completion;
+  expect(getTaskRunSnapshot().recent.find((item) => item.id === run.id)?.status).toBe("succeeded");
+  unsubscribe();
+});
+
+it("does not restore a completed task from an older refresh", async () => {
+  await startTaskRunListeners();
+  const run = taskRun("refresh-race");
+  rememberStartedRun(run);
+  let resolveRuns!: (runs: TaskRun[]) => void;
+  vi.mocked(api.listActiveTaskRuns).mockImplementationOnce(() => new Promise<TaskRun[]>((resolve) => { resolveRuns = resolve; }));
+  const refresh = refreshTaskRuns();
+  await handlers.exit?.({ ...run, status: "failed", exitCode: 7 });
+  resolveRuns([run]);
+  await refresh;
+  expect(getTaskRunSnapshot().runs.some((item) => item.id === run.id)).toBe(false);
+});
+
+it("keeps an inspected running task active during refresh", async () => {
+  const run = taskRun("inspected-running");
+  vi.mocked(api.getTaskRun).mockResolvedValueOnce(run);
+  await openTaskRun(run.id);
+  vi.mocked(api.listActiveTaskRuns).mockResolvedValueOnce([run]);
+  await refreshTaskRuns();
+  expect(getTaskRunSnapshot().runs).toContainEqual(run);
+});
 
 describe("task run event store", () => {
   beforeEach(() => {

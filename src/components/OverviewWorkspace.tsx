@@ -5,7 +5,7 @@ import { formatTime } from "../lib/format";
 import type { EnvironmentInspection, ExternalTool, GitStatus, ProjectDetail, ProjectFile, ReadmeDocument, RuntimeStatus, TaskRun, ToastTone } from "../types";
 import { Button } from "./ui/button";
 import { Skeleton } from "./ui/feedback";
-import { InlineLoadError, MarkdownDocument } from "./DashboardShared";
+import { InlineLoadError, MarkdownDocument, statusKey } from "./DashboardShared";
 import { ModulesPanel } from "./ModulesPanel";
 import { ContinueCoding } from "./AIHistory";
 
@@ -110,7 +110,9 @@ export function OverviewWorkspace(props: {
     </section>
     <section id="overview-environment" aria-labelledby="overview-environment-title" className="content-card environment-card">
       <div className="section-heading overview-card-heading"><div><p className="eyebrow">{t("detectedEvidence")}</p><h2 id="overview-environment-title">{t("environment")}</h2></div><span className="env-summary">{environmentSummary}</span></div>
-      {environmentLoading ? <Skeleton className="skeleton-list" /> : environmentError ? <InlineLoadError title={t("environmentLoadFailed")} detail={environmentError} retryLabel={t("retry")} onRetry={onRetryEnvironment} /> : (
+      {environmentLoading && environment && <p className="muted-copy" role="status">{t("refreshingOverview")}</p>}
+      {environmentError && <InlineLoadError title={t("environmentLoadFailed")} detail={environmentError} retryLabel={t("retry")} onRetry={onRetryEnvironment} />}
+      {environmentLoading && !environment ? <Skeleton className="skeleton-list" /> : environmentError && !environment ? null : (
         <>
           <div className="environment-overview">
             <div className="environment-overview-copy"><span className="environment-overview-icon"><DesktopTower weight="duotone" /></span><div><strong>{(environment?.runtimes ?? []).length}</strong><span>{t("environment")}</span></div></div>
@@ -145,10 +147,13 @@ export function OverviewWorkspace(props: {
     </section>
     <ModulesPanel detail={detail} t={t} notify={notify} onRefresh={onRefresh} onOpenProject={onOpenProject} onRunTask={onRunTask} ides={ides} agents={agentTools} id="overview-modules" />
     <section id="overview-readme" className="content-card overview-readme"><div className="section-heading"><div><p className="eyebrow">{readme?.path ?? detail.readmePath ?? "README"}</p><h2>{t("readme")}</h2></div>{readme?.truncated && <span className="status-warning">{t("readmeTruncated")}</span>}</div>
-      {readmeLoading ? <Skeleton className="skeleton-code" /> : readmeError ? <InlineLoadError title={t("readmeLoadFailed")} detail={readmeError} retryLabel={t("retry")} onRetry={onRetryReadme} /> : readme?.content || detail.readmeExcerpt ? <MarkdownDocument content={readme?.content ?? detail.readmeExcerpt ?? ""} projectId={detail.project.id} documentPath={readme?.path ?? detail.readmePath ?? "README.md"} /> : <p className="muted-copy">{t("noReadme")}</p>}
+      {readmeLoading && readme && <p className="muted-copy" role="status">{t("refreshingOverview")}</p>}
+      {readmeError && <InlineLoadError title={t("readmeLoadFailed")} detail={readmeError} retryLabel={t("retry")} onRetry={onRetryReadme} />}
+      {readmeLoading && !readme && !detail.readmeExcerpt ? <Skeleton className="skeleton-code" /> : readme?.content || detail.readmeExcerpt ? <MarkdownDocument content={readme?.content ?? detail.readmeExcerpt ?? ""} projectId={detail.project.id} documentPath={readme?.path ?? detail.readmePath ?? "README.md"} /> : <p className="muted-copy">{t("noReadme")}</p>}
     </section>
     <section id="overview-agents" className="content-card overview-readme"><div className="section-heading"><div><p className="eyebrow">{agents?.path ?? "AGENTS.md"}</p><h2>{t("agentsGuide")}</h2></div>{agents?.truncated && <span className="status-warning">{t("readmeTruncated")}</span>}</div>
-      {agentsLoading ? <Skeleton className="skeleton-code" /> : agents?.content ? <MarkdownDocument content={agents.content} projectId={detail.project.id} documentPath={agents.path} /> : <p className="muted-copy">{t("noAgentsGuide")}</p>}
+      {agentsLoading && agents && <p className="muted-copy" role="status">{t("refreshingOverview")}</p>}
+      {agentsLoading && !agents ? <Skeleton className="skeleton-code" /> : agents?.content ? <MarkdownDocument content={agents.content} projectId={detail.project.id} documentPath={agents.path} /> : <p className="muted-copy">{t("noAgentsGuide")}</p>}
     </section>
     <section id="overview-profile" className="content-card overview-facts"><div className="section-heading"><div><p className="eyebrow">{t("detectedEvidence")}</p><h2>{t("projectProfile")}</h2></div><span>{groups.length}</span></div>
       {groups.length === 0 ? <p className="muted-copy">{t("noFacts")}</p> : <div className="profile-groups">{groups.map((group) => <div className="profile-group" key={group.label}><span>{group.label}</span><div>{group.values.map((value, index) => <span className="badge" title={group.sources?.[index]} key={group.label + "-" + value}>{value}</span>)}</div></div>)}</div>}
@@ -170,8 +175,4 @@ function NotesEditor({ value, onSave, placeholder }: { value: string; onSave: (n
     if (dirty.current && draft !== value) onSave(draft);
     dirty.current = false;
   }} />;
-}
-
-function statusKey(status: string): MessageKey {
-  return status === "succeeded" ? "succeeded" : status === "failed" ? "failed" : status === "cancelled" ? "cancelled" : "running";
 }

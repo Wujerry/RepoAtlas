@@ -74,8 +74,14 @@ function enqueueLogChunk(chunk: LogChunk) {
   }
 }
 
+function hasFinishedRun(id: string) {
+  return state.recent.some((item) => item.id === id && item.status !== "running" && item.status !== "starting");
+}
+
 function upsertRun(run: TaskRun) {
   const running = run.status === "running" || run.status === "starting";
+  // A fast process may finish before the start response reaches the client.
+  if (running && hasFinishedRun(run.id)) return;
   state = {
     ...state,
     runs: running
@@ -145,7 +151,7 @@ export function setInputOwner(runId?: string) {
 
 export async function refreshTaskRuns(options: { hydrateLogs?: boolean; refreshProjectNames?: boolean } = {}) {
   const refreshNames = options.refreshProjectNames || Object.keys(state.projectNames).length === 0;
-  const [runs, projects] = await Promise.all([
+  const [loadedRuns, projects] = await Promise.all([
     api.listActiveTaskRuns(),
     refreshNames ? api.listProjects({ includeArchived: true }) : Promise.resolve(undefined),
   ]);
@@ -153,8 +159,10 @@ export async function refreshTaskRuns(options: { hydrateLogs?: boolean; refreshP
     ? Object.fromEntries(projects.map((project) => [project.id, project.displayName]))
     : state.projectNames;
   const tails = options.hydrateLogs
-    ? await Promise.all(runs.map(async (run) => [run.id, await api.readTaskLog(run.id)] as const))
+    ? await Promise.all(loadedRuns.map(async (run) => [run.id, await api.readTaskLog(run.id)] as const))
     : [];
+  // An exit event can arrive while this older active-run snapshot is in flight.
+  const runs = loadedRuns.filter((run) => !hasFinishedRun(run.id));
   state = {
     ...state,
     runs,
@@ -199,6 +207,7 @@ export async function startTaskRunListeners() {
     onTaskExited(async (run) => {
       flushPendingLogs();
       upsertRun(run);
+      emitMetadata();
       try {
         const output = await api.readTaskLog(run.id);
         state = { ...state, logs: { ...state.logs, [run.id]: output }, logOffsets: { ...state.logOffsets, [run.id]: output.length } };

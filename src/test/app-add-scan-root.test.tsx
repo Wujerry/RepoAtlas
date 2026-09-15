@@ -1,3 +1,4 @@
+import { invalidateOverviewCache } from "../lib/overview-cache";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -96,6 +97,7 @@ vi.mock("../lib/api", () => ({
 
 describe("adding a scan root", () => {
   beforeEach(() => {
+    invalidateOverviewCache();
     vi.clearAllMocks();
     vi.mocked(api.startScan).mockResolvedValue(undefined);
     vi.mocked(open).mockResolvedValue(scanRoot.path);

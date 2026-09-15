@@ -1,13 +1,15 @@
 import { motion } from "framer-motion";
-import { BookOpenText, CaretDown, CheckCircle, Code, Copy, DotsThree, Files as FilesIcon, FolderOpen, GitBranch, PencilSimple, Play, Sparkle, Star, TerminalWindow, WarningCircle } from "@phosphor-icons/react";
+import { BookOpenText, CaretDown, Code, Copy, DotsThree, Files as FilesIcon, FolderOpen, GitBranch, PencilSimple, Play, Sparkle, SpinnerGap, Star, TerminalWindow, WarningCircle } from "@phosphor-icons/react";
 import { Dialog } from "@base-ui/react/dialog";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { MessageKey } from "../i18n";
 import { api, onTaskExited, onTaskPersistenceFailed } from "../lib/api";
+import { overviewGit, overviewEnvironment, overviewTools, overviewReadme, overviewAgents } from "../lib/overview-cache";
+import { useCachedResource } from "../lib/use-cached-resource";
 import { stackOf } from "../lib/format";
-import type { GitOp, GitStatus, ProjectDetail, ProjectTab, ReadmeDocument, TaskRun, ToastTone } from "../types";
-import type { EnvironmentInspection, ExternalTool, ProjectFile } from "../types";
+import type { GitOp, ProjectDetail, ProjectTab, ReadmeDocument, TaskRun, ToastTone } from "../types";
+import type { ProjectFile } from "../types";
 import { Button } from "./ui/button";
 import { ConfirmDialog } from "./ui/confirm";
 import { Skeleton } from "./ui/feedback";
@@ -21,8 +23,9 @@ import { FilesWorkspace } from "./FilesWorkspace";
 import { InlineLoadError, MarkdownDocument, statusKey, taskConfirmation } from "./DashboardShared";
 import { getTaskLog, rememberStartedRun, subscribeTaskLog } from "../lib/task-runs";
 
-export function Dashboard({ detail, t, notify, onFavorite, onArchive, onRefresh, onRemove, onOpenExplorer, onOpenTerminal, onOpenIde, onOpenAgent, onDescription, onNotes, onTags, onOpenProject, onRelocate }: {
+export function Dashboard({ detail, refreshing = false, t, notify, onFavorite, onArchive, onRefresh, onRemove, onOpenExplorer, onOpenTerminal, onOpenIde, onOpenAgent, onDescription, onNotes, onTags, onOpenProject, onRelocate }: {
   detail: ProjectDetail;
+  refreshing?: boolean;
   t: (key: MessageKey) => string;
   notify: (tone: ToastTone, title: string, detail?: string) => void;
   onFavorite: () => void | Promise<void>;
@@ -43,9 +46,6 @@ export function Dashboard({ detail, t, notify, onFavorite, onArchive, onRefresh,
   const [tab, setTab] = useState<ProjectTab>("overview");
   const [filesActivated, setFilesActivated] = useState(false);
   const [tagDraft, setTagDraft] = useState("");
-  const [git, setGit] = useState<GitStatus | null>(null);
-  const [gitLoading, setGitLoading] = useState(false);
-  const [gitError, setGitError] = useState<string>();
   const [runs, setRuns] = useState<TaskRun[]>([]);
   const [runsLoading, setRunsLoading] = useState(false);
   const [runsError, setRunsError] = useState<string>();
@@ -63,88 +63,66 @@ export function Dashboard({ detail, t, notify, onFavorite, onArchive, onRefresh,
   const [selectedDiff, setSelectedDiff] = useState<{ path: string; staged: boolean }>();
   const [diff, setDiff] = useState("");
   const [diffLoading, setDiffLoading] = useState(false);
-  const [readme, setReadme] = useState<ReadmeDocument>();
-  const [readmeLoading, setReadmeLoading] = useState(false);
-  const [readmeError, setReadmeError] = useState<string>();
-  const [agents, setAgents] = useState<ReadmeDocument>();
-  const [agentsLoading, setAgentsLoading] = useState(false);
-  const [agentsMissing, setAgentsMissing] = useState(false);
   const [descriptionOpen, setDescriptionOpen] = useState(false);
   const [descriptionDraft, setDescriptionDraft] = useState(project.description ?? "");
   const [descriptionSaving, setDescriptionSaving] = useState(false);
-  const [ides, setIdes] = useState<ExternalTool[]>([]);
-  const [terminals, setTerminals] = useState<ExternalTool[]>([]);
-  const [agentTools, setAgentTools] = useState<ExternalTool[]>([]);
   const [overviewSection, setOverviewSection] = useState<"status" | "environment" | "modules" | "readme" | "agents" | "profile" | "notes">("status");
-  const [environment, setEnvironment] = useState<EnvironmentInspection>();
-  const [environmentLoading, setEnvironmentLoading] = useState(false);
-  const [environmentError, setEnvironmentError] = useState<string>();
   const [previewFile, setPreviewFile] = useState<ProjectFile | null>(null);
   const [previewDoc, setPreviewDoc] = useState<ReadmeDocument>();
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string>();
   const contentRef = useRef<HTMLDivElement>(null);
-  const readmeSequence = useRef(0);
-  const agentsSequence = useRef(0);
-  const agentsRequested = useRef<string | undefined>(undefined);
+  const runsSequence = useRef(0);
+  const currentProject = useRef(project.id);
+  currentProject.current = project.id;
 
-  async function loadGit() {
-    if (project.vcsKind !== "git") { setGit(null); setGitError(undefined); return; }
-    setGitLoading(true);
-    setGitError(undefined);
-    try { setGit(await api.gitStatus(project.id)); }
-    catch (error) { setGit(null); setGitError(String(error)); notify("error", t("gitLoadFailed"), String(error)); }
-    finally { setGitLoading(false); }
-  }
+  const [agentsProject, setAgentsProject] = useState<string>();
+  const gitResource = useCachedResource(overviewGit, project.vcsKind === "git" && (tab === "overview" || tab === "git") ? project.id : undefined);
+  const git = gitResource.value ?? null;
+  const gitLoading = gitResource.loading;
+  const gitError = gitResource.error;
+  const loadGit = gitResource.refresh;
+  const readmeResource = useCachedResource(overviewReadme, detail.readmePath ? project.id : undefined);
+  const { value: readme, loading: readmeLoading, error: readmeError } = readmeResource;
+  const agentsResource = useCachedResource(overviewAgents, agentsProject === project.id ? project.id : undefined);
+  const { value: agents, loading: agentsLoading } = agentsResource;
+  const agentsMissing = Boolean(agentsResource.error);
+  const environmentResource = useCachedResource(overviewEnvironment, tab === "overview" ? project.id : undefined, 180);
+  const { value: environment, loading: environmentLoading, error: environmentError } = environmentResource;
+  const toolsResource = useCachedResource(overviewTools, "installed");
+  const ides = toolsResource.value?.ides ?? [];
+  const terminals = toolsResource.value?.terminals ?? [];
+  const agentTools = toolsResource.value?.agents ?? [];
+  useEffect(() => {
+    if (toolsResource.error) notify("error", t("openFailed"), toolsResource.error);
+  }, [toolsResource.error, notify, t]);
 
   async function loadRuns() {
+    const sequence = ++runsSequence.current;
+    const current = () => sequence === runsSequence.current && currentProject.current === project.id;
     setRunsLoading(true);
     setRunsError(undefined);
     try {
-      const next = await api.listTaskRuns(project.id); setRuns(next);
+      const next = await api.listTaskRuns(project.id);
+      if (!current()) return;
+      setRuns(next);
       const runningRuns = next.filter((run) => run.status === "running");
       if (runningRuns.length > 0) {
         setActiveRunId((current) => (current && runningRuns.some((run) => run.id === current) ? current : runningRuns[0].id));
         const loaded = await Promise.all(runningRuns.map(async (run) => [run.id, await api.readTaskLog(run.id)] as const));
+        if (!current()) return;
         setLogs((current) => ({ ...current, ...Object.fromEntries(loaded) }));
       }
-    } catch (error) { setRunsError(String(error)); notify("error", t("tasksLoadFailed"), String(error)); }
-    finally { setRunsLoading(false); }
+    } catch (error) { if (current()) { setRunsError(String(error)); notify("error", t("tasksLoadFailed"), String(error)); } }
+    finally { if (current()) setRunsLoading(false); }
   }
 
   useEffect(() => {
-    setTab("overview"); setFilesActivated(false); setOverviewSection("status"); setGit(null); setGitError(undefined); setRuns([]); setRunsError(undefined); setLogs({}); setCommitMessage(""); setSelectedDiff(undefined); setDiff("");
+    setTab("overview"); setFilesActivated(false); setOverviewSection("status"); setRuns([]); setRunsError(undefined); setLogs({}); setCommitMessage(""); setSelectedDiff(undefined); setDiff("");
     setDescriptionDraft(project.description ?? "");
-    setAgents(undefined); setAgentsMissing(false);
-    setEnvironment(undefined); setEnvironmentError(undefined);
     setPreviewFile(null); setPreviewDoc(undefined); setPreviewError(undefined);
-    agentsRequested.current = undefined;
     void loadRuns();
   }, [project.id]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void api.listExternalTools().then((tools) => {
-      if (cancelled) return;
-      setIdes(tools.ides);
-      setTerminals(tools.terminals);
-      setAgentTools(tools.agents ?? []);
-    }).catch((error) => {
-      if (!cancelled) notify("error", t("openFailed"), String(error));
-    });
-    return () => { cancelled = true; };
-  }, [notify, t]);
-
-  useEffect(() => {
-    const sequence = ++readmeSequence.current;
-    setReadme(undefined);
-    setReadmeError(undefined);
-    if (!detail.readmePath) { setReadmeLoading(false); return; }
-    setReadmeLoading(true);
-    api.readProjectReadme(project.id).then((value) => { if (sequence === readmeSequence.current) setReadme(value); }).catch((error) => {
-      if (sequence === readmeSequence.current) { setReadmeError(String(error)); notify("error", t("readmeLoadFailed"), String(error)); }
-    }).finally(() => { if (sequence === readmeSequence.current) setReadmeLoading(false); });
-  }, [detail.readmePath, notify, project.id, t]);
 
   useEffect(() => {
     const unsubs = Promise.all([
@@ -273,30 +251,6 @@ export function Dashboard({ detail, t, notify, onFavorite, onArchive, onRefresh,
     return () => root.removeEventListener("scroll", onScroll);
   }, [tab, project.id, readmeLoading, agentsLoading]);
 
-  useEffect(() => {
-    if (project.vcsKind !== "git") return;
-    if (tab !== "git" && tab !== "overview") return;
-    void loadGit();
-  }, [project.id, project.vcsKind, tab]);
-
-  useEffect(() => {
-    if (tab !== "overview") return;
-    let cancelled = false;
-    const timer = window.setTimeout(() => {
-      if (cancelled) return;
-      setEnvironmentLoading(true);
-      setEnvironmentError(undefined);
-      void api.inspectProjectEnvironment(project.id).then((value) => {
-        if (!cancelled) setEnvironment(value);
-      }).catch((error) => {
-        if (!cancelled) setEnvironmentError(String(error));
-      }).finally(() => {
-        if (!cancelled) setEnvironmentLoading(false);
-      });
-    }, 180);
-    return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [project.id, tab]);
-
   async function openAtlasReport() {
     setReportOpen(true);
     setReportLoading(true);
@@ -335,15 +289,17 @@ export function Dashboard({ detail, t, notify, onFavorite, onArchive, onRefresh,
   return (
     <main id="main-content" className={tab === "tasks" ? "main-pane main-pane-tasks" : tab === "files" ? "main-pane main-pane-files" : "main-pane"}>
       <header className="project-header">
+        <span key={project.id} className="project-switch-sweep" aria-hidden="true" />
         <div className="project-hero">
           <div className="project-identity">
             <div className="project-hero-top">
-              <div className="project-title-row">
+              <div key={project.id} className="project-title-row project-switch-title">
                 <h1 title={project.displayName}>{project.displayName}</h1>
-                <span className={"project-status-pill " + (project.availability === "ready" ? "is-ready" : "is-warning")}>
-                  {project.availability === "ready" ? <CheckCircle weight="fill" /> : <WarningCircle weight="fill" />}
-                  <span>{t(project.availability === "ready" ? "ready" : "unavailable")}</span>
-                </span>
+                {(refreshing || gitLoading || toolsResource.loading) && <span className="muted-copy" role="status" aria-label={t("refreshingOverview")}><SpinnerGap className="button-spinner" size={16} aria-hidden="true" /></span>}
+                {project.availability !== "ready" && <span className="project-status-pill is-warning">
+                  <WarningCircle weight="fill" />
+                  <span>{t("unavailable")}</span>
+                </span>}
               </div>
               <div className="hero-actions">
                 <ActionMenu trigger={<Button variant="primary" size="md"><Sparkle weight="bold" />{t("openAgent")}<CaretDown /></Button>} items={[
@@ -445,14 +401,9 @@ export function Dashboard({ detail, t, notify, onFavorite, onArchive, onRefresh,
       ) : tab !== "files" ? (
         <div id={`project-panel-${tab}`} role="tabpanel" aria-labelledby={`project-tab-${tab}`} className="workspace-scroll" ref={contentRef}>
           <div className="workspace-content" key={tab}>
-            {tab === "overview" && <OverviewWorkspace detail={detail} git={git} readme={readme} readmeLoading={readmeLoading} readmeError={readmeError} onRetryReadme={() => { readmeSequence.current += 1; setReadmeError(undefined); setReadmeLoading(true); api.readProjectReadme(project.id).then(setReadme).catch((error) => setReadmeError(String(error))).finally(() => setReadmeLoading(false)); }} agents={agents} agentsLoading={agentsLoading} agentsMissing={agentsMissing} onNeedAgents={() => {
-              if (agentsRequested.current === project.id || agents || agentsLoading || agentsMissing) return;
-              agentsRequested.current = project.id;
-              const sequence = ++agentsSequence.current;
-              setAgentsLoading(true); setAgentsMissing(false);
-              api.readProjectDocument(project.id, "AGENTS.md").then((value) => { if (sequence === agentsSequence.current) setAgents(value); }).catch(() => { if (sequence === agentsSequence.current) setAgentsMissing(true); }).finally(() => { if (sequence === agentsSequence.current) setAgentsLoading(false); });
-            }} t={t} tagDraft={tagDraft} setTagDraft={setTagDraft} onNotes={onNotes} onTags={onTags} tasks={detail.tasks} runs={runs} environment={environment} environmentLoading={environmentLoading} environmentError={environmentError} onRetryEnvironment={() => { setEnvironmentError(undefined); setEnvironmentLoading(true); api.inspectProjectEnvironment(project.id).then(setEnvironment).catch((error) => setEnvironmentError(String(error))).finally(() => setEnvironmentLoading(false)); }} notify={notify} onRefresh={onRefresh} ides={ides} agentTools={agentTools} onRunTask={setPendingTaskId} onOpenProject={onOpenProject} onPreviewFile={(file) => { setPreviewFile(file); setPreviewError(undefined); setPreviewLoading(true); api.readProjectFile(project.id, file.path).then(setPreviewDoc).catch((error) => { setPreviewDoc(undefined); setPreviewError(String(error)); }).finally(() => setPreviewLoading(false)); }} />}
-            {tab === "git" && <GitWorkspace git={git} loading={gitLoading} error={gitError} busy={gitBusy} commitMessage={commitMessage} setCommitMessage={setCommitMessage} stagedCount={stagedCount} selectedDiff={selectedDiff} diff={diff} diffLoading={diffLoading} t={t} onRetry={() => void loadGit()} onGit={setPendingGit} onDiff={loadDiff} />}
+            {tab === "overview" && gitError && <InlineLoadError title={t("gitLoadFailed")} detail={gitError} retryLabel={t("retry")} onRetry={() => void loadGit()} />}
+            {tab === "overview" && <OverviewWorkspace detail={detail} git={git} readme={readme} readmeLoading={readmeLoading} readmeError={readmeError} onRetryReadme={() => void readmeResource.refresh()} agents={agents} agentsLoading={agentsLoading} agentsMissing={agentsMissing} onNeedAgents={() => setAgentsProject(project.id)} t={t} tagDraft={tagDraft} setTagDraft={setTagDraft} onNotes={onNotes} onTags={onTags} tasks={detail.tasks} runs={runs} environment={environment} environmentLoading={environmentLoading} environmentError={environmentError} onRetryEnvironment={() => void environmentResource.refresh()} notify={notify} onRefresh={onRefresh} ides={ides} agentTools={agentTools} onRunTask={setPendingTaskId} onOpenProject={onOpenProject} onPreviewFile={(file) => { setPreviewFile(file); setPreviewError(undefined); setPreviewLoading(true); api.readProjectFile(project.id, file.path).then(setPreviewDoc).catch((error) => { setPreviewDoc(undefined); setPreviewError(String(error)); }).finally(() => setPreviewLoading(false)); }} />}
+            {tab === "git" && <GitWorkspace git={git} loading={gitLoading && !git} error={gitError} busy={gitBusy} commitMessage={commitMessage} setCommitMessage={setCommitMessage} stagedCount={stagedCount} selectedDiff={selectedDiff} diff={diff} diffLoading={diffLoading} t={t} onRetry={() => void loadGit()} onGit={setPendingGit} onDiff={loadDiff} />}
           </div>
         </div>
       ) : null}

@@ -1,3 +1,4 @@
+import { invalidateOverviewCache } from "../lib/overview-cache";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectQuery, ProjectSummary } from "../types";
@@ -62,6 +63,7 @@ import App from "../App";
 
 describe("App dashboard navigation", () => {
   beforeEach(() => {
+    invalidateOverviewCache();
     vi.clearAllMocks();
     apiMocks.getDataVersion.mockResolvedValue(1);
   });
@@ -77,6 +79,25 @@ describe("App dashboard navigation", () => {
     expect(await screen.findByRole("heading", { name: "First Project workspace" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Home" }));
     expect(await screen.findByRole("heading", { name: "Working Dashboard" })).toBeInTheDocument();
+  });
+
+  it("shows a revisited project immediately while its fresh detail is still pending", async () => {
+    apiMocks.listProjects.mockResolvedValue([first, second]);
+    apiMocks.getProject.mockImplementation(async (id: string) => ({ project: id === first.id ? first : second, facts: [], tasks: [] }));
+    render(<App />);
+    await screen.findByRole("heading", { name: "Working Dashboard" });
+    fireEvent.click(screen.getByRole("button", { name: "First Project" }));
+    await screen.findByRole("heading", { name: "First Project workspace" });
+    fireEvent.click(screen.getByRole("button", { name: "Second Project" }));
+    await screen.findByRole("heading", { name: "Second Project workspace" });
+    let resolve!: (detail: unknown) => void;
+    apiMocks.getProject.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+    fireEvent.click(screen.getByRole("button", { name: "First Project" }));
+    expect(screen.getByRole("heading", { name: "First Project workspace" })).toBeInTheDocument();
+    expect(document.querySelector(".detail-pane")).not.toHaveClass("is-switching");
+    await waitFor(() => expect(resolve).toBeDefined());
+    await act(async () => { resolve({ project: { ...first, description: "Fresh data" }, facts: [], tasks: [] }); });
+    expect(await screen.findByText("Fresh data")).toBeInTheDocument();
   });
 
   it("opens a Dashboard Collection through the existing filtered project library", async () => {

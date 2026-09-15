@@ -99,6 +99,17 @@ describe("HomeDashboard", () => {
     mocks.getDashboardSnapshot.mockResolvedValue(snapshot);
   });
 
+  it("labels manually ended tasks and their totals as Stopped", async () => {
+    mocks.getDashboardSnapshot.mockResolvedValue({
+      ...snapshot,
+      recentRuns: [{ run: { ...run, status: "cancelled" }, projectName: project.displayName }],
+    });
+    render(<HomeDashboard t={t} refreshKey="stopped" onOpenProject={vi.fn()} onOpenCollection={vi.fn()} onOpenRun={vi.fn()} onOpenAttention={vi.fn()} onOpenAttentionItem={vi.fn()} />);
+    expect(await screen.findByRole("button", { name: /RepoAtlas.*test.*Stopped/i })).toBeInTheDocument();
+    expect(screen.getByText("Stopped", { selector: ".dashboard-result span" })).toBeInTheDocument();
+    expect(screen.queryByText("Cancelled")).not.toBeInTheDocument();
+  });
+
   it("shows source-backed status, collections, recent Projects, runs, and attention", async () => {
     render(<HomeDashboard t={t} refreshKey="initial" onOpenProject={vi.fn()} onOpenCollection={vi.fn()} onOpenRun={vi.fn()} onOpenAttention={vi.fn()} onOpenAttentionItem={vi.fn()} />);
 

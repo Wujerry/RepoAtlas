@@ -30,14 +30,19 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
   const editorNameRef = useRef<HTMLInputElement>(null);
   const editorReturnFocusRef = useRef<HTMLButtonElement | null>(null);
   const taskSearchRef = useRef<HTMLInputElement>(null);
+  const taskCards = useRef(new Map<string, HTMLElement>());
+  const [locateRequest, setLocateRequest] = useState<{ taskId: string }>();
+  const [highlightedTaskId, setHighlightedTaskId] = useState<string>();
+  const taskForRun = (run: TaskRun) => tasks.find((task) => task.id === run.taskId);
+  const runName = (run: TaskRun) => taskForRun(run)?.name || formatCommand(run.executable, run.argv);
   const activeRun = runs.find((run) => run.id === activeRunId);
   const runningRuns = runs.filter((run) => run.status === "running");
-  const activeRunning = runningRuns.find((run) => run.id === activeRunId) ?? runningRuns[0];
-  const consoleTitle = activeRunning?.kind ?? activeRun?.kind ?? t("taskConsole");
+  const activeRunning = activeRun ? runningRuns.find((run) => run.id === activeRun.id) : runningRuns[0];
+  const consoleTitle = activeRun ? runName(activeRun) : activeRunning ? runName(activeRunning) : t("taskConsole");
   const taskKinds = [...new Set(tasks.map((task) => task.kind))].sort((a, b) => a.localeCompare(b));
   const runStatsByTaskId = new Map<string, { count: number; last?: TaskRun }>();
   for (const task of tasks) {
-    const matchingRuns = runs.filter((run) => run.taskId === task.id || run.kind === task.kind);
+    const matchingRuns = runs.filter((run) => run.taskId === task.id);
     runStatsByTaskId.set(task.id, {
       count: matchingRuns.length,
       last: matchingRuns.length > 0 ? matchingRuns.reduce((latest, run) => (run.startedAt >= latest.startedAt ? run : latest)) : undefined,
@@ -55,7 +60,7 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
     if (sourceFilter === "inferred" && !task.inferred) return false;
     if (sourceFilter === "custom" && task.inferred) return false;
     const stats = runStatsByTaskId.get(task.id);
-    if (stateFilter === "running" && !runningRuns.some((run) => run.taskId === task.id || run.kind === task.kind)) return false;
+    if (stateFilter === "running" && !runningRuns.some((run) => run.taskId === task.id)) return false;
     if (stateFilter === "lastFailed" && stats?.last?.status !== "failed") return false;
     if (stateFilter === "lastSucceeded" && stats?.last?.status !== "succeeded") return false;
     return true;
@@ -81,6 +86,30 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
     if (!activeRunning) return;
     setConsoleOpen(true);
   }, [activeRunning?.id]);
+  useEffect(() => {
+    if (!locateRequest) return;
+    const frame = requestAnimationFrame(() => {
+      const card = taskCards.current.get(locateRequest.taskId);
+      if (!card) return;
+      card.focus({ preventScroll: true });
+      card.scrollIntoView({ block: "center", inline: "nearest", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+      setHighlightedTaskId(locateRequest.taskId);
+    });
+    const timer = window.setTimeout(() => setHighlightedTaskId(undefined), 1800);
+    return () => { cancelAnimationFrame(frame); window.clearTimeout(timer); };
+  }, [locateRequest]);
+
+  function selectHistory(run: TaskRun) {
+    setConsoleOpen(true);
+    onHistory(run);
+    const task = taskForRun(run);
+    if (task) {
+      clearTaskFilters();
+      setLocateRequest({ taskId: task.id });
+    } else {
+      notify("info", t("taskDefinitionUnavailable"));
+    }
+  }
   useEffect(() => {
     const pane = logPaneRef.current;
     if (!pane || !consoleOpen) return;
@@ -300,7 +329,7 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
                 const taskRunCount = taskRunStats?.count ?? 0;
                 const lastRun = taskRunStats?.last;
                 return (
-                <article className={"task-card" + (runningRuns.some((run) => run.taskId === task.id) ? " is-running" : "") + (isEditing ? " is-editing" : "")} key={task.id}>
+                <article ref={(node) => { if (node) taskCards.current.set(task.id, node); else taskCards.current.delete(task.id); }} tabIndex={-1} aria-label={task.name || task.kind} className={"task-card" + (runningRuns.some((run) => run.taskId === task.id) ? " is-running" : "") + (isEditing ? " is-editing" : "") + (highlightedTaskId === task.id ? " is-located" : "")} key={task.id}>
                   {isEditing ? renderTaskEditor(true) : <>
                     <span className="task-icon"><Play weight="fill" /></span>
                     <div className="task-card-copy">
@@ -336,10 +365,11 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
           {loading ? <Skeleton className="skeleton-list" /> : error ? <InlineLoadError title={t("tasksLoadFailed")} detail={error} retryLabel={t("retry")} onRetry={onRetry} /> : runs.length === 0 ? <p className="muted-copy">{t("noRunHistory")}</p> : (
             <div className="run-list">
               {runs.map((run) => (
-                <button className={activeRunId === run.id ? "active" : ""} key={run.id} onClick={() => { setConsoleOpen(true); onHistory(run); }}>
+                <button className={activeRunId === run.id ? "active" : ""} key={run.id} title={`${runName(run)}\n${formatCommand(run.executable, run.argv)}\n${run.cwd}`} onClick={() => selectHistory(run)}>
                   <span className={"run-dot run-" + run.status} />
-                  <strong>{run.kind}</strong>
+                  <strong>{runName(run)}</strong>
                   <span>{t(statusKey(run.status))}</span>
+                  <code className="run-command">{formatCommand(run.executable, run.argv)}</code>
                   <time>{formatTime(run.startedAt)}</time>
                 </button>
               ))}
@@ -359,7 +389,7 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
             {runningRuns.map((run) => (
               <button className={"task-run-chip" + (activeRunning?.id === run.id ? " active" : "")} key={run.id} type="button" title={formatCommand(run.executable, run.argv)} onClick={() => { setConsoleOpen(true); onHistory(run); }}>
                 <span className={"run-dot run-running"} />
-                <strong>{run.kind}</strong>
+                <strong>{runName(run)}</strong>
               </button>
             ))}
             {activeRunning && <Button variant="danger" onClick={() => onStopRun(activeRunning.id)}><Square weight="fill" />{t("stop")}</Button>}

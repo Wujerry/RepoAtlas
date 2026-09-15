@@ -288,9 +288,9 @@ impl Broker {
         let log_path_thread = log_path.clone();
         let run_id = id.clone();
         let log_budget = Arc::new(AtomicU64::new(MAX_LOG_BYTES));
+        let (drained_tx, drained_rx) = std::sync::mpsc::channel();
         thread::spawn(move || {
             let on_chunk = Arc::new(on_chunk);
-            let on_exit = on_exit;
             pump(
                 reader,
                 "pty",
@@ -303,7 +303,15 @@ impl Broker {
                     let _ = broker.write_stdin(&run_id, &reply);
                 },
             );
-            let code = broker.reap(&run_id).ok().flatten();
+            let _ = drained_tx.send(());
+        });
+        let broker = self.clone();
+        let run_id = id.clone();
+        thread::spawn(move || {
+            // ConPTY can keep the output pipe open until the master closes.
+            // Observe the process independently; EOF is not a lifecycle signal.
+            let code = broker.wait_for_exit(&run_id).ok().flatten();
+            let _ = drained_rx.recv_timeout(std::time::Duration::from_secs(2));
             on_exit(run_id, code);
         });
         Ok(run)
@@ -327,18 +335,20 @@ impl Broker {
     }
 
     pub fn stop(&self, conn: &Connection, run_id: &str) -> Result<TaskRun> {
-        let child_pid = {
+        let (child_pid, writer, master) = {
             let mut inner = self.inner.lock().map_err(|_| Error::msg("broker lock"))?;
             inner
                 .runs
                 .iter_mut()
                 .find(|run| run.id == run_id)
                 .map(|run| {
-                    run.writer.take();
-                    let _ = run.master.take();
-                    run.child.process_id().unwrap_or(0)
+                    (
+                        run.child.process_id().unwrap_or(0),
+                        run.writer.take(),
+                        run.master.take(),
+                    )
                 })
-                .unwrap_or(0)
+                .unwrap_or((0, None, None))
         };
         if child_pid > 0 {
             // Do not run the Windows process manager while holding the Broker
@@ -370,6 +380,9 @@ impl Broker {
                 terminate_child(run.child.as_mut());
             }
         }
+        // Closing ConPTY may drain output; never do so with the broker locked.
+        drop(writer);
+        drop(master);
         self.reap(run_id)?;
         get_run(conn, run_id)
     }
@@ -530,9 +543,15 @@ impl Broker {
     }
 
     fn reap(&self, run_id: &str) -> Result<Option<i32>> {
-        let mut inner = self.inner.lock().map_err(|_| Error::msg("broker lock"))?;
-        if let Some(index) = inner.runs.iter().position(|run| run.id == run_id) {
-            let mut run = inner.runs.remove(index);
+        let run = {
+            let mut inner = self.inner.lock().map_err(|_| Error::msg("broker lock"))?;
+            inner
+                .runs
+                .iter()
+                .position(|run| run.id == run_id)
+                .map(|index| inner.runs.remove(index))
+        };
+        if let Some(mut run) = run {
             run.writer.take();
             let code = run
                 .child
@@ -542,6 +561,42 @@ impl Broker {
             return Ok(code);
         }
         Ok(None)
+    }
+
+    fn wait_for_exit(&self, run_id: &str) -> Result<Option<i32>> {
+        loop {
+            let finished = {
+                let mut inner = self.inner.lock().map_err(|_| Error::msg("broker lock"))?;
+                let Some(index) = inner.runs.iter().position(|run| run.id == run_id) else {
+                    return Ok(None); // An explicit stop already reaped this run.
+                };
+                match inner.runs[index].child.try_wait() {
+                    Ok(Some(status)) => {
+                        Some((inner.runs.remove(index), Some(status.exit_code() as i32)))
+                    }
+                    Ok(None) => None,
+                    Err(_) => {
+                        // An unreadable process status must not leak a live
+                        // task behind a failed completion notification.
+                        let mut run = inner.runs.remove(index);
+                        terminate_child(run.child.as_mut());
+                        Some((run, None))
+                    }
+                }
+            };
+            if let Some((mut run, code)) = finished {
+                // Release terminal handles outside the broker mutex: ConPTY
+                // shutdown may wait for the output reader to drain.
+                #[cfg(windows)]
+                run.job.terminate();
+                run.writer.take();
+                run.master.take();
+                let _ = run.child.wait();
+                drop(run);
+                return Ok(code);
+            }
+            thread::sleep(std::time::Duration::from_millis(25));
+        }
     }
 }
 

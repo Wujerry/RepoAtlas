@@ -48,6 +48,15 @@ function renderWorkspace(overrides: Partial<React.ComponentProps<typeof TaskWork
 }
 
 describe("TaskWorkspace console", () => {
+  it("keeps a selected historical task separate from another running task", () => {
+    const historical = { ...run("succeeded"), id: "history", taskId: "build", kind: "build" };
+    renderWorkspace({
+      tasks: [task("task-1"), { ...task("build"), name: "Package desktop", kind: "build" }],
+      runs: [run("running"), historical], activeRunId: historical.id,
+    });
+    expect(document.querySelector(".task-console-toggle strong")).toHaveTextContent("Package desktop");
+    expect(screen.queryByRole("button", { name: t("stop") })).not.toBeInTheDocument();
+  });
   it("stays collapsed until a task is running", () => {
     renderWorkspace();
     expect(screen.getByLabelText("Task console")).toHaveClass("is-collapsed");
@@ -135,6 +144,39 @@ describe("TaskWorkspace console", () => {
 });
 
 describe("TaskWorkspace task locating", () => {
+  it("distinguishes same-kind tasks and reveals, scrolls to and focuses the exact history target", async () => {
+    const first = { ...task("task-1"), name: "Build web", kind: "build", argv: ["build:web"] };
+    const second = { ...task("task-2"), name: "Build desktop", kind: "build", argv: ["build:desktop"] };
+    const history = { ...run("succeeded"), taskId: second.id, kind: "build", argv: second.argv };
+    const onHistory = vi.fn();
+    const scroll = vi.spyOn(HTMLElement.prototype, "scrollIntoView");
+    renderWorkspace({ tasks: [first, second], runs: [history], onHistory });
+    const historyList = document.querySelector(".run-list") as HTMLElement;
+    const entry = within(historyList).getByRole("button", { name: /Build desktop/ });
+    expect(entry).toHaveTextContent("pnpm build:desktop");
+    expect(within(screen.getByRole("article", { name: "Build web" })).queryByText(/1 run/i)).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "Build web" } });
+    expect(screen.queryByRole("article", { name: "Build desktop" })).not.toBeInTheDocument();
+    fireEvent.click(entry);
+    const card = await screen.findByRole("article", { name: "Build desktop" });
+    await waitFor(() => expect(card).toHaveFocus());
+    expect(card).toHaveClass("is-located");
+    expect(scroll).toHaveBeenCalled();
+    expect(onHistory).toHaveBeenCalledWith(history);
+    scroll.mockRestore();
+  });
+
+  it("uses the recorded command for a removed task instead of another same-kind task", () => {
+    const notify = vi.fn();
+    const history = { ...run("succeeded"), taskId: "removed", argv: ["build:old"] };
+    const onHistory = vi.fn();
+    renderWorkspace({ runs: [history], notify, onHistory });
+    const entry = within(document.querySelector(".run-list") as HTMLElement).getByRole("button", { name: /pnpm build:old/ });
+    fireEvent.click(entry);
+    expect(onHistory).toHaveBeenCalledWith(history);
+    expect(notify).toHaveBeenCalledWith("info", t("taskDefinitionUnavailable"));
+    expect(document.querySelector(".task-card.is-located")).toBeNull();
+  });
   function namedTask(id: string, name: string, kind: string, inferred = true): TaskDefinition {
     return { ...task(id), name, kind, inferred };
   }

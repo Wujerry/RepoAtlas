@@ -11,6 +11,58 @@ fn write(path: &std::path::Path, content: &str) {
 }
 
 #[test]
+fn completed_process_reports_exit_without_waiting_for_terminal_eof() {
+    let dir = tempdir().unwrap();
+    write(&dir.path().join("package.json"), r#"{"name":"exit-test"}"#);
+    write(
+        &dir.path().join("build.py"),
+        "import sys, time\nprint('BUILD_COMPLETE', flush=True)\ntime.sleep(0.8)\nprint('FINAL_OUTPUT', flush=True)\nsys.exit(int(sys.argv[1]))\n",
+    );
+    let core = Core::open_in_memory().unwrap();
+    let project = core.register_project(dir.path()).unwrap();
+    let broker = Broker::new(dir.path().join("logs")).unwrap();
+    for code in [0, 7] {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (output_tx, output_rx) = std::sync::mpsc::channel();
+        let run = broker
+            .start(
+                core.connection(),
+                TaskSpec {
+                    project_id: project.id.clone(),
+                    task_id: None,
+                    kind: "build".into(),
+                    executable: "python".into(),
+                    argv: vec!["build.py".into(), code.to_string()],
+                    cwd: Some(project.canonical_path.clone()),
+                    shell_mode: false,
+                },
+                move |chunk| {
+                    let _ = output_tx.send(chunk.text);
+                },
+                move |id, exit| {
+                    tx.send((id, exit)).unwrap();
+                },
+            )
+            .unwrap();
+        let mut output = String::new();
+        while !output.contains("BUILD_COMPLETE") {
+            output.push_str(&output_rx.recv_timeout(Duration::from_secs(8)).unwrap());
+        }
+        assert!(rx.recv_timeout(Duration::from_millis(100)).is_err());
+        assert!(broker.active().unwrap().contains(&run.id));
+        let result = rx.recv_timeout(Duration::from_secs(8));
+        if result.is_err() {
+            let _ = broker.stop(core.connection(), &run.id);
+        }
+        assert_eq!(result.unwrap(), (run.id.clone(), Some(code)));
+        assert!(!broker.active().unwrap().contains(&run.id));
+        assert!(fs::read_to_string(&run.log_path)
+            .unwrap()
+            .contains("FINAL_OUTPUT"));
+    }
+}
+
+#[test]
 fn command_broker_exposes_a_tty_and_preserves_ansi() {
     let probe = std::process::Command::new("python")
         .arg("-c")

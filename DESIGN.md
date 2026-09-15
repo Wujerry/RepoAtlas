@@ -93,6 +93,8 @@
 - Offline/slow network, if applicable: Core project management remains local. Agent network state and model requests stay in the external Agent client and never block RepoAtlas startup.
 
 ## Content voice
+- Task history identifies runs by the associated Task Definition name and recorded command, with status and time. Runs associate by Task ID, never task kind. Selecting history opens its output, clears filters hiding the associated task, scrolls it into view, focuses the card and highlights it for 1.8 seconds. Reduced motion uses immediate scrolling. Removed or unassociated tasks retain their recorded command/output and show an unavailable-definition notice instead of selecting another task.
+- A user-ended Task Run is labeled 已停止 / Stopped in the task workspace, workbench, Project Overview, history and Dashboard totals. It is a neutral terminal state, distinct from success/failure; canceled scans and refreshes retain their cancellation wording.
 - Tone: Direct, calm, specific, and operational.
 - Terminology: Follow `CONTEXT.md`; use Project, Scan Root, External Agent, Agent Request, and Task Run precisely.
 - Microcopy rules: Describe consequences before confirmation, avoid jargon in recovery messages, and never imply project directories will be deleted.
@@ -116,6 +118,10 @@
 - Help begins with two copyable Agent prompts: Initialize MCP, then Scan directories. Both preserve explicit absolute Scan Root authorization, per-Module task cwd, user-controlled promotion, and desktop execution approvals.
 
 ## Workspace visual hierarchy
+
+- Revisited Project Overviews show retained details immediately, with a small loading spinner while revalidation runs. The title hides the normal Ready badge and retains the Unavailable warning; the spinner keeps an accessible status label and respects reduced motion. Keep cached README/environment content mounted during background updates and retain it alongside a retryable error if updating fails. Do not replay Project-switch motion for same-Project revalidation. Manual refresh and library mutations invalidate overview resources; ordinary selection reuses fresh Git, environment, document and installed-tool results.
+
+- Selecting a Project reveals its title with a 220ms fade and 6px upward settling motion, accompanied by a single 320ms amber line sweep at the header edge. Only Project identity changes replay these effects; refreshes and log updates do not. While loading, dim only the header. Preserve the workspace, scroll containers, action controls and Markdown image nodes; reduced motion removes both entry effects. No exit animation delays data loading or input.
 
 - Home leads with a featured, available, unarchived recent Project and an explicit Open Project action. The neutral graphite surface is shared by both themes; amber is reserved for the entry action. Empty libraries show onboarding guidance, never invented project activity.
 - Four cached status metrics form an unboxed rail. Recent Projects and Task Runs precede Collections and Attention; seven-day aggregates stay below actionable entries. Open entries retain their typed navigation callbacks.

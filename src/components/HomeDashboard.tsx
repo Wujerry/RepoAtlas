@@ -32,7 +32,7 @@ export interface HomeDashboardProps {
 function statusLabel(status: string, t: Translator): string {
   if (status === "succeeded") return t("succeeded");
   if (status === "failed") return t("failed");
-  if (status === "cancelled") return t("cancelled");
+  if (status === "cancelled") return t("stopped");
   if (status === "running" || status === "starting") return t("running");
   return status;
 }
@@ -151,7 +151,7 @@ export function HomeDashboard({ t, refreshKey, onOpenProject, onOpenCollection, 
       <div className="dashboard-result-grid">
         <div className="dashboard-result is-success"><CheckCircle weight="fill" aria-hidden="true" /><span>{t("succeeded")}</span><strong>{snapshot.sevenDayRuns.succeeded}</strong></div>
         <div className="dashboard-result is-danger"><XCircle weight="fill" aria-hidden="true" /><span>{t("failed")}</span><strong>{snapshot.sevenDayRuns.failed}</strong></div>
-        <div className="dashboard-result is-muted"><Clock weight="fill" aria-hidden="true" /><span>{t("cancelled")}</span><strong>{snapshot.sevenDayRuns.cancelled}</strong></div>
+        <div className="dashboard-result is-muted"><Clock weight="fill" aria-hidden="true" /><span>{t("stopped")}</span><strong>{snapshot.sevenDayRuns.cancelled}</strong></div>
       </div>
     </section>
   </main>;

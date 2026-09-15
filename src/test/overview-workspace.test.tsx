@@ -1,7 +1,8 @@
+import { invalidateOverviewCache, overviewTools } from "../lib/overview-cache";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { dictionaries, type MessageKey } from "../i18n";
 import type { EnvironmentInspection, ProjectDetail } from "../types";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { inspectProjectEnvironment, readProjectFile, revealProjectFile, openProjectFile } = vi.hoisted(() => ({
   inspectProjectEnvironment: vi.fn(),
@@ -95,6 +96,22 @@ function environment(): EnvironmentInspection {
 }
 
 describe("overview workspace", () => {
+  beforeEach(() => { invalidateOverviewCache(); overviewTools.clear(); });
+  it("reuses the cached environment immediately after switching away and back", async () => {
+    inspectProjectEnvironment.mockClear();
+    inspectProjectEnvironment.mockImplementation(async (id: string) => ({ ...environment(), projectId: id }));
+    const props = { t, notify: vi.fn(), onFavorite: vi.fn(), onArchive: vi.fn(), onRefresh: vi.fn(), onRemove: vi.fn(), onOpenExplorer: vi.fn(), onOpenTerminal: vi.fn(), onOpenIde: vi.fn(), onOpenAgent: vi.fn(), onDescription: vi.fn(), onNotes: vi.fn(), onTags: vi.fn() };
+    const original = detail();
+    const { rerender } = render(<Dashboard {...props} detail={original} />);
+    await screen.findByText("18.20.4");
+    const another = { ...original, project: { ...original.project, id: "other", displayName: "Other" } };
+    rerender(<Dashboard {...props} detail={another} />);
+    await waitFor(() => expect(inspectProjectEnvironment).toHaveBeenCalledWith("other"));
+    rerender(<Dashboard {...props} detail={original} />);
+    expect(screen.getByText("18.20.4")).toBeInTheDocument();
+    await new Promise((resolve) => setTimeout(resolve, 220));
+    expect(inspectProjectEnvironment.mock.calls.filter(([id]) => id === "atlas")).toHaveLength(1);
+  });
   it("refreshes untouched metadata editors and preserves active drafts", async () => {
     inspectProjectEnvironment.mockResolvedValue(environment());
     const onNotes = vi.fn();
