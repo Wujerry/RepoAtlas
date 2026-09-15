@@ -284,7 +284,12 @@ export function ContinueCoding({ t, projectId, onOpenProject, compact = false }:
     };
     const tick = async () => { try { const status = await sessionApi.status(); if (!active) return; if (status.running) timer = setTimeout(tick, 1000); else await load(); } catch (e) { if (active) setError(String(e)); } };
     const changed = () => { void load(); }; window.addEventListener("repoatlas:sessions-updated", changed);
-    void load(); void sessionApi.refresh().then(() => { if (active) return tick(); }).catch(e => active && setError(String(e)));
+    void load();
+    // Project navigation reads the index; the home surface initiates refresh.
+    if (!projectId) void sessionApi.refresh().then(() => { if (active) return tick(); }).catch(e => active && setError(String(e)));
+    else void sessionApi.status().then(status => {
+      if (active && status.running) timer = setTimeout(tick, 1000);
+    }).catch(e => active && setError(String(e)));
     return () => { active = false; clearTimeout(timer); window.removeEventListener("repoatlas:sessions-updated", changed); };
   }, [projectId]);
   const ids = sessions.map(s => s.projectId).filter((id): id is string => !!id).join("|");

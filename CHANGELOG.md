@@ -2,6 +2,13 @@
 
 All notable changes to RepoAtlas will be documented here. Package availability is recorded in GitHub Releases.
 
+## [0.1.3] - 2026-09-15
+
+- Allow the desktop app to reopen while an external Agent keeps its MCP connection alive.
+- Keep Project switching responsive by coalescing rapid selections and removing duplicate detail requests.
+- Reuse indexed coding sessions and cached icons, including reads already in progress.
+- Move blocking desktop reads off the async runtime and avoid unnecessary project-list measurements.
+
 ## [0.1.2] - 2026-09-15
 
 - Reuse cached Project Overview resources and keep content visible during background refreshes.
@@ -63,7 +70,7 @@ Initial pre-release application baseline:
 - stdio MCP adapter sharing the Rust core and its safety boundaries;
 - English and Simplified Chinese interface support with light, dark, and system themes.
 
-[Unreleased]: https://github.com/Wujerry/RepoAtlas/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/Wujerry/RepoAtlas/compare/v0.1.3...HEAD
 [0.1.1]: https://github.com/Wujerry/RepoAtlas/compare/v0.1.0...v0.1.1
 [0.1.0-beta.3]: https://github.com/Wujerry/RepoAtlas/compare/v0.1.0-beta.2...v0.1.0-beta.3
 [0.1.0-beta.2]: https://github.com/Wujerry/RepoAtlas/compare/v0.1.0-beta.1...v0.1.0-beta.2
@@ -72,3 +79,5 @@ Initial pre-release application baseline:
 [0.1.0]: https://github.com/Wujerry/RepoAtlas/compare/v0.1.0-beta.3...v0.1.0
 
 [0.1.2]: https://github.com/Wujerry/RepoAtlas/compare/v0.1.1...v0.1.2
+
+[0.1.3]: https://github.com/Wujerry/RepoAtlas/compare/v0.1.2...v0.1.3

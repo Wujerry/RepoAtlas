@@ -90,6 +90,8 @@ export default function App() {
   const onboardingResolved = useRef(false);
   const querySequence = useRef(0);
   const detailSequence = useRef(0);
+  const cancelSelectionWait = useRef<(() => void) | undefined>(undefined);
+  useEffect(() => () => { cancelSelectionWait.current?.(); detailSequence.current += 1; }, []);
   const scanningRef = useRef(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState<OnboardingStep>("welcome");
@@ -127,10 +129,21 @@ export default function App() {
     window.setTimeout(() => setToasts((current) => current.filter((item) => item.id !== id)), tone === "error" ? 8000 : 4800);
   }, []);
 
-  const loadProjectDetail = useCallback(async (id?: string) => {
+  const loadProjectDetail = useCallback(async (id?: string, settle = false) => {
+    cancelSelectionWait.current?.();
     const sequence = ++detailSequence.current;
     if (!id) { setSelectedId(undefined); setDetail(null); setProjectLoading(false); setProjectRefreshing(false); return true; }
     setSelectedId(id);
+    if (settle) {
+      setProjectLoading(true);
+      setProjectRefreshing(false);
+      await new Promise<void>((resolve) => {
+        const timer = window.setTimeout(resolve, 120);
+        cancelSelectionWait.current = () => { window.clearTimeout(timer); resolve(); };
+      });
+      if (sequence !== detailSequence.current) return false;
+      cancelSelectionWait.current = undefined;
+    }
     const cached = overviewDetails.peek(id)?.value;
     if (cached) setDetail(cached);
     setProjectLoading(!cached);
@@ -303,6 +316,9 @@ export default function App() {
   }, []);
 
   const returnToLibrary = useCallback(() => {
+    cancelSelectionWait.current?.();
+    detailSequence.current += 1;
+    setProjectLoading(false); setProjectRefreshing(false);
     closePageOverlays();
     setSettingsOpen(false);
     setView("library");
@@ -433,18 +449,14 @@ export default function App() {
       const nextPromise = query.trim()
         ? api.listProjects(queryForScope(scope, query, selectedCollectionId))
         : basePromise;
-      Promise.all([basePromise, nextPromise]).then(async ([base, next]) => {
+      Promise.all([basePromise, nextPromise]).then(([base, next]) => {
         if (sequence !== querySequence.current) return;
         scopeCache.current = { scope, collectionId: selectedCollectionId, projects: base };
         setScopeProjects(base); setProjects(next);
-        if (librarySurface === "project") {
-          const id = next.some((project) => project.id === selectedId) ? selectedId : next[0]?.id;
-          await loadProjectDetail(id);
-        }
       }).catch((error) => notify("error", t("searchFailed"), String(error)));
     }, 180);
     return () => window.clearTimeout(timer);
-  }, [booting, librarySurface, loadProjectDetail, notify, query, scope, selectedCollectionId, selectedId, t]);
+  }, [booting, notify, query, scope, selectedCollectionId]);
 
   useEffect(() => {
     const unsubs = Promise.all([
@@ -669,7 +681,14 @@ export default function App() {
     },
     onError: () => setOnboardingCheckFailed(true),
   });
-  function selectProject(id: string) { closePageOverlays(); if (id === selectedId && librarySurface === "project") return; setView("library"); setLibrarySurface("project"); void loadProjectDetail(id); void api.markOpened(id).catch(() => undefined); }
+  function selectProject(id: string) {
+    closePageOverlays();
+    if (id === selectedId && librarySurface === "project") return;
+    setView("library"); setLibrarySurface("project");
+    void loadProjectDetail(id, true).then((loaded) => {
+      if (loaded) void api.markOpened(id).catch(() => undefined);
+    });
+  }
   async function openProjectFromPalette(id: string) {
     const queryRequest = ++querySequence.current;
     const detailRequest = ++detailSequence.current;

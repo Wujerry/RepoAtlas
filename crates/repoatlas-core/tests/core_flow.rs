@@ -716,9 +716,16 @@ fn runtime_lock_allows_mcp_without_duplicate_desktop_recovery() {
 
     let mcp = Core::open_without_recovery(&db).unwrap();
     assert!(mcp.list_projects(ProjectQuery::default()).is_ok());
-    drop(mcp);
     drop(desktop);
 
+    let reconnected_mcp = Core::open_without_recovery(&db).unwrap();
+    let reopened = Core::open(&db).expect("idle MCP connections must not block desktop restart");
+    assert!(Core::open(&db).is_err());
+    assert!(mcp.list_projects(ProjectQuery::default()).is_ok());
+    assert!(reconnected_mcp
+        .list_projects(ProjectQuery::default())
+        .is_ok());
+    drop(reopened);
     assert!(Core::open(&db).is_ok());
 }
 
@@ -1905,6 +1912,12 @@ fn restart_recovers_starting_approvals_and_running_runs() {
         .unwrap();
     drop(core);
 
+    let mcp = Core::open_without_recovery(&db_path).unwrap();
+    assert_eq!(
+        mcp.get_pending_approval(&approval.id).unwrap().status,
+        "starting"
+    );
+    assert_eq!(mcp.get_task_run("run-restart").unwrap().status, "running");
     let reopened = Core::open(&db_path).unwrap();
     assert_eq!(
         reopened.get_pending_approval(&approval.id).unwrap().status,

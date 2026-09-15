@@ -19,6 +19,8 @@ The stdio adapter keeps database requests ordered on one bounded worker. Its inp
 
 Each stdio MCP process belongs to its external client connection, not the desktop window. Closing the desktop must not terminate other clients' MCP processes. On stdin EOF/read failure or stdout write/flush failure, the adapter cancels active scans and stops dispatching queued requests. A five-second shutdown deadline bounds remaining work or blocked pipes; it terminates only the current adapter process. A connection whose pipes remain open and idle is not treated as disconnected.
 
+Only the desktop owns the database's runtime lock and recovers interrupted Task Runs and starting approvals. MCP opens the shared SQLite database without acquiring that lock or performing runtime recovery, regardless of startup order. An idle MCP connection must not prevent the desktop from opening or reopening. A second desktop instance remains excluded by the runtime lock; stale task recovery waits for the next desktop start.
+
 Legacy AI tables and records remain readable through database upgrades, backup, import, and export paths so removing the feature does not destroy user data. They are not exposed in the desktop interface or MCP, and RepoAtlas performs no new external model requests.
 
 This decision supersedes ADRs 0005, 0006, 0008, and 0013.

@@ -130,6 +130,15 @@ export function ProjectList({
 }: ProjectListProps) {
   const iconCache = useRef(new Map<string, { revision: string; icon: { kind: string; source: string | null; dataUrl: string | null } }>());
   const parentRef = useRef<HTMLDivElement>(null);
+  const pendingIcons = useRef(new Map<string, { revision: string; token: symbol }>());
+  const iconRevisions = useMemo(() => new Map(projects.map(project => [project.id, project.updatedAt])), [projects]);
+  const currentIconRevisions = useRef(iconRevisions);
+  currentIconRevisions.current = iconRevisions;
+  const iconsMounted = useRef(true);
+  useEffect(() => {
+    iconsMounted.current = true;
+    return () => { iconsMounted.current = false; pendingIcons.current.clear(); };
+  }, []);
   const revealBaselineRef = useRef(false);
   const lastSelectedIdRef = useRef<string | undefined>(undefined);
   const pendingRevealRef = useRef(false);
@@ -196,7 +205,7 @@ export function ProjectList({
       if (selectedId) ancestorGroupIds(roots, selectedId).forEach((id) => next.add(id));
       if (!searching && searchWasActive.current) expansionBeforeSearch.current = null;
       searchWasActive.current = searching;
-      return next;
+      return next.size === current.size && [...next].every(id => current.has(id)) ? current : next;
     });
   }, [groupIds, query, roots, scope, selectedId]);
 
@@ -232,33 +241,29 @@ export function ProjectList({
   }, [projectIconRevision, projects]);
 
   useEffect(() => {
-    const missing = visibleProjectIds.filter((id) => icons[id] === undefined);
+    const missing = visibleProjectIds.filter((id) => icons[id] === undefined
+      && pendingIcons.current.get(id)?.revision !== iconRevisions.get(id)).slice(0, 48);
     if (missing.length === 0) return;
-    let cancelled = false;
-    void api.readProjectIcons(missing).then((items) => {
-      if (cancelled) return;
-      setIcons((current) => {
-        const next = { ...current };
-        for (const item of items) {
-          const icon = { kind: item.kind, source: item.source, dataUrl: item.dataUrl };
-          next[item.projectId] = icon;
-          const revision = projects.find((project) => project.id === item.projectId)?.updatedAt;
-          if (revision) iconCache.current.set(item.projectId, { revision, icon });
-        }
-        for (const id of missing) {
-          if (!next[id]) next[id] = { kind: "language", source: null, dataUrl: null };
-        }
-        return next;
-      });
-    }).catch(() => {
-      if (cancelled) return;
-      setIcons((current) => {
-        const next = { ...current };
-        for (const id of missing) next[id] = { kind: "language", source: null, dataUrl: null };
-        return next;
-      });
-    });
-    return () => { cancelled = true; };
+    const token = Symbol();
+    const revisions = new Map(missing.map(id => [id, iconRevisions.get(id)!]));
+    for (const [id, revision] of revisions) pendingIcons.current.set(id, { revision, token });
+    const finish = (items: Awaited<ReturnType<typeof api.readProjectIcons>>, cache: boolean) => {
+      if (!iconsMounted.current) return;
+      const returned = new Map(items.map(item => [item.projectId, item]));
+      const updates: typeof icons = {};
+      for (const [id, revision] of revisions) {
+        if (pendingIcons.current.get(id)?.token !== token) continue;
+        pendingIcons.current.delete(id);
+        if (currentIconRevisions.current.get(id) !== revision) continue;
+        const item = returned.get(id);
+        const icon = item ? { kind: item.kind, source: item.source, dataUrl: item.dataUrl }
+          : { kind: "language", source: null, dataUrl: null };
+        updates[id] = icon;
+        if (cache) iconCache.current.set(id, { revision, icon });
+      }
+      if (Object.keys(updates).length) setIcons(current => ({ ...current, ...updates }));
+    };
+    void api.readProjectIcons(missing).then(items => finish(items, true)).catch(() => finish([], false));
   }, [icons, projectIconRevision, visibleProjectIds.join("|")]);
   const activeIndex = visibleRows.findIndex((row) => row.id === activeRowId);
 
@@ -270,6 +275,9 @@ export function ProjectList({
       });
       if (typeof path !== "string") return;
       const icon = await api.setProjectIcon(projectId, path);
+      pendingIcons.current.delete(projectId);
+      const revision = currentIconRevisions.current.get(projectId);
+      if (revision) iconCache.current.set(projectId, { revision, icon });
       setIcons((current) => ({ ...current, [projectId]: icon }));
     } catch (error) {
       onIconError?.(error);
@@ -279,6 +287,9 @@ export function ProjectList({
   async function clearProjectIcon(projectId: string) {
     try {
       const icon = await api.clearProjectIcon(projectId);
+      pendingIcons.current.delete(projectId);
+      const revision = currentIconRevisions.current.get(projectId);
+      if (revision) iconCache.current.set(projectId, { revision, icon });
       setIcons((current) => ({ ...current, [projectId]: icon }));
     } catch (error) {
       onIconError?.(error);

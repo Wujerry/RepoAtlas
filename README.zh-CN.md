@@ -17,7 +17,7 @@ RepoAtlas 把散落在各个磁盘里的本地 checkout 变成一个真正能干
 
 > **欢迎 macOS 用户参与贡献。** RepoAtlas 还没有经过 Mac 真机测试，目前不提供受支持的 macOS 安装包。如果你手上有 Mac，欢迎按照 [CONTRIBUTING.md](CONTRIBUTING.md) 帮忙构建、测试和补充文档，也可以把可复现的问题提交到 [Issue](https://github.com/Wujerry/RepoAtlas/issues)。
 
-> **0.1.2 下载说明：** Windows 安装包标注 **UNSIGNED**，未做 Authenticode 签名；macOS 包为实验性构建，仅临时签名，未经公证。系统可能显示 SmartScreen 或 Gatekeeper 提示。更新包仍有签名验证，发布附件提供 SHA256SUMS。
+> **0.1.3 下载说明：** Windows 安装包标注 **UNSIGNED**，未做 Authenticode 签名；macOS 包为实验性构建，仅临时签名，未经公证。系统可能显示 SmartScreen 或 Gatekeeper 提示。更新包仍有签名验证，发布附件提供 SHA256SUMS。
 
 足迹列表支持在滚动边缘自动加载相邻日期：向下读完当天记录后进入前一天，向上到顶进入后一天（最晚到今天），也支持 Page Up/Down。加载期间保留当前记录和筛选条件，空白日期不会被跳过。
 
@@ -86,6 +86,8 @@ RepoAtlas 把散落在各个磁盘里的本地 checkout 变成一个真正能干
 
 ## 项目库
 
+快速连续选择会合并为最后停留的项目，减少重复加载；切换项目只读取已索引的会话，不会重复启动索引刷新。任务历史和日志读取在后台执行，避免阻塞桌面线程。
+
 ![RepoAtlas 项目库：包含 Project Collection、不同的项目图标、分支状态和待处理事项](assets/screenshots/zh-dark-library.png)
 
 每个规范化的本地 checkout 都是一个 **Project**。**Scan Root** 是你明确授权用于发现项目的目录；扫描由你或 Agent 显式触发，只在授权目录内进行，不会变成全盘爬取或文件系统监听。
@@ -97,6 +99,8 @@ Project 始终对应真实路径。Collection 只负责整理，不移动目录�
 RepoAtlas 启动后先显示工作台，不会替你选中某个 Project。最近会话显示项目图标，点击标题进入项目，点击预览阅读对话，通过“继续会话”查看启动选项。项目与任务状态来自本地缓存；已授权的会话来源在后台增量刷新，不扫描项目源码。
 
 ## 任务工作台
+
+MCP 连接可以跨桌面重启保持可用。只有桌面持有运行锁并恢复中断任务；空闲的 MCP 进程不会阻止再次打开程序。
 
 ![RepoAtlas 全局任务工作台：包含运行监控和实时终端输出](assets/screenshots/zh-light-tasks.png)
 
@@ -110,7 +114,7 @@ RepoAtlas 启动后先显示工作台，不会替你选中某个 Project。最�
 2. 校验 SHA-256，并和发布时附带的 `SHA256SUMS` 对比：
 
    ```powershell
-   Get-FileHash .\RepoAtlas_0.1.2_x64-setup.exe -Algorithm SHA256
+   Get-FileHash .\RepoAtlas_0.1.3_x64-setup.exe -Algorithm SHA256
    ```
 
 3. 运行安装程序。未签名 Beta 会触发 SmartScreen 的「无法识别的发布者」提示；点击 **更多信息**，再点 **仍要运行**。

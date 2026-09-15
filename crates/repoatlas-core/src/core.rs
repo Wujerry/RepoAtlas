@@ -33,9 +33,9 @@ pub struct Core {
     conn: Connection,
     log_dir: Option<PathBuf>,
     // The desktop process owns an OS-level lock for the database lifetime.
-    // MCP can still open a second SQLite connection, but it must not perform
-    // desktop-runtime recovery while that lock is held by the app.
-    runtime_lock: Option<File>,
+    // MCP only owns its SQLite connection and never claims runtime recovery.
+    // Retain this handle until the desktop Core drops, even without reads.
+    _runtime_lock: Option<File>,
 }
 
 type IconOverride = (String, Vec<u8>, Option<String>);
@@ -71,11 +71,11 @@ impl Core {
 
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
-        let runtime_lock = acquire_runtime_lock(path, true)?;
+        let runtime_lock = acquire_runtime_lock(path)?;
         let core = Self {
             conn: db::open(path)?,
             log_dir: path.parent().map(|parent| parent.join("task-logs")),
-            runtime_lock,
+            _runtime_lock: Some(runtime_lock),
         };
         // A desktop restart cannot keep the in-memory Broker handles which
         // own running child processes. Resolve any persisted transition that
@@ -89,24 +89,16 @@ impl Core {
 
     /// Open a database without claiming ownership of task-run recovery.
     ///
-    /// MCP can be launched while the desktop app is still running. In that
-    /// case the desktop Broker remains the source of truth for live child
-    /// processes, so an MCP connection must not mark those rows failed merely
-    /// because it opened the shared SQLite file.
+    /// MCP never owns the desktop runtime lock or recovers task runs, even
+    /// when it starts before the desktop. Its external client may keep the
+    /// connection alive across desktop restarts.
     pub fn open_without_recovery(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
-        // If no desktop owner is present, MCP may claim the lock and perform
-        // normal restart recovery. When the desktop owns it, keep the MCP
-        // connection unlocked and leave live task rows untouched.
-        let runtime_lock = acquire_runtime_lock(path, false)?;
         let core = Self {
             conn: db::open(path)?,
             log_dir: path.parent().map(|parent| parent.join("task-logs")),
-            runtime_lock,
+            _runtime_lock: None,
         };
-        if core.runtime_lock.is_some() {
-            core.recover_interrupted_runtime()?;
-        }
         core.retry_managed_file_cleanup()?;
         Ok(core)
     }
@@ -118,7 +110,7 @@ impl Core {
             // process. Tests and ephemeral callers still get a real safety
             // boundary instead of an opt-out from log path validation.
             log_dir: Some(std::env::temp_dir().join("repoatlas-task-logs")),
-            runtime_lock: None,
+            _runtime_lock: None,
         };
         core.recover_interrupted_runtime()?;
         core.retry_managed_file_cleanup()?;
@@ -4048,7 +4040,7 @@ fn runtime_lock_path(path: &Path) -> PathBuf {
 /// separate from the database itself so a second process can still open a
 /// read/write SQLite connection for MCP data management while the desktop
 /// broker owns the live-process recovery decision.
-fn acquire_runtime_lock(path: &Path, required: bool) -> Result<Option<File>> {
+fn acquire_runtime_lock(path: &Path) -> Result<File> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -4060,14 +4052,7 @@ fn acquire_runtime_lock(path: &Path, required: bool) -> Result<Option<File>> {
         .truncate(false)
         .open(lock_path)?;
     match file.try_lock_exclusive() {
-        Ok(()) => Ok(Some(file)),
-        Err(_error) if !required => {
-            // The desktop process owns the lock.  Keep the file handle alive
-            // only long enough for this branch; MCP deliberately proceeds
-            // without recovery in this case.
-            drop(file);
-            Ok(None)
-        }
+        Ok(()) => Ok(file),
         Err(error) => Err(Error::msg(format!(
             "another RepoAtlas desktop instance owns the database: {error}"
         ))),

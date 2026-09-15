@@ -21,7 +21,7 @@ impl Core {
         Ok(Self {
             conn: db::open(Path::new(path))?,
             log_dir: self.log_dir.clone(),
-            runtime_lock: None,
+            _runtime_lock: None,
         })
     }
     fn session_index(&self) -> Result<Connection> {

@@ -284,17 +284,17 @@ mod mcp_setup_tests {
 }
 
 #[tauri::command]
-fn bootstrap(state: State<Arc<AppState>>) -> Result<Bootstrap, String> {
-    let core = state.core.lock().map_err(|err| err.to_string())?;
-    Ok(Bootstrap {
-        data_version: core.data_version().map_err(err_to_string)?,
-        settings: core.settings().map_err(err_to_string)?,
-        scan_roots: core.list_scan_roots().map_err(err_to_string)?,
-        projects: core
-            .list_projects(ProjectQuery::default())
-            .map_err(err_to_string)?,
-        collections: core.list_collections().map_err(err_to_string)?,
+async fn bootstrap(state: State<'_, Arc<AppState>>) -> Result<Bootstrap, String> {
+    run_blocking(state.inner().clone(), |core| {
+        Ok(Bootstrap {
+            data_version: core.data_version()?,
+            settings: core.settings()?,
+            scan_roots: core.list_scan_roots()?,
+            projects: core.list_projects(ProjectQuery::default())?,
+            collections: core.list_collections()?,
+        })
     })
+    .await
 }
 
 #[tauri::command]
@@ -361,13 +361,8 @@ async fn backup_db(state: State<'_, Arc<AppState>>, dest: String) -> Result<(), 
 }
 
 #[tauri::command]
-fn list_scan_roots(state: State<Arc<AppState>>) -> Result<Vec<ScanRoot>, String> {
-    state
-        .core
-        .lock()
-        .map_err(|err| err.to_string())?
-        .list_scan_roots()
-        .map_err(err_to_string)
+async fn list_scan_roots(state: State<'_, Arc<AppState>>) -> Result<Vec<ScanRoot>, String> {
+    run_blocking(state.inner().clone(), move |core| core.list_scan_roots()).await
 }
 
 #[tauri::command]
@@ -389,26 +384,18 @@ fn remove_scan_root(
 }
 
 #[tauri::command]
-fn list_projects(
-    state: State<Arc<AppState>>,
+async fn list_projects(
+    state: State<'_, Arc<AppState>>,
     query: ProjectQuery,
 ) -> Result<Vec<ProjectSummary>, String> {
-    state
-        .core
-        .lock()
-        .map_err(|err| err.to_string())?
-        .list_projects(query)
-        .map_err(err_to_string)
+    run_blocking(state.inner().clone(), move |core| core.list_projects(query)).await
 }
 
 #[tauri::command]
-fn list_collections(state: State<Arc<AppState>>) -> Result<Vec<ProjectCollection>, String> {
-    state
-        .core
-        .lock()
-        .map_err(|error| error.to_string())?
-        .list_collections()
-        .map_err(err_to_string)
+async fn list_collections(
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<ProjectCollection>, String> {
+    run_blocking(state.inner().clone(), move |core| core.list_collections()).await
 }
 
 #[tauri::command]
@@ -488,13 +475,14 @@ fn save_collection(
 }
 
 #[tauri::command]
-fn search_projects(state: State<Arc<AppState>>, query: String) -> Result<Vec<SearchHit>, String> {
-    state
-        .core
-        .lock()
-        .map_err(|err| err.to_string())?
-        .search_projects(&query, 50)
-        .map_err(err_to_string)
+async fn search_projects(
+    state: State<'_, Arc<AppState>>,
+    query: String,
+) -> Result<Vec<SearchHit>, String> {
+    run_blocking(state.inner().clone(), move |core| {
+        core.search_projects(&query, 50)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -750,45 +738,37 @@ fn export_atlas_report_to(
 }
 
 #[tauri::command]
-fn list_pending_approvals(state: State<Arc<AppState>>) -> Result<Vec<PendingApproval>, String> {
-    state
-        .core
-        .lock()
-        .map_err(|err| err.to_string())?
-        .list_pending_approvals()
-        .map_err(err_to_string)
+async fn list_pending_approvals(
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<PendingApproval>, String> {
+    run_blocking(state.inner().clone(), move |core| {
+        core.list_pending_approvals()
+    })
+    .await
 }
 
 #[tauri::command]
-fn list_attention_items(
-    state: State<Arc<AppState>>,
+async fn list_attention_items(
+    state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<repoatlas_core::AttentionItem>, String> {
-    state
-        .core
-        .lock()
-        .map_err(|error| error.to_string())?
-        .list_attention_items()
-        .map_err(err_to_string)
+    run_blocking(state.inner().clone(), move |core| {
+        core.list_attention_items()
+    })
+    .await
 }
 
 #[tauri::command]
-fn get_attention_center(state: State<Arc<AppState>>) -> Result<AttentionCenterState, String> {
-    state
-        .core
-        .lock()
-        .map_err(|error| error.to_string())?
-        .attention_center()
-        .map_err(err_to_string)
+async fn get_attention_center(
+    state: State<'_, Arc<AppState>>,
+) -> Result<AttentionCenterState, String> {
+    run_blocking(state.inner().clone(), move |core| core.attention_center()).await
 }
 
 #[tauri::command]
-fn get_dashboard_snapshot(state: State<Arc<AppState>>) -> Result<DashboardSnapshot, String> {
-    state
-        .core
-        .lock()
-        .map_err(|err| err.to_string())?
-        .dashboard_snapshot()
-        .map_err(err_to_string)
+async fn get_dashboard_snapshot(
+    state: State<'_, Arc<AppState>>,
+) -> Result<DashboardSnapshot, String> {
+    run_blocking(state.inner().clone(), move |core| core.dashboard_snapshot()).await
 }
 
 #[tauri::command]
@@ -1020,43 +1000,35 @@ fn execute_git_operation(
 }
 
 #[tauri::command]
-fn list_task_runs(state: State<Arc<AppState>>, project_id: String) -> Result<Vec<TaskRun>, String> {
-    state
-        .core
-        .lock()
-        .map_err(|err| err.to_string())?
-        .list_task_runs(&project_id)
-        .map_err(err_to_string)
+async fn list_task_runs(
+    state: State<'_, Arc<AppState>>,
+    project_id: String,
+) -> Result<Vec<TaskRun>, String> {
+    run_blocking(state.inner().clone(), move |core| {
+        core.list_task_runs(&project_id)
+    })
+    .await
 }
 
 #[tauri::command]
-fn list_active_task_runs(state: State<Arc<AppState>>) -> Result<Vec<TaskRun>, String> {
-    state
-        .core
-        .lock()
-        .map_err(|err| err.to_string())?
-        .list_active_task_runs()
-        .map_err(err_to_string)
+async fn list_active_task_runs(state: State<'_, Arc<AppState>>) -> Result<Vec<TaskRun>, String> {
+    run_blocking(state.inner().clone(), |core| core.list_active_task_runs()).await
 }
 
 #[tauri::command]
-fn get_task_run(state: State<Arc<AppState>>, run_id: String) -> Result<TaskRun, String> {
-    state
-        .core
-        .lock()
-        .map_err(|error| error.to_string())?
-        .get_task_run(&run_id)
-        .map_err(err_to_string)
+async fn get_task_run(state: State<'_, Arc<AppState>>, run_id: String) -> Result<TaskRun, String> {
+    run_blocking(state.inner().clone(), move |core| {
+        core.get_task_run(&run_id)
+    })
+    .await
 }
 
 #[tauri::command]
-fn read_task_log(state: State<Arc<AppState>>, run_id: String) -> Result<String, String> {
-    state
-        .core
-        .lock()
-        .map_err(|err| err.to_string())?
-        .read_task_log(&run_id)
-        .map_err(err_to_string)
+async fn read_task_log(state: State<'_, Arc<AppState>>, run_id: String) -> Result<String, String> {
+    run_blocking(state.inner().clone(), move |core| {
+        core.read_task_log(&run_id)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1782,16 +1754,14 @@ async fn inspect_project_environment(
 }
 
 #[tauri::command]
-fn read_project_icons(
-    state: State<Arc<AppState>>,
+async fn read_project_icons(
+    state: State<'_, Arc<AppState>>,
     project_ids: Vec<String>,
 ) -> Result<Vec<repoatlas_core::ProjectIcon>, String> {
-    state
-        .core
-        .lock()
-        .map_err(|err| err.to_string())?
-        .read_project_icons(&project_ids)
-        .map_err(err_to_string)
+    run_blocking(state.inner().clone(), move |core| {
+        core.read_project_icons(&project_ids)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1816,17 +1786,15 @@ fn clear_project_icon(
 }
 
 #[tauri::command]
-fn read_project_file(
-    state: State<Arc<AppState>>,
+async fn read_project_file(
+    state: State<'_, Arc<AppState>>,
     project_id: String,
     path: String,
 ) -> Result<repoatlas_core::ReadmeDocument, String> {
-    state
-        .core
-        .lock()
-        .map_err(|err| err.to_string())?
-        .read_project_file(&project_id, &path)
-        .map_err(err_to_string)
+    run_blocking(state.inner().clone(), move |core| {
+        core.read_project_file(&project_id, &path)
+    })
+    .await
 }
 
 async fn project_root_for_files(

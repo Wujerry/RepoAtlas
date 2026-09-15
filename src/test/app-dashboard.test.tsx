@@ -81,6 +81,36 @@ describe("App dashboard navigation", () => {
     expect(await screen.findByRole("heading", { name: "Working Dashboard" })).toBeInTheDocument();
   });
 
+  it("coalesces rapid selections before fetching details or recording an open", async () => {
+    apiMocks.listProjects.mockResolvedValue([first, second]);
+    apiMocks.getProject.mockImplementation(async (id: string) => ({ project: id === first.id ? first : second, facts: [], tasks: [] }));
+    render(<App />);
+    await screen.findByRole("heading", { name: "Working Dashboard" });
+    fireEvent.click(screen.getByRole("button", { name: "First Project" }));
+    fireEvent.click(screen.getByRole("button", { name: "Second Project" }));
+    fireEvent.click(screen.getByRole("button", { name: "First Project" }));
+    expect(document.querySelector("aside")).toHaveAttribute("data-selected", "first");
+    expect(apiMocks.getProject).not.toHaveBeenCalled();
+    expect(apiMocks.markOpened).not.toHaveBeenCalled();
+    await screen.findByRole("heading", { name: "First Project workspace" });
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 350)); });
+    expect(apiMocks.getProject).toHaveBeenCalledTimes(1);
+    expect(apiMocks.getProject).toHaveBeenCalledWith("first");
+    expect(apiMocks.markOpened).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels an unsettled selection when returning home", async () => {
+    apiMocks.listProjects.mockResolvedValue([first, second]);
+    render(<App />);
+    await screen.findByRole("heading", { name: "Working Dashboard" });
+    fireEvent.click(screen.getByRole("button", { name: "First Project" }));
+    fireEvent.click(screen.getByRole("button", { name: "Home" }));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 160)); });
+    expect(screen.getByRole("heading", { name: "Working Dashboard" })).toBeInTheDocument();
+    expect(apiMocks.getProject).not.toHaveBeenCalled();
+    expect(apiMocks.markOpened).not.toHaveBeenCalled();
+  });
+
   it("shows a revisited project immediately while its fresh detail is still pending", async () => {
     apiMocks.listProjects.mockResolvedValue([first, second]);
     apiMocks.getProject.mockImplementation(async (id: string) => ({ project: id === first.id ? first : second, facts: [], tasks: [] }));
@@ -93,7 +123,7 @@ describe("App dashboard navigation", () => {
     let resolve!: (detail: unknown) => void;
     apiMocks.getProject.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
     fireEvent.click(screen.getByRole("button", { name: "First Project" }));
-    expect(screen.getByRole("heading", { name: "First Project workspace" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "First Project workspace" })).toBeInTheDocument();
     expect(document.querySelector(".detail-pane")).not.toHaveClass("is-switching");
     await waitFor(() => expect(resolve).toBeDefined());
     await act(async () => { resolve({ project: { ...first, description: "Fresh data" }, facts: [], tasks: [] }); });

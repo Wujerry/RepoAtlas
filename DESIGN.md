@@ -119,6 +119,10 @@
 
 ## Workspace visual hierarchy
 
+- Rapid project selection highlights the selected row immediately and settles for 120ms before replacing the workspace or starting its requests. Keep the previous workspace visible during the wait; cancel pending selection on return to Home. Cached details appear after selection settles, without waiting for revalidation. Project Continue Coding reads cached indexed sessions rather than initiating an index refresh on each switch.
+
+- Selecting a Project inside already expanded folders preserves tree rows and virtual-list measurements. Icon loads share in-flight requests by Project and revision, keep completed offscreen results, and reject outdated results after a revision or manual icon change. Each request stays capped at 48 Projects.
+
 - Revisited Project Overviews show retained details immediately, with a small loading spinner while revalidation runs. The title hides the normal Ready badge and retains the Unavailable warning; the spinner keeps an accessible status label and respects reduced motion. Keep cached README/environment content mounted during background updates and retain it alongside a retryable error if updating fails. Do not replay Project-switch motion for same-Project revalidation. Manual refresh and library mutations invalidate overview resources; ordinary selection reuses fresh Git, environment, document and installed-tool results.
 
 - Selecting a Project reveals its title with a 220ms fade and 6px upward settling motion, accompanied by a single 320ms amber line sweep at the header edge. Only Project identity changes replay these effects; refreshes and log updates do not. While loading, dim only the header. Preserve the workspace, scroll containers, action controls and Markdown image nodes; reduced motion removes both entry effects. No exit animation delays data loading or input.

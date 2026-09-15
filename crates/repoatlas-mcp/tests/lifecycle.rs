@@ -94,3 +94,67 @@ fn disconnect_does_not_stop_another_session() {
     drop(second.0.stdin.take());
     await_exit(&mut second);
 }
+
+#[test]
+fn connected_mcp_allows_desktop_start_and_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("core.sqlite");
+    let mut child = Session(
+        Command::new(env!("CARGO_BIN_EXE_repoatlas-mcp"))
+            .env("REPOATLAS_DB", &db)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("start MCP before desktop"),
+    );
+    let output = child.0.stdout.take().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(output).lines() {
+            if tx.send(line.expect("MCP response")).is_err() {
+                break;
+            }
+        }
+    });
+    writeln!(
+        child.0.stdin.as_mut().unwrap(),
+        r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{}}}}"#
+    )
+    .unwrap();
+    let response: serde_json::Value = serde_json::from_str(
+        &rx.recv_timeout(Duration::from_secs(10))
+            .expect("initialize response"),
+    )
+    .unwrap();
+    assert_eq!(response["result"]["serverInfo"]["name"], "repoatlas-mcp");
+
+    for id in 2..=3 {
+        let desktop = repoatlas_core::Core::open(&db)
+            .expect("a connected MCP must not block desktop startup");
+        assert!(
+            repoatlas_core::Core::open(&db).is_err(),
+            "second desktop must stay excluded"
+        );
+        drop(desktop);
+        assert!(
+            child.0.try_wait().unwrap().is_none(),
+            "MCP must survive desktop close"
+        );
+        writeln!(
+            child.0.stdin.as_mut().unwrap(),
+            r#"{{"jsonrpc":"2.0","id":{id},"method":"tools/call","params":{{"name":"list_projects","arguments":{{}}}}}}"#
+        )
+        .unwrap();
+        let response: serde_json::Value = serde_json::from_str(
+            &rx.recv_timeout(Duration::from_secs(5))
+                .expect("project list response after desktop close"),
+        )
+        .unwrap();
+        assert_eq!(response["id"], id);
+        assert!(response.get("result").is_some());
+        assert_ne!(response["result"]["isError"], true);
+    }
+    drop(child.0.stdin.take());
+    await_exit(&mut child);
+}
