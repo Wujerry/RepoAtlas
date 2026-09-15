@@ -35,7 +35,17 @@ pub struct Core {
     // The desktop process owns an OS-level lock for the database lifetime.
     // MCP only owns its SQLite connection and never claims runtime recovery.
     // Retain this handle until the desktop Core drops, even without reads.
-    _runtime_lock: Option<File>,
+    _runtime_lock: Option<RuntimeLock>,
+}
+
+struct RuntimeLock(File);
+
+impl Drop for RuntimeLock {
+    fn drop(&mut self) {
+        // Unix fork can briefly duplicate this file description. Explicitly
+        // release ownership rather than waiting for every inherited fd to close.
+        let _ = FileExt::unlock(&self.0);
+    }
 }
 
 type IconOverride = (String, Vec<u8>, Option<String>);
@@ -4040,7 +4050,7 @@ fn runtime_lock_path(path: &Path) -> PathBuf {
 /// separate from the database itself so a second process can still open a
 /// read/write SQLite connection for MCP data management while the desktop
 /// broker owns the live-process recovery decision.
-fn acquire_runtime_lock(path: &Path) -> Result<File> {
+fn acquire_runtime_lock(path: &Path) -> Result<RuntimeLock> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -4052,9 +4062,36 @@ fn acquire_runtime_lock(path: &Path) -> Result<File> {
         .truncate(false)
         .open(lock_path)?;
     match file.try_lock_exclusive() {
-        Ok(()) => Ok(file),
+        Ok(()) => Ok(RuntimeLock(file)),
         Err(error) => Err(Error::msg(format!(
             "another RepoAtlas desktop instance owns the database: {error}"
         ))),
+    }
+}
+
+#[cfg(all(test, unix))]
+mod runtime_lock_tests {
+    use super::*;
+
+    #[test]
+    fn desktop_close_releases_lock_even_with_a_duplicated_descriptor() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("core.sqlite");
+        let desktop = Core::open(&db).unwrap();
+        // A concurrent fork briefly shares the open file description before
+        // exec closes CLOEXEC descriptors. Reproduce that lifetime with dup.
+        let inherited = desktop
+            ._runtime_lock
+            .as_ref()
+            .unwrap()
+            .0
+            .try_clone()
+            .unwrap();
+        drop(desktop);
+        let reopened = Core::open(&db).expect("desktop close must explicitly release its lock");
+        assert!(Core::open(&db).is_err());
+        drop(inherited);
+        assert!(Core::open(&db).is_err());
+        drop(reopened);
     }
 }

@@ -726,7 +726,7 @@ fn runtime_lock_allows_mcp_without_duplicate_desktop_recovery() {
         .list_projects(ProjectQuery::default())
         .is_ok());
     drop(reopened);
-    assert!(Core::open(&db).is_ok());
+    Core::open(&db).expect("desktop must release its runtime lock on every close");
 }
 
 #[cfg(windows)]

@@ -21,6 +21,8 @@ Each stdio MCP process belongs to its external client connection, not the deskto
 
 Only the desktop owns the database's runtime lock and recovers interrupted Task Runs and starting approvals. MCP opens the shared SQLite database without acquiring that lock or performing runtime recovery, regardless of startup order. An idle MCP connection must not prevent the desktop from opening or reopening. A second desktop instance remains excluded by the runtime lock; stale task recovery waits for the next desktop start.
 
+The desktop releases its runtime lock explicitly when its Core closes. On Unix, a concurrent child-process fork can briefly share the lock's file description before exec; closing only the desktop descriptor must not delay restart until that inherited descriptor closes.
+
 Legacy AI tables and records remain readable through database upgrades, backup, import, and export paths so removing the feature does not destroy user data. They are not exposed in the desktop interface or MCP, and RepoAtlas performs no new external model requests.
 
 This decision supersedes ADRs 0005, 0006, 0008, and 0013.
