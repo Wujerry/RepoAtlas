@@ -136,3 +136,7 @@ jobs:
         with:
           denyWarnings: false
           createIssues: false
+
+      - name: Print RustSec findings on failure
+        if: failure()
+        run: cargo audit
