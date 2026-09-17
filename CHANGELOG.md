@@ -2,6 +2,12 @@
 
 All notable changes to RepoAtlas will be documented here. Package availability is recorded in GitHub Releases.
 
+## [0.1.4] - 2026-09-17
+
+- Keep the Project header on the latest Git branch when switching between workspace tabs instead of reverting to an older scanned branch.
+- Add expandable, syntax-highlighted evidence file previews with content/path copying and external file actions.
+- Simplify environment evidence lists, remove duplicate file entries, and use technology icons for runtime information.
+
 ## [0.1.3] - 2026-09-15
 
 - Allow the desktop app to reopen while an external Agent keeps its MCP connection alive.

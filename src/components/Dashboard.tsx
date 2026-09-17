@@ -8,7 +8,7 @@ import { api, onTaskExited, onTaskPersistenceFailed } from "../lib/api";
 import { overviewGit, overviewEnvironment, overviewTools, overviewReadme, overviewAgents } from "../lib/overview-cache";
 import { useCachedResource } from "../lib/use-cached-resource";
 import { stackOf } from "../lib/format";
-import type { GitOp, ProjectDetail, ProjectTab, ReadmeDocument, TaskRun, ToastTone } from "../types";
+import type { GitOp, ProjectDetail, ProjectTab, TaskRun, ToastTone } from "../types";
 import type { ProjectFile } from "../types";
 import { Button } from "./ui/button";
 import { ConfirmDialog } from "./ui/confirm";
@@ -20,6 +20,7 @@ import { OverviewWorkspace } from "./OverviewWorkspace";
 import { GitWorkspace } from "./GitWorkspace";
 import { TaskWorkspace } from "./TaskWorkspace";
 import { FilesWorkspace } from "./FilesWorkspace";
+import { ProjectFileDialog } from "./ProjectFileDialog";
 import { InlineLoadError, MarkdownDocument, statusKey, taskConfirmation } from "./DashboardShared";
 import { getTaskLog, rememberStartedRun, subscribeTaskLog } from "../lib/task-runs";
 
@@ -68,16 +69,14 @@ export function Dashboard({ detail, refreshing = false, t, notify, onFavorite, o
   const [descriptionSaving, setDescriptionSaving] = useState(false);
   const [overviewSection, setOverviewSection] = useState<"status" | "environment" | "modules" | "readme" | "agents" | "profile" | "notes">("status");
   const [previewFile, setPreviewFile] = useState<ProjectFile | null>(null);
-  const [previewDoc, setPreviewDoc] = useState<ReadmeDocument>();
-  const [previewLoading, setPreviewLoading] = useState(false);
-  const [previewError, setPreviewError] = useState<string>();
   const contentRef = useRef<HTMLDivElement>(null);
   const runsSequence = useRef(0);
   const currentProject = useRef(project.id);
   currentProject.current = project.id;
 
   const [agentsProject, setAgentsProject] = useState<string>();
-  const gitResource = useCachedResource(overviewGit, project.vcsKind === "git" && (tab === "overview" || tab === "git") ? project.id : undefined);
+  // The persistent header needs the same Git snapshot on every workspace tab.
+  const gitResource = useCachedResource(overviewGit, project.vcsKind === "git" ? project.id : undefined);
   const git = gitResource.value ?? null;
   const gitLoading = gitResource.loading;
   const gitError = gitResource.error;
@@ -120,7 +119,7 @@ export function Dashboard({ detail, refreshing = false, t, notify, onFavorite, o
   useEffect(() => {
     setTab("overview"); setFilesActivated(false); setOverviewSection("status"); setRuns([]); setRunsError(undefined); setLogs({}); setCommitMessage(""); setSelectedDiff(undefined); setDiff("");
     setDescriptionDraft(project.description ?? "");
-    setPreviewFile(null); setPreviewDoc(undefined); setPreviewError(undefined);
+    setPreviewFile(null);
     void loadRuns();
   }, [project.id]);
 
@@ -402,7 +401,7 @@ export function Dashboard({ detail, refreshing = false, t, notify, onFavorite, o
         <div id={`project-panel-${tab}`} role="tabpanel" aria-labelledby={`project-tab-${tab}`} className="workspace-scroll" ref={contentRef}>
           <div className="workspace-content" key={tab}>
             {tab === "overview" && gitError && <InlineLoadError title={t("gitLoadFailed")} detail={gitError} retryLabel={t("retry")} onRetry={() => void loadGit()} />}
-            {tab === "overview" && <OverviewWorkspace detail={detail} git={git} readme={readme} readmeLoading={readmeLoading} readmeError={readmeError} onRetryReadme={() => void readmeResource.refresh()} agents={agents} agentsLoading={agentsLoading} agentsMissing={agentsMissing} onNeedAgents={() => setAgentsProject(project.id)} t={t} tagDraft={tagDraft} setTagDraft={setTagDraft} onNotes={onNotes} onTags={onTags} tasks={detail.tasks} runs={runs} environment={environment} environmentLoading={environmentLoading} environmentError={environmentError} onRetryEnvironment={() => void environmentResource.refresh()} notify={notify} onRefresh={onRefresh} ides={ides} agentTools={agentTools} onRunTask={setPendingTaskId} onOpenProject={onOpenProject} onPreviewFile={(file) => { setPreviewFile(file); setPreviewError(undefined); setPreviewLoading(true); api.readProjectFile(project.id, file.path).then(setPreviewDoc).catch((error) => { setPreviewDoc(undefined); setPreviewError(String(error)); }).finally(() => setPreviewLoading(false)); }} />}
+            {tab === "overview" && <OverviewWorkspace detail={detail} git={git} readme={readme} readmeLoading={readmeLoading} readmeError={readmeError} onRetryReadme={() => void readmeResource.refresh()} agents={agents} agentsLoading={agentsLoading} agentsMissing={agentsMissing} onNeedAgents={() => setAgentsProject(project.id)} t={t} tagDraft={tagDraft} setTagDraft={setTagDraft} onNotes={onNotes} onTags={onTags} tasks={detail.tasks} runs={runs} environment={environment} environmentLoading={environmentLoading} environmentError={environmentError} onRetryEnvironment={() => void environmentResource.refresh()} notify={notify} onRefresh={onRefresh} ides={ides} agentTools={agentTools} onRunTask={setPendingTaskId} onOpenProject={onOpenProject} onPreviewFile={setPreviewFile} />}
             {tab === "git" && <GitWorkspace git={git} loading={gitLoading && !git} error={gitError} busy={gitBusy} commitMessage={commitMessage} setCommitMessage={setCommitMessage} stagedCount={stagedCount} selectedDiff={selectedDiff} diff={diff} diffLoading={diffLoading} t={t} onRetry={() => void loadGit()} onGit={setPendingGit} onDiff={loadDiff} />}
           </div>
         </div>
@@ -410,23 +409,7 @@ export function Dashboard({ detail, refreshing = false, t, notify, onFavorite, o
       <ConfirmDialog open={Boolean(pendingGit)} title={t("confirmGit")} body={t("confirmGitBody")} confirmLabel={t("run")} cancelLabel={t("cancel")} busy={gitBusy} onOpenChange={(open) => !open && !gitBusy && setPendingGit(null)} onConfirm={confirmGit} />
       <ConfirmDialog open={Boolean(pendingTaskId)} title={t("confirmTaskRun")} body={pendingTaskId ? taskConfirmation(detail.tasks.find((item) => item.id === pendingTaskId), project.canonicalPath, t) : ""} confirmLabel={t("run")} cancelLabel={t("cancel")} busy={taskBusy} onOpenChange={(open) => !open && !taskBusy && setPendingTaskId(undefined)} onConfirm={() => pendingTaskId ? runTask(pendingTaskId) : undefined} />
       <ConfirmDialog open={removeOpen} title={t("confirmRemove")} body={t("removeRecordHint")} confirmLabel={t("removeRecord")} cancelLabel={t("cancel")} onOpenChange={setRemoveOpen} onConfirm={() => void onRemove()} />
-      <Dialog.Root open={Boolean(previewFile)} onOpenChange={(open) => { if (!open) { setPreviewFile(null); setPreviewDoc(undefined); setPreviewError(undefined); } }}>
-        <Dialog.Portal>
-          <Dialog.Backdrop className="dialog-backdrop" />
-          <Dialog.Popup className="dialog-popup file-preview-dialog">
-            <Dialog.Title className="dialog-title">{previewFile?.path ?? t("previewFile")}</Dialog.Title>
-            {previewFile && <p className="muted-copy">{previewFile.source}</p>}
-            {previewLoading ? <Skeleton className="skeleton-code" /> : previewError ? <InlineLoadError title={t("filePreviewFailed")} detail={previewError} retryLabel={t("retry")} onRetry={() => previewFile && api.readProjectFile(project.id, previewFile.path).then(setPreviewDoc).catch((error) => setPreviewError(String(error)))} /> : <pre className="file-preview-code">{previewDoc?.content ?? ""}</pre>}
-            {previewDoc?.truncated && <span className="status-warning">{t("fileTruncated")}</span>}
-            <div className="dialog-actions">
-              <Button onClick={() => previewFile && void navigator.clipboard.writeText(previewFile.path).then(() => notify("success", t("copied"), previewFile.path))}>{t("copyPath")}</Button>
-              <Button onClick={() => previewFile && void api.revealProjectFile(project.id, previewFile.path).catch((error) => notify("error", t("openFailed"), String(error)))}>{t("revealInExplorer")}</Button>
-              <Button onClick={() => previewFile && void api.openProjectFile(project.id, previewFile.path).catch((error) => notify("error", t("openFailed"), String(error)))}>{t("openExternally")}</Button>
-              <Dialog.Close render={<Button>{t("close")}</Button>} />
-            </div>
-          </Dialog.Popup>
-        </Dialog.Portal>
-      </Dialog.Root>
+      {previewFile && <ProjectFileDialog key={`${project.id}:${previewFile.path}`} projectId={project.id} file={previewFile} onClose={() => setPreviewFile(null)} notify={notify} t={t} />}
       <DescriptionDialog open={descriptionOpen} value={descriptionDraft} saving={descriptionSaving} title={t("editDescription")} label={t("projectDescription")} placeholder={t("descriptionHint")} saveLabel={t("save")} cancelLabel={t("cancel")} onValue={setDescriptionDraft} onOpenChange={setDescriptionOpen} onSave={async () => { setDescriptionSaving(true); try { await onDescription(descriptionDraft.trim() || null); setDescriptionOpen(false); } finally { setDescriptionSaving(false); } }} />
       <Dialog.Root open={reportOpen} onOpenChange={setReportOpen}>
         <Dialog.Portal>

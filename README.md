@@ -17,7 +17,7 @@ RepoAtlas turns scattered local checkouts into one working library. See what eac
 
 > **macOS contributors wanted.** RepoAtlas has not yet been tested on real Mac hardware, so there is no supported macOS build today. If you have a Mac, help us build, test, and document it through [CONTRIBUTING.md](CONTRIBUTING.md), or open an [issue](https://github.com/Wujerry/RepoAtlas/issues) with reproducible results.
 
-> **0.1.3 downloads:** Windows installers are labeled **UNSIGNED** and do not have an Authenticode signature. macOS packages are experimental, ad-hoc signed and not notarized. SmartScreen or Gatekeeper may show a warning. Updater payloads remain signed; release assets include SHA256SUMS.
+> **0.1.4 downloads:** Windows installers are labeled **UNSIGNED** and do not have an Authenticode signature. macOS packages are experimental, ad-hoc signed and not notarized. SmartScreen or Gatekeeper may show a warning. Updater payloads remain signed; release assets include SHA256SUMS.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/en-dark-workspace.jpg" />
@@ -48,6 +48,7 @@ Agent changes to the shared library continue to appear after onboarding, includi
 - **Agent-assisted initialization** — let an external AI Agent inventory approved directories and write evidence-backed descriptions, tasks, and icons through MCP.
 - **Project library** — search Projects in English or Chinese, group related work with Project Collections, and relate multiple checkouts through Repository Lineage.
 - **Project Brief and read-only Files** — inspect detected facts, environment requirements, README, source, configuration, recent activity, and run history without turning RepoAtlas into an editor.
+  Environment files appear once with their evidence categories. Open a file in an expandable, syntax-highlighted preview with line numbers, content/path copy, and external-open actions.
 - **Saved development tasks** — keep dev, test, build, and packaging commands as reviewed programs plus argument vectors, then run them in a real PTY.
 - **Global task workbench** — follow active work across Projects in one full-window surface with up to four live terminals.
 - **Runtime visibility** — see process-tree CPU, memory, child processes, listening ports, and safe localhost previews next to the terminal.
@@ -126,7 +127,7 @@ Open the global workbench to follow active runs across Projects. Runtime observa
 2. Verify its SHA-256 checksum against the published `SHA256SUMS`:
 
    ```powershell
-   Get-FileHash .\RepoAtlas_0.1.3_x64-setup.exe -Algorithm SHA256
+   Get-FileHash .\RepoAtlas_0.1.4_x64-setup.exe -Algorithm SHA256
    ```
 
 3. Run the installer. SmartScreen will show an “unknown publisher” warning for the unsigned beta. Choose **More info**, then **Run anyway**.

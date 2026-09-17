@@ -70,7 +70,7 @@ export function CodePreview({ code, language, compact = false }: { code: string;
     initialRect: { width: 900, height: compact ? 420 : 700 },
   });
 
-  return <div ref={scrollRef} className={`code-preview${compact ? " code-preview-compact" : ""}`} style={compact ? { height: Math.min(420, Math.max(44, lines.length * 22 + 2)) } : undefined}>
+  return <div ref={scrollRef} tabIndex={0} className={`code-preview${compact ? " code-preview-compact" : ""}`} style={compact ? { height: Math.min(420, Math.max(44, lines.length * 22 + 2)) } : undefined}>
     <div className="code-preview-inner" style={{ height: virtualizer.getTotalSize() }}>
       {virtualizer.getVirtualItems().map((row) => <div className="code-preview-line" key={row.key} style={{ transform: `translateY(${row.start}px)` }}>
         <span className="code-preview-number" aria-hidden="true">{row.index + 1}</span>

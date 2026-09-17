@@ -91,12 +91,29 @@ function environment(): EnvironmentInspection {
       { ecosystem: "go", label: "Go", constraint: null, source: null, localVersion: "1.23.0", matchState: "undeclared" },
       { ecosystem: "java", label: "Java", constraint: "21", source: "pom.xml", localVersion: null, matchState: "unknown" },
     ],
-    files: [{ kind: "manifest", path: "package.json", source: "package.json" }],
+    files: [
+      { kind: "manifest", path: "package.json", source: "package.json" },
+      { kind: "packageManager", path: "package.json", source: "package.json#packageManager" },
+      { kind: "asset", path: "icon.png", source: "icon.png" },
+    ],
   };
 }
 
 describe("overview workspace", () => {
   beforeEach(() => { invalidateOverviewCache(); overviewTools.clear(); });
+  it("keeps the live header branch when switching workspace tabs", async () => {
+    inspectProjectEnvironment.mockResolvedValue(environment());
+    const original = detail();
+    original.git = { ...original.git!, branch: "old-scanned-branch" };
+    const props = { t, notify: vi.fn(), onFavorite: vi.fn(), onArchive: vi.fn(), onRefresh: vi.fn(), onRemove: vi.fn(), onOpenExplorer: vi.fn(), onOpenTerminal: vi.fn(), onOpenIde: vi.fn(), onOpenAgent: vi.fn(), onDescription: vi.fn(), onNotes: vi.fn(), onTags: vi.fn() };
+    const { container } = render(<Dashboard {...props} detail={original} />);
+    await waitFor(() => expect(screen.queryByText("old-scanned-branch")).not.toBeInTheDocument());
+    for (const tab of ["tasks", "git", "overview", "tasks"]) {
+      fireEvent.click(container.querySelector(`#project-tab-${tab}`)!);
+      expect(screen.queryByText("old-scanned-branch")).not.toBeInTheDocument();
+      expect(screen.getAllByText("main").length).toBeGreaterThan(0);
+    }
+  });
   it("reuses the cached environment immediately after switching away and back", async () => {
     inspectProjectEnvironment.mockClear();
     inspectProjectEnvironment.mockImplementation(async (id: string) => ({ ...environment(), projectId: id }));
@@ -207,8 +224,17 @@ describe("overview workspace", () => {
     expect(within(environmentRegion).getAllByText(t("versionMissing")).length).toBeGreaterThan(0);
     expect(within(environmentRegion).getAllByText(t("undeclaredVersion")).length).toBeGreaterThan(0);
     expect(within(environmentRegion).getAllByText(t("unknownVersion")).length).toBeGreaterThan(0);
+    for (const mark of environmentRegion.querySelectorAll(".runtime-monogram")) {
+      expect(mark.querySelector("svg")).toBeInTheDocument();
+      expect(mark.textContent).toBe("");
+      expect(mark).toHaveAttribute("aria-hidden", "true");
+    }
+    expect(within(environmentRegion).getAllByRole("button", { name: "package.json" })).toHaveLength(1);
+    expect(within(environmentRegion).getByRole("button", { name: "package.json" })).toHaveTextContent(t("fileGroupPackageManager"));
+    expect(within(environmentRegion).queryByRole("button", { name: "icon.png" })).not.toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: "package.json" }));
-    expect(await screen.findByText('{ "name": "atlas" }')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: t("copyFileContent") })).toBeEnabled());
+    expect(readProjectFile).toHaveBeenCalledWith("atlas", "package.json");
     expect(screen.getByRole("button", { name: t("revealInExplorer") })).toBeInTheDocument();
   });
 });

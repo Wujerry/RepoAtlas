@@ -2,6 +2,16 @@ import { Cat, Code, Sparkle, TerminalWindow } from "@phosphor-icons/react";
 import type { ReactNode } from "react";
 import {
   siAlacritty,
+  siNodedotjs,
+  siOpenjdk,
+  siRust,
+  siPython,
+  siGo,
+  siDotnet,
+  siRuby,
+  siPhp,
+  siDart,
+  siFlutter,
   siApple,
   siClaudecode,
   siCursor,
@@ -68,6 +78,24 @@ function BrandGlyph({ spec }: { spec: GlyphSpec }) {
 }
 
 const simple = (icon: { path: string }): GlyphSpec => ({ paths: [{ d: icon.path }] });
+const RUNTIME_GLYPHS: Record<string, GlyphSpec> = {
+  node: simple(siNodedotjs),
+  java: simple(siOpenjdk),
+  rust: simple(siRust),
+  python: simple(siPython),
+  go: simple(siGo),
+  dotnet: simple(siDotnet),
+  ruby: simple(siRuby),
+  php: simple(siPhp),
+  dart: simple(siDart),
+  flutter: simple(siFlutter),
+};
+
+export function RuntimeBrandIcon({ ecosystem }: { ecosystem: string }) {
+  const spec = RUNTIME_GLYPHS[ecosystem.toLowerCase()];
+  return spec ? <BrandGlyph spec={spec} /> : <Code aria-hidden="true" />;
+}
+
 const vendored = (d: string, extra?: Partial<GlyphSpec>): GlyphSpec => ({ paths: [{ d }], ...extra });
 
 const AGENT_GLYPHS: Record<string, GlyphSpec | null> = {

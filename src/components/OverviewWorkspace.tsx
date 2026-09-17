@@ -1,7 +1,8 @@
-import { ArrowDown, ArrowUp, CheckCircle, Code, DesktopTower, GitBranch, Play, WarningCircle } from "@phosphor-icons/react";
+import { ArrowDown, ArrowUp, CaretRight, FileCode, LockSimple, CheckCircle, Code, DesktopTower, GitBranch, Play, WarningCircle } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
 import type { MessageKey } from "../i18n";
 import { formatTime } from "../lib/format";
+import { RuntimeBrandIcon } from "../lib/brand-icons";
 import type { EnvironmentInspection, ExternalTool, GitStatus, ProjectDetail, ProjectFile, ReadmeDocument, RuntimeStatus, TaskRun, ToastTone } from "../types";
 import { Button } from "./ui/button";
 import { Skeleton } from "./ui/feedback";
@@ -72,12 +73,13 @@ export function OverviewWorkspace(props: {
     counts[runtime.matchState] = (counts[runtime.matchState] ?? 0) + 1;
     return counts;
   }, {} as Record<string, number>);
-  const groupedFiles = [
-    { id: "manifest", label: t("fileGroupManifest"), items: files.filter((file) => file.kind === "manifest") },
-    { id: "packageManager", label: t("fileGroupPackageManager"), items: files.filter((file) => file.kind === "packageManager") },
-    { id: "lockfile", label: t("fileGroupLockfile"), items: files.filter((file) => file.kind === "lockfile") },
-    { id: "runtime", label: t("fileGroupRuntime"), items: files.filter((file) => file.kind === "runtime") },
-  ].filter((group) => group.items.length > 0);
+  const fileKinds: Record<string, MessageKey> = { manifest: "fileGroupManifest", packageManager: "fileGroupPackageManager", lockfile: "fileGroupLockfile", runtime: "fileGroupRuntime" };
+  const uniqueFiles = Array.from(files.filter((file) => fileKinds[file.kind]).reduce((entries, file) => {
+    const entry = entries.get(file.path);
+    if (entry) { if (!entry.kinds.includes(file.kind)) entry.kinds.push(file.kind); }
+    else entries.set(file.path, { file, kinds: [file.kind] });
+    return entries;
+  }, new Map<string, { file: ProjectFile; kinds: string[] }>()).values());
   const matchLabel = (state: string) => state === "match" ? t("versionMatch") : state === "mismatch" ? t("versionMismatch") : state === "missing" ? t("versionMissing") : state === "undeclared" ? t("undeclaredVersion") : t("unknownVersion");
   const attentionCount = git?.snapshot.dirty ? new Set(git.files.map((file) => file.path)).size : 0;
   const branchName = git?.snapshot.branch ?? (project.vcsKind === "git" ? t("detachedHead") : project.vcsKind);
@@ -127,20 +129,21 @@ export function OverviewWorkspace(props: {
           <div className="runtime-table">
             {(environment?.runtimes ?? []).length === 0 ? <p className="muted-copy">{t("noEnvironment")}</p> : environment?.runtimes.map((runtime: RuntimeStatus) => (
               <div className="runtime-card" key={`${runtime.ecosystem}-${runtime.source ?? "inferred"}-${runtime.constraint ?? "undeclared"}`}>
-                <div className="runtime-card-heading"><span className="runtime-monogram">{runtime.label.slice(0, 1)}</span><div><strong>{runtime.label}</strong><small>{runtime.ecosystem}</small></div><em data-state={runtime.matchState}><i />{matchLabel(runtime.matchState)}</em></div>
+                <div className="runtime-card-heading"><span className="runtime-monogram" aria-hidden="true"><RuntimeBrandIcon ecosystem={runtime.ecosystem} /></span><div><strong>{runtime.label}</strong><small>{runtime.ecosystem}</small></div><em data-state={runtime.matchState}><i />{matchLabel(runtime.matchState)}</em></div>
                 <div className="runtime-versions"><div><span>{t("requiredVersion")}</span><strong>{runtime.constraint ?? t("undeclaredVersion")}</strong></div><div><span>{t("localVersion")}</span><strong>{runtime.localVersion ?? t("versionMissing")}</strong></div></div>
                 {runtime.source ? <button type="button" className="runtime-source" onClick={() => { const source = runtime.source; if (!source) return; onPreviewFile({ kind: "runtime", path: source.split("#")[0], source }); }}><Code />{runtime.source}</button> : <span className="runtime-source is-empty">{t("undeclaredVersion")}</span>}
               </div>
             ))}
           </div>
           <div className="file-groups overview-subsection">
-            <div className="overview-subsection-heading"><span>{t("projectFiles")}</span><small>{String(files.length).padStart(2, "0")}</small></div>
-            {groupedFiles.length === 0 ? <p className="muted-copy">{t("noProjectFiles")}</p> : groupedFiles.map((group) => (
-              <div className="file-group" key={group.id}>
-                <span>{group.label}</span>
-                <div>{group.items.map((file) => <button type="button" className="file-chip" key={group.id + "-" + file.path} onClick={() => onPreviewFile(file)}>{file.path}</button>)}</div>
-              </div>
-            ))}
+            <div className="overview-subsection-heading"><span>{t("projectFiles")}</span><small>{uniqueFiles.length}</small></div>
+            {uniqueFiles.length === 0 ? <p className="muted-copy">{t("noProjectFiles")}</p> : <div className="evidence-file-list">{uniqueFiles.map(({ file, kinds }) => (
+              <button type="button" className="evidence-file-row" key={file.path} aria-label={file.path} title={file.path} onClick={() => onPreviewFile(file)}>
+                <span className="evidence-list-icon" aria-hidden="true">{file.path.toLowerCase().includes("cargo") || file.path.toLowerCase().includes("rust-toolchain") ? <RuntimeBrandIcon ecosystem="rust" /> : file.path.endsWith("package.json") || file.path.endsWith("package-lock.json") ? <RuntimeBrandIcon ecosystem="node" /> : kinds.includes("lockfile") ? <LockSimple /> : <FileCode />}</span>
+                <strong className="evidence-file-name">{file.path}</strong><span className="evidence-file-kinds">{kinds.map((kind) => <span key={kind}>{t(fileKinds[kind])}</span>)}</span>
+                <CaretRight className="evidence-file-arrow" aria-hidden="true" />
+              </button>
+            ))}</div>}
           </div>
         </>
       )}
