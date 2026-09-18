@@ -227,6 +227,20 @@ describe("TaskWorkspace task locating", () => {
     expect(names()).toEqual(["ccc", "bbb", "aaa"]);
   });
 
+  it("defaults to latest execution first with unrun tasks last and stable ties", () => {
+    const tasks = [namedTask("never", "Never", "dev"), namedTask("old", "Older", "dev"), namedTask("new", "Newest", "dev"), namedTask("tie", "Same time", "dev")];
+    const runs = [
+      runFor("new", "dev", "failed", "2026-08-24T03:00:00Z"),
+      runFor("old", "dev", "succeeded", "2026-08-24T01:00:00Z"),
+      runFor("new", "dev", "succeeded", "2026-08-24T00:00:00Z", 1),
+      runFor("tie", "dev", "running", "2026-08-24T03:00:00Z"),
+    ];
+    const { container } = renderWorkspace({ tasks, runs });
+    expect(screen.getByLabelText(t("taskSortLabel"))).toHaveValue("lastRun");
+    expect(screen.getByRole("button", { name: t("sortDescending") })).toBeInTheDocument();
+    expect(Array.from(container.querySelectorAll(".task-title-line strong"), node => node.textContent)).toEqual(["Newest", "Same time", "Older", "Never"]);
+  });
+
   it("sorts by run count with the busiest task first", () => {
     const tasks = [namedTask("task-1", "alpha", "build"), namedTask("task-2", "beta", "check"), namedTask("task-3", "gamma", "dev")];
     const runs = [

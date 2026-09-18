@@ -38,6 +38,8 @@ vi.mock("../lib/api", () => ({
 import { Dashboard } from "../components/Dashboard";
 import { GitWorkspace } from "../components/GitWorkspace";
 
+vi.mock("../components/FilesWorkspace", () => ({ FilesWorkspace: ({ project }: { project: { id: string } }) => <div data-testid="files-project">{project.id}</div> }));
+
 const t = (key: MessageKey) => dictionaries.en[key];
 
 function detail(): ProjectDetail {
@@ -101,6 +103,44 @@ function environment(): EnvironmentInspection {
 
 describe("overview workspace", () => {
   beforeEach(() => { invalidateOverviewCache(); overviewTools.clear(); });
+  it("carries the current tab across projects and falls back when Git is unavailable", async () => {
+    inspectProjectEnvironment.mockResolvedValue(environment());
+    const props = { t, notify: vi.fn(), onFavorite: vi.fn(), onArchive: vi.fn(), onRefresh: vi.fn(), onRemove: vi.fn(), onOpenExplorer: vi.fn(), onOpenTerminal: vi.fn(), onOpenIde: vi.fn(), onOpenAgent: vi.fn(), onDescription: vi.fn(), onNotes: vi.fn(), onTags: vi.fn() };
+    const original = detail();
+    const another = { ...original, project: { ...original.project, id: "another" } };
+    const { rerender } = render(<Dashboard {...props} detail={original} />);
+    expect(screen.getByRole("tab", { name: t("overview") })).toHaveAttribute("aria-selected", "true");
+    for (const tab of ["tasks", "files", "git"] as const) {
+      fireEvent.click(screen.getByRole("tab", { name: t(tab) }));
+      rerender(<Dashboard {...props} detail={another} />);
+      expect(screen.getByRole("tab", { name: t(tab) })).toHaveAttribute("aria-selected", "true");
+      if (tab === "files") expect(screen.getByTestId("files-project")).toHaveTextContent("another");
+      rerender(<Dashboard {...props} detail={original} />);
+      expect(screen.getByRole("tab", { name: t(tab) })).toHaveAttribute("aria-selected", "true");
+    }
+    rerender(<Dashboard {...props} detail={{ ...another, project: { ...another.project, vcsKind: "none" } }} />);
+    expect(screen.queryByRole("tab", { name: t("git") })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: t("overview") })).toHaveAttribute("aria-selected", "true");
+    rerender(<Dashboard {...props} detail={original} />);
+    expect(screen.getByRole("tab", { name: t("overview") })).toHaveAttribute("aria-selected", "true");
+  });
+  it("renames from the title and retains the draft on failure", async () => {
+    inspectProjectEnvironment.mockResolvedValue(environment());
+    const onRename = vi.fn().mockRejectedValueOnce(new Error("database busy")).mockResolvedValueOnce(undefined);
+    const props = { t, notify: vi.fn(), onFavorite: vi.fn(), onArchive: vi.fn(), onRefresh: vi.fn(), onRemove: vi.fn(), onOpenExplorer: vi.fn(), onOpenTerminal: vi.fn(), onOpenIde: vi.fn(), onOpenAgent: vi.fn(), onDescription: vi.fn(), onNotes: vi.fn(), onTags: vi.fn(), onRename };
+    render(<Dashboard {...props} detail={detail()} />);
+    fireEvent.click(screen.getByRole("button", { name: t("editName") }));
+    const input = screen.getByLabelText(t("projectName"));
+    await waitFor(() => expect(input).toHaveFocus());
+    fireEvent.change(input, { target: { value: "  Atlas workspace  " } });
+    fireEvent.submit(input.closest("form")!);
+    expect(await screen.findByRole("alert")).toHaveTextContent("database busy");
+    expect(input).toHaveValue("  Atlas workspace  ");
+    fireEvent.submit(input.closest("form")!);
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(onRename).toHaveBeenLastCalledWith("Atlas workspace");
+    await waitFor(() => expect(screen.getByRole("button", { name: t("editName") })).toHaveFocus());
+  });
   it("keeps the live header branch when switching workspace tabs", async () => {
     inspectProjectEnvironment.mockResolvedValue(environment());
     const original = detail();

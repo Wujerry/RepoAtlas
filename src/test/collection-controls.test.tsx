@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CollectionControls } from "../components/CollectionControls";
@@ -67,6 +67,7 @@ async function chooseCollectionAction(name: string, triggerName = t("collections
 describe("CollectionControls", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    HTMLElement.prototype.scrollTo = vi.fn();
     apiMocks.listProjects.mockResolvedValue([project]);
     apiMocks.collectionMemberIds.mockResolvedValue([]);
     apiMocks.saveCollection.mockResolvedValue(collection);
@@ -80,7 +81,7 @@ describe("CollectionControls", () => {
     await chooseCollectionAction(t("newCollection"));
     fireEvent.change(await screen.findByLabelText(t("collectionName")), { target: { value: "Daily work" } });
     fireEvent.click(await screen.findByRole("checkbox", { name: /Atlas/ }));
-    fireEvent.click(screen.getByRole("button", { name: t("save") }));
+    fireEvent.click(screen.getByRole("button", { name: t("createCollection") }));
 
     await waitFor(() => expect(apiMocks.saveCollection).toHaveBeenCalledWith(undefined, { name: "Daily work", description: null }, [project.id]));
     expect(onChanged).toHaveBeenCalledWith(collection.id);
@@ -135,4 +136,71 @@ describe("CollectionControls", () => {
     fireEvent.click(await screen.findByRole("menuitem", { name: /Daily work/ }));
     expect(onSelect).toHaveBeenCalledWith(collection.id);
   });
+  it("focuses the name on open and restores focus to the collection trigger", async () => {
+    renderControls();
+    await chooseCollectionAction(t("newCollection"));
+    await waitFor(() => expect(screen.getByLabelText(t("collectionName"))).toHaveFocus());
+    fireEvent.click(screen.getByRole("button", { name: t("cancel") }));
+    await waitFor(() => expect(screen.getByRole("button", { name: t("collections") })).toHaveFocus());
+  });
+
+  it("preserves selected projects across searches and parent refreshes", async () => {
+    const other = { ...project, id: "other", displayName: "Other", canonicalPath: "C:/other" };
+    apiMocks.listProjects.mockResolvedValue([project, other]);
+    const view = renderControls();
+    await chooseCollectionAction(t("newCollection"));
+    fireEvent.click(await screen.findByRole("checkbox", { name: /Atlas/ }));
+    view.rerender(<CollectionControls collections={[]} t={t} notify={vi.fn()} onSelect={vi.fn()} onChanged={vi.fn(async () => undefined)} />);
+    expect(screen.getByRole("checkbox", { name: /Atlas/ })).toBeChecked();
+    expect(apiMocks.listProjects).toHaveBeenCalledTimes(1);
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "Other" } });
+    fireEvent.click(screen.getByRole("button", { name: t("collectionSelectResults") }));
+    fireEvent.click(screen.getByRole("button", { name: t("clearSearch") }));
+    expect(screen.getByRole("searchbox")).toHaveFocus();
+    expect(screen.getByRole("checkbox", { name: /Atlas/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /Other/ })).toBeChecked();
+  });
+
+  it("supports an empty collection and keeps drafts after a failed save", async () => {
+    apiMocks.saveCollection.mockRejectedValueOnce(new Error("disk busy")).mockResolvedValueOnce(collection);
+    renderControls();
+    await chooseCollectionAction(t("newCollection"));
+    await screen.findByRole("checkbox", { name: /Atlas/ });
+    fireEvent.change(screen.getByLabelText(t("collectionName")), { target: { value: "Empty collection" } });
+    fireEvent.click(screen.getByRole("button", { name: t("createCollection") }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("disk busy");
+    expect(screen.getByLabelText(t("collectionName"))).toHaveValue("Empty collection");
+    fireEvent.click(screen.getByRole("button", { name: t("createCollection") }));
+    await waitFor(() => expect(apiMocks.saveCollection).toHaveBeenLastCalledWith(undefined, { name: "Empty collection", description: null }, []));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("can reach a virtualized project using End and return using Home", async () => {
+    apiMocks.listProjects.mockResolvedValue(Array.from({ length: 150 }, (_, index) => ({ ...project, id: `p${index}`, displayName: `Project ${index}` })));
+    renderControls();
+    await chooseCollectionAction(t("newCollection"));
+    const first = await screen.findByRole("checkbox", { name: /^Project 0 / });
+    act(() => first.focus());
+    fireEvent.keyDown(first, { key: "End" });
+    const last = await screen.findByRole("checkbox", { name: /^Project 149 / });
+    expect(last).toHaveFocus();
+    fireEvent.click(last);
+    expect(last).toBeChecked();
+    fireEvent.keyDown(last, { key: "Home" });
+    expect(screen.getByRole("checkbox", { name: /^Project 0 / })).toHaveFocus();
+  });
+
+  it("removes only the visible selected results while retaining hidden members", async () => {
+    apiMocks.listProjects.mockResolvedValue([project, { ...project, id: "other", displayName: "Other" }]);
+    apiMocks.collectionMemberIds.mockResolvedValue([project.id, "other"]);
+    renderControls({ collections: [collection], selectedId: collection.id });
+    await chooseCollectionAction(t("editCollection"), `${t("collections")}: ${collection.name}`);
+    await screen.findByRole("checkbox", { name: /Atlas/ });
+    fireEvent.click(screen.getByRole("button", { name: /Selected 2/ }));
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "Other" } });
+    fireEvent.click(screen.getByRole("button", { name: t("collectionRemoveResults") }));
+    fireEvent.click(screen.getByRole("button", { name: t("save") }));
+    await waitFor(() => expect(apiMocks.saveCollection).toHaveBeenCalledWith(collection.id, { name: collection.name, description: null }, [project.id]));
+  });
+
 });

@@ -14,6 +14,7 @@ import { Button } from "./ui/button";
 import { ConfirmDialog } from "./ui/confirm";
 import { Skeleton } from "./ui/feedback";
 import { ActionMenu } from "./ui/menu";
+import { NameDialog } from "./ui/name-dialog";
 import { DescriptionDialog } from "./ui/description-dialog";
 import { AgentGlyph, IdeGlyph, TerminalGlyph } from "../lib/project-identity";
 import { OverviewWorkspace } from "./OverviewWorkspace";
@@ -24,7 +25,7 @@ import { ProjectFileDialog } from "./ProjectFileDialog";
 import { InlineLoadError, MarkdownDocument, statusKey, taskConfirmation } from "./DashboardShared";
 import { getTaskLog, rememberStartedRun, subscribeTaskLog } from "../lib/task-runs";
 
-export function Dashboard({ detail, refreshing = false, t, notify, onFavorite, onArchive, onRefresh, onRemove, onOpenExplorer, onOpenTerminal, onOpenIde, onOpenAgent, onDescription, onNotes, onTags, onOpenProject, onRelocate }: {
+export function Dashboard({ detail, refreshing = false, t, notify, onFavorite, onArchive, onRefresh, onRemove, onOpenExplorer, onOpenTerminal, onOpenIde, onOpenAgent, onDescription, onNotes, onTags, onOpenProject, onRelocate, onRename }: {
   detail: ProjectDetail;
   refreshing?: boolean;
   t: (key: MessageKey) => string;
@@ -42,9 +43,11 @@ export function Dashboard({ detail, refreshing = false, t, notify, onFavorite, o
   onTags: (tags: string[]) => void;
   onOpenProject?: (id: string) => void;
   onRelocate?: () => void;
+  onRename?: (name: string) => Promise<void>;
 }) {
   const project = detail.project;
-  const [tab, setTab] = useState<ProjectTab>("overview");
+  const [preferredTab, setTab] = useState<ProjectTab>("overview");
+  const tab = preferredTab === "git" && project.vcsKind !== "git" ? "overview" : preferredTab;
   const [filesActivated, setFilesActivated] = useState(false);
   const [tagDraft, setTagDraft] = useState("");
   const [runs, setRuns] = useState<TaskRun[]>([]);
@@ -64,6 +67,8 @@ export function Dashboard({ detail, refreshing = false, t, notify, onFavorite, o
   const [selectedDiff, setSelectedDiff] = useState<{ path: string; staged: boolean }>();
   const [diff, setDiff] = useState("");
   const [diffLoading, setDiffLoading] = useState(false);
+  const nameTriggerRef = useRef<HTMLButtonElement>(null);
+  const [nameOpen, setNameOpen] = useState(false);
   const [descriptionOpen, setDescriptionOpen] = useState(false);
   const [descriptionDraft, setDescriptionDraft] = useState(project.description ?? "");
   const [descriptionSaving, setDescriptionSaving] = useState(false);
@@ -117,11 +122,17 @@ export function Dashboard({ detail, refreshing = false, t, notify, onFavorite, o
   }
 
   useEffect(() => {
-    setTab("overview"); setFilesActivated(false); setOverviewSection("status"); setRuns([]); setRunsError(undefined); setLogs({}); setCommitMessage(""); setSelectedDiff(undefined); setDiff("");
+    setNameOpen(false);
+    setFilesActivated(tab === "files"); setOverviewSection("status"); setRuns([]); setRunsError(undefined); setLogs({}); setCommitMessage(""); setSelectedDiff(undefined); setDiff("");
+    setActiveRunId(undefined); setPendingTaskId(undefined); setPendingGit(null);
     setDescriptionDraft(project.description ?? "");
     setPreviewFile(null);
     void loadRuns();
   }, [project.id]);
+
+  useEffect(() => {
+    if (preferredTab === "git" && project.vcsKind !== "git") setTab("overview");
+  }, [preferredTab, project.vcsKind]);
 
   useEffect(() => {
     const unsubs = Promise.all([
@@ -294,6 +305,7 @@ export function Dashboard({ detail, refreshing = false, t, notify, onFavorite, o
             <div className="project-hero-top">
               <div key={project.id} className="project-title-row project-switch-title">
                 <h1 title={project.displayName}>{project.displayName}</h1>
+                {onRename && <Button className="project-name-edit" size="icon" variant="quiet" aria-label={t("editName")} title={t("editName")} onClick={(event) => { nameTriggerRef.current = event.currentTarget; setNameOpen(true); }}><PencilSimple aria-hidden="true" /></Button>}
                 {(refreshing || gitLoading || toolsResource.loading) && <span className="muted-copy" role="status" aria-label={t("refreshingOverview")}><SpinnerGap className="button-spinner" size={16} aria-hidden="true" /></span>}
                 {project.availability !== "ready" && <span className="project-status-pill is-warning">
                   <WarningCircle weight="fill" />
@@ -391,11 +403,11 @@ export function Dashboard({ detail, refreshing = false, t, notify, onFavorite, o
         </div>
       </header>
       <div id="project-panel-files" role="tabpanel" aria-labelledby="project-tab-files" className="workspace-content workspace-content-files" hidden={tab !== "files"}>
-        {filesActivated && <FilesWorkspace project={project} active={tab === "files"} t={t} notify={notify} />}
+        {(filesActivated || tab === "files") && <FilesWorkspace key={project.id} project={project} active={tab === "files"} t={t} notify={notify} />}
       </div>
       {tab === "tasks" ? (
         <div id="project-panel-tasks" role="tabpanel" aria-labelledby="project-tab-tasks" className="workspace-content workspace-content-tasks">
-          <TaskWorkspace tasks={detail.tasks} runs={runs} loading={runsLoading} error={runsError} activeRunId={activeRunId} log={(activeRunId ? logs[activeRunId] : "") ?? ""} t={t} notify={notify} onRetry={() => void loadRuns()} onSaveTasks={async (tasks) => { await api.updateProject(project.id, { tasks }); await onRefresh(); }} onRun={setPendingTaskId} onStopRun={async (runId) => { try { await api.stopTask(runId); await loadRuns(); } catch (error) { notify("error", t("taskStopFailed"), String(error)); } }} onClearLog={() => activeRunId && setLogs((current) => ({ ...current, [activeRunId]: "" }))} onHistory={async (run) => { setActiveRunId(run.id); try { const output = await api.readTaskLog(run.id); setLogs((current) => ({ ...current, [run.id]: output })); } catch (error) { notify("error", t("logLoadFailed"), String(error)); } }} />
+          <TaskWorkspace key={project.id} tasks={detail.tasks} runs={runs} loading={runsLoading} error={runsError} activeRunId={activeRunId} log={(activeRunId ? logs[activeRunId] : "") ?? ""} t={t} notify={notify} onRetry={() => void loadRuns()} onSaveTasks={async (tasks) => { await api.updateProject(project.id, { tasks }); await onRefresh(); }} onRun={setPendingTaskId} onStopRun={async (runId) => { try { await api.stopTask(runId); await loadRuns(); } catch (error) { notify("error", t("taskStopFailed"), String(error)); } }} onClearLog={() => activeRunId && setLogs((current) => ({ ...current, [activeRunId]: "" }))} onHistory={async (run) => { setActiveRunId(run.id); try { const output = await api.readTaskLog(run.id); setLogs((current) => ({ ...current, [run.id]: output })); } catch (error) { notify("error", t("logLoadFailed"), String(error)); } }} />
         </div>
       ) : tab !== "files" ? (
         <div id={`project-panel-${tab}`} role="tabpanel" aria-labelledby={`project-tab-${tab}`} className="workspace-scroll" ref={contentRef}>
@@ -410,6 +422,7 @@ export function Dashboard({ detail, refreshing = false, t, notify, onFavorite, o
       <ConfirmDialog open={Boolean(pendingTaskId)} title={t("confirmTaskRun")} body={pendingTaskId ? taskConfirmation(detail.tasks.find((item) => item.id === pendingTaskId), project.canonicalPath, t) : ""} confirmLabel={t("run")} cancelLabel={t("cancel")} busy={taskBusy} onOpenChange={(open) => !open && !taskBusy && setPendingTaskId(undefined)} onConfirm={() => pendingTaskId ? runTask(pendingTaskId) : undefined} />
       <ConfirmDialog open={removeOpen} title={t("confirmRemove")} body={t("removeRecordHint")} confirmLabel={t("removeRecord")} cancelLabel={t("cancel")} onOpenChange={setRemoveOpen} onConfirm={() => void onRemove()} />
       {previewFile && <ProjectFileDialog key={`${project.id}:${previewFile.path}`} projectId={project.id} file={previewFile} onClose={() => setPreviewFile(null)} notify={notify} t={t} />}
+      {nameOpen && onRename && <NameDialog key={project.id} name={project.displayName} t={t} returnFocus={nameTriggerRef} onSave={onRename} onClose={() => setNameOpen(false)} />}
       <DescriptionDialog open={descriptionOpen} value={descriptionDraft} saving={descriptionSaving} title={t("editDescription")} label={t("projectDescription")} placeholder={t("descriptionHint")} saveLabel={t("save")} cancelLabel={t("cancel")} onValue={setDescriptionDraft} onOpenChange={setDescriptionOpen} onSave={async () => { setDescriptionSaving(true); try { await onDescription(descriptionDraft.trim() || null); setDescriptionOpen(false); } finally { setDescriptionSaving(false); } }} />
       <Dialog.Root open={reportOpen} onOpenChange={setReportOpen}>
         <Dialog.Portal>

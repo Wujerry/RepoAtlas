@@ -80,6 +80,7 @@
 - Reduced motion and sensory considerations: Framer Motion follows user preference; continuous decorative animation stops under reduced motion.
 
 ## Responsive behavior
+- Switching Projects keeps the previously active workspace tab; an unavailable tab (such as Git for a non-Git Project) falls back to Overview. Project-specific file and task state resets independently of the active tab. Task Definitions initially sort by latest Task Run start time descending, with unrun tasks last and original order for ties.
 - Supported breakpoints/devices: Tauri desktop at 1100x720 minimum; reference viewport 1440x920.
 - Layout adaptations: At 1280px and above use a 360px project tree plus a flexible detail workspace; between 1100px and 1279px the tree is 320px. Settings and help use the full content width.
 - Touch/hover differences: Mouse and keyboard are primary; controls keep at least 32px height and never rely on hover alone.
@@ -152,3 +153,9 @@ The Continue a session region uses two columns (three on wide desktops) of borde
 Home opens with a compact workspace heading and status strip, followed by up to three recent sessions and bounded recent projects/tasks. The oversized featured-project block is removed. Session rows show stored project icons and a distinct project navigation action. Full-page Sessions, Footprints, Help and Settings overlays are nonmodal relative to the persistent title bar; switching closes the previous page in one action while the covered project workspace is inert. Confirmation dialogs remain modal. Search focus is a single subtle outer field ring, and selection uses a narrow amber rail with a low-contrast fill.
 
 The home workspace fills the entire detail pane, including its scroll area, with 22–32px edge padding and no centered maximum-width column. At 1100px of available session-section width, the three recent sessions form equal-width cards with aligned action footers; narrower sections retain compact rows.
+
+Project titles expose the rename action on title-row hover or keyboard focus, keeping its layout space reserved. Devices without hover show it continuously. The dialog initially selects the current display name, trims saved names, retains failed drafts, and returns focus to the title action. Renaming changes the Project record only; it never renames the directory.
+
+The Collection editor scales with the main window at 92% viewport width and 90% viewport height, retaining at least 16px edge clearance. The details column grows from 280px to 400px while membership takes the remaining width.
+
+The Collection editor uses a two-column layout: name and optional description on the left, searchable membership on the right. Keep the header and save/cancel footer fixed while the project list scrolls. Show selected counts, All/Selected views, and actions scoped to current results. Empty Collections are allowed. Membership survives search and parent refreshes; load failures disable saving and failed saves preserve drafts. Focus starts on the name and returns to the collection trigger. Search uses one outer focus ring, rows use an inset keyboard focus outline, and the virtualized checkbox list uses one Tab stop with Up/Down/Home/End navigation and Space to toggle.

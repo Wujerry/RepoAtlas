@@ -22,8 +22,8 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
   const [kindFilter, setKindFilter] = useState("");
   const [sourceFilter, setSourceFilter] = useState<"" | "inferred" | "custom">("");
   const [stateFilter, setStateFilter] = useState<"" | "running" | "lastFailed" | "lastSucceeded">("");
-  const [sortMode, setSortMode] = useState<"default" | "name" | "runCount" | "lastRun">("default");
-  const [sortAscending, setSortAscending] = useState(true);
+  const [sortMode, setSortMode] = useState<"default" | "name" | "runCount" | "lastRun">("lastRun");
+  const [sortAscending, setSortAscending] = useState(false);
   const [consoleTheme, setConsoleTheme] = useState<"dark" | "light">(() => (document.documentElement.dataset.theme === "light" ? "light" : "dark"));
   const logPaneRef = useRef<HTMLPreElement>(null);
   const editorRef = useRef<HTMLFormElement>(null);

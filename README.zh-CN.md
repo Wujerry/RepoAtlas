@@ -17,9 +17,13 @@ RepoAtlas 把散落在各个磁盘里的本地 checkout 变成一个真正能干
 
 > **欢迎 macOS 用户参与贡献。** RepoAtlas 还没有经过 Mac 真机测试，目前不提供受支持的 macOS 安装包。如果你手上有 Mac，欢迎按照 [CONTRIBUTING.md](CONTRIBUTING.md) 帮忙构建、测试和补充文档，也可以把可复现的问题提交到 [Issue](https://github.com/Wujerry/RepoAtlas/issues)。
 
-> **0.1.4 下载说明：** Windows 安装包标注 **UNSIGNED**，未做 Authenticode 签名；macOS 包为实验性构建，仅临时签名，未经公证。系统可能显示 SmartScreen 或 Gatekeeper 提示。更新包仍有签名验证，发布附件提供 SHA256SUMS。
+> **0.1.5 下载说明：** Windows 安装包标注 **UNSIGNED**，未做 Authenticode 签名；macOS 包为实验性构建，仅临时签名，未经公证。系统可能显示 SmartScreen 或 Gatekeeper 提示。更新包仍有签名验证，发布附件提供 SHA256SUMS。
+
+项目标题旁可直接修改显示名称，不会重命名真实目录。新建集合采用左右分区，可搜索和勾选项目、只看已选，并支持方向键导航与空格勾选；也可以先创建空集合。
 
 环境文件按路径去重并显示证据类别，支持可展开的语法高亮预览、行号、内容和路径复制，以及外部打开操作。切换项目标签页时，顶部保留最新 Git 分支信息。
+
+任务默认按最近执行时间倒序排列，未执行过的任务放在末尾。切换项目时沿用上一个项目打开的标签页；目标项目不支持该标签页时，回到项目概览。
 
 足迹列表支持在滚动边缘自动加载相邻日期：向下读完当天记录后进入前一天，向上到顶进入后一天（最晚到今天），也支持 Page Up/Down。加载期间保留当前记录和筛选条件，空白日期不会被跳过。
 
@@ -116,7 +120,7 @@ MCP 连接可以跨桌面重启保持可用。只有桌面持有运行锁并恢�
 2. 校验 SHA-256，并和发布时附带的 `SHA256SUMS` 对比：
 
    ```powershell
-   Get-FileHash .\RepoAtlas_0.1.4_x64-setup.exe -Algorithm SHA256
+   Get-FileHash .\RepoAtlas_0.1.5_x64-setup.exe -Algorithm SHA256
    ```
 
 3. 运行安装程序。未签名 Beta 会触发 SmartScreen 的「无法识别的发布者」提示；点击 **更多信息**，再点 **仍要运行**。

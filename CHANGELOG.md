@@ -2,6 +2,13 @@
 
 All notable changes to RepoAtlas will be documented here. Package availability is recorded in GitHub Releases.
 
+## [0.1.5] - 2026-09-18
+
+- Improve Project Collection editing with searchable membership, selected-only filtering, bulk selection, and keyboard navigation.
+- Add a Project rename dialog to the workspace header with clear save feedback.
+- Preserve the active workspace tab when switching Projects, with an Overview fallback for Projects without Git.
+- Sort tasks by their most recent run by default.
+
 ## [0.1.4] - 2026-09-17
 
 - Keep the Project header on the latest Git branch when switching between workspace tabs instead of reverting to an older scanned branch.
