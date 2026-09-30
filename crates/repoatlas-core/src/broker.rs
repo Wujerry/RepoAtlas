@@ -951,7 +951,7 @@ fn build_endpoints(ports: &[u16], scheme: Option<&str>, path: Option<&str>) -> V
 }
 
 #[cfg(windows)]
-fn listening_ports() -> Option<Vec<(u16, u32)>> {
+pub(crate) fn listening_ports() -> Option<Vec<(u16, u32)>> {
     let mut command = Command::new(windows_system_tool("netstat.exe"));
     command.args(["-ano", "-p", "tcp"]);
     crate::process::suppress_console_window(&mut command);
@@ -978,7 +978,7 @@ fn parse_windows_listeners(output: &str) -> Vec<(u16, u32)> {
 }
 
 #[cfg(unix)]
-fn listening_ports() -> Option<Vec<(u16, u32)>> {
+pub(crate) fn listening_ports() -> Option<Vec<(u16, u32)>> {
     let executable = ["/usr/sbin/lsof", "/usr/bin/lsof"]
         .into_iter()
         .find(|path| Path::new(path).is_file())?;

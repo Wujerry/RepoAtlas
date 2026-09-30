@@ -25,6 +25,11 @@ describe("session display excerpts", () => {
     expect(sessionExcerpt('Explain the <subagent_notification> marker')).toBe('Explain the <subagent_notification> marker');
     expect(sessionDisplayText('  User text\n  **unchanged**')).toBe('  User text\n  **unchanged**');
   });
+  it("cleans truncated image transport and link syntax in cached titles", () => {
+    expect(sessionExcerpt('修复界面 <image name=[Image #1] path="C:\\Us')).toBe('修复界面');
+    expect(sessionExcerpt('See [docs](https://example.com/partial')).toBe('See docs');
+    expect(sessionDisplayText('Done\n<oai-mem-citation>internal</oai-mem-citation>')).toBe('Done');
+  });
   it("uses the literal request following a pasted quote without generating a summary", () => {
     expect(sessionDisplayTitle('‘产品发展建议很长’，先完成第3点', "Untitled")).toBe("先完成第3点");
     expect(sessionDisplayTitle('“Standalone quote”', "Untitled")).toBe('“Standalone quote”');

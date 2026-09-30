@@ -2,6 +2,9 @@ import { Cat, Code, Sparkle, TerminalWindow } from "@phosphor-icons/react";
 import type { ReactNode } from "react";
 import {
   siAlacritty,
+  siDeepseek,
+  siMinimax,
+  siOpenrouter,
   siNodedotjs,
   siOpenjdk,
   siRust,
@@ -100,6 +103,11 @@ export function RuntimeBrandIcon({ ecosystem }: { ecosystem: string }) {
 const vendored = (d: string, extra?: Partial<GlyphSpec>): GlyphSpec => ({ paths: [{ d }], ...extra });
 
 const AGENT_GLYPHS: Record<string, GlyphSpec | null> = {
+  zed: simple(siZedindustries),
+  zai: vendored(ZAI_PATH),
+  deepseek: simple(siDeepseek),
+  minimax: simple(siMinimax),
+  openrouter: simple(siOpenrouter),
   cursor: simple(siCursor),
   "cursor-cli": simple(siCursor),
   copilot: simple(siGithubcopilot),

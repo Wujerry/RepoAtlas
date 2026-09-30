@@ -18,6 +18,128 @@ fn parse(adapter: &str, path: &Path, root: &Path) -> (AgentSession, Vec<SessionM
         .remove(0)
 }
 
+#[test]
+fn recorded_usage_survives_indexing_without_reopening_transcripts() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = Core::open(dir.path().join("app.sqlite")).unwrap();
+    for (folder, total) in [("one", 220), ("two", 330)] {
+        let root = dir.path().join(folder);
+        fs::create_dir(&root).unwrap();
+        let source = core
+            .set_session_source("codex", root.to_str().unwrap(), true)
+            .unwrap();
+        let path = root.join("rollout-usage.jsonl");
+        let records = [
+            json!({"type":"session_meta","payload":{"id":"same-session","cwd":dir.path()}}),
+            json!({"type":"turn_context","payload":{"model":"gpt-5.4"}}),
+            json!({"type":"event_msg","payload":{"type":"user_message","message":"Token fixture"}}),
+            json!({"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":total-20,"output_tokens":20,"total_tokens":total}}}}),
+        ];
+        write(
+            &path,
+            &records
+                .iter()
+                .map(|v| v.to_string() + "\n")
+                .collect::<String>(),
+        );
+        let (mut session, messages) = parse("codex", &path, &root);
+        assert_eq!(session.usage.as_ref().unwrap().total_tokens, total);
+        session.updated_at = if folder == "one" {
+            "2026-09-29T00:00:00Z"
+        } else {
+            "2026-09-30T00:00:00Z"
+        }
+        .into();
+        core.ingest_session(&source, session, &messages, &fingerprint(&path).unwrap())
+            .unwrap();
+        // Cache-only summary must not reopen the file or invoke an Agent CLI.
+        fs::remove_file(path).unwrap();
+    }
+    let summary = core.session_usage_summary().unwrap();
+    assert_eq!(summary.len(), 1);
+    assert_eq!(summary[0].sessions, 1);
+    assert_eq!(summary[0].total_tokens, Some(330));
+    assert_eq!(summary[0].priced_tokens, 330);
+    assert!((summary[0].estimated_usd.unwrap() - 0.001075).abs() < 1e-9);
+    core.set_session_source("codex", dir.path().join("two").to_str().unwrap(), false)
+        .unwrap();
+    assert_eq!(
+        core.session_usage_summary().unwrap()[0].total_tokens,
+        Some(220)
+    );
+    core.set_session_source("codex", dir.path().join("one").to_str().unwrap(), false)
+        .unwrap();
+    assert!(core.session_usage_summary().unwrap().is_empty());
+}
+
+#[test]
+fn token_adapters_preserve_source_semantics_and_legacy_metadata() {
+    let dir = tempfile::tempdir().unwrap();
+    let cases = [
+        (
+            "claude",
+            "claude/session.jsonl",
+            json!({"type":"assistant","message":{"id":"m","role":"assistant","content":"visible","usage":{"input_tokens":20,"cache_read_input_tokens":100,"cache_creation_input_tokens":30,"output_tokens":10}}}),
+            160,
+        ),
+        (
+            "gemini",
+            "gemini/session-test.jsonl",
+            json!({"id":"m","type":"gemini","content":"visible","tokens":{"input":100,"output":20,"cached":30,"thoughts":10,"total":130}}),
+            130,
+        ),
+        (
+            "copilot",
+            "copilot/test/events.jsonl",
+            json!({"id":"m","type":"assistant.usage","data":{"inputTokens":100,"outputTokens":20}}),
+            120,
+        ),
+        (
+            "qwen",
+            "qwen/chats/test.jsonl",
+            json!({"type":"assistant","message":{"id":"m","role":"assistant","content":"visible","usage":{"input_tokens":100,"output_tokens":20}}}),
+            120,
+        ),
+        (
+            "kimi",
+            "kimi/sessions/test/wire/main/wire.jsonl",
+            json!({"message":{"type":"StatusUpdate","payload":{"token_usage":{"input_other":20,"input_cache_read":100,"input_cache_creation":30,"output":10}}}}),
+            160,
+        ),
+    ];
+    for (adapter, file, record, total) in cases {
+        let path = dir.path().join(file);
+        write(
+            &path,
+            &(json!({"sessionId":"usage-fixture"}).to_string() + "\n" + &record.to_string() + "\n"),
+        );
+        let (session, _) = parse(adapter, &path, dir.path());
+        assert_eq!(
+            session.usage.as_ref().unwrap().total_tokens,
+            total,
+            "{adapter}"
+        );
+        let mut legacy = serde_json::to_value(session).unwrap();
+        legacy.as_object_mut().unwrap().remove("usage");
+        assert!(serde_json::from_value::<AgentSession>(legacy)
+            .unwrap()
+            .usage
+            .is_none());
+    }
+    let path = dir.path().join("opencode.db");
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute_batch("CREATE TABLE session(id TEXT,directory TEXT,title TEXT,time_created INTEGER,time_updated INTEGER);CREATE TABLE message(id TEXT,session_id TEXT,time_created INTEGER,data TEXT);CREATE TABLE part(id TEXT,message_id TEXT,data TEXT);INSERT INTO session VALUES('s','/workspace','Title',1,2);INSERT INTO message VALUES('m','s',1,'{\"role\":\"assistant\",\"tokens\":{\"input\":20,\"output\":10,\"cache\":{\"read\":100,\"write\":30}}}');INSERT INTO part VALUES('p','m','{\"type\":\"text\",\"text\":\"first\"}');INSERT INTO part VALUES('q','m','{\"type\":\"text\",\"text\":\"second\"}');INSERT INTO message VALUES('tool-only','s',2,'{\"role\":\"assistant\",\"tokens\":{\"input\":10,\"output\":10}}');").unwrap();
+    drop(db);
+    assert_eq!(
+        parse("opencode", &path, dir.path())
+            .0
+            .usage
+            .unwrap()
+            .total_tokens,
+        180
+    );
+}
+
 fn index_codex_session(core: &Core, source: &SessionSource, cwd: &Path) -> AgentSession {
     let path = Path::new(&source.path).join("rollout-selected.jsonl");
     write(

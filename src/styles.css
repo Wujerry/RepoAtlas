@@ -12,10 +12,14 @@
 @import "./styles/70-extensions.css";
 @import "./styles/75-footprints.css";
 @import "./styles/76-ai-history.css";
+@import "./styles/77-usage.css";
+@import "./styles/78-session-reader.css";
+@import "./styles/79-usage-navigation.css";
 @import "./styles/80-help-settings.css";
 @import "./styles/81-updater.css";
 @import "./styles/82-onboarding.css";
 @import "./styles/83-splash.css";
+@import "./styles/84-settings-navigation.css";
 @import "./styles/90-motion.css";
 
 :root {

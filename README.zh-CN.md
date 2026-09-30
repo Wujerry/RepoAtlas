@@ -17,7 +17,7 @@ RepoAtlas 把散落在各个磁盘里的本地 checkout 变成一个真正能干
 
 > **欢迎 macOS 用户参与贡献。** RepoAtlas 还没有经过 Mac 真机测试，目前不提供受支持的 macOS 安装包。如果你手上有 Mac，欢迎按照 [CONTRIBUTING.md](CONTRIBUTING.md) 帮忙构建、测试和补充文档，也可以把可复现的问题提交到 [Issue](https://github.com/Wujerry/RepoAtlas/issues)。
 
-> **0.1.5 下载说明：** Windows 安装包标注 **UNSIGNED**，未做 Authenticode 签名；macOS 包为实验性构建，仅临时签名，未经公证。系统可能显示 SmartScreen 或 Gatekeeper 提示。更新包仍有签名验证，发布附件提供 SHA256SUMS。
+> **0.1.6 下载说明：** Windows 安装包标注 **UNSIGNED**，未做 Authenticode 签名；macOS 包为实验性构建，仅临时签名，未经公证。系统可能显示 SmartScreen 或 Gatekeeper 提示。更新包仍有签名验证，发布附件提供 SHA256SUMS。
 
 项目标题旁可直接修改显示名称，不会重命名真实目录。新建集合采用左右分区，可搜索和勾选项目、只看已选，并支持方向键导航与空格勾选；也可以先创建空集合。
 
@@ -52,7 +52,8 @@ RepoAtlas 把散落在各个磁盘里的本地 checkout 变成一个真正能干
 ## 主要功能
 
 - **首页工作台**：集中显示最近会话、项目和任务运行，以及需要关注的事项；点击项目标题即可进入项目。
-- **Sessions**：跨八种编码 Agent 搜索已授权历史，预览消息，再回到原 Agent 继续指定会话。
+- **统一搜索与 Sessions**：用全局快捷键找回项目和八种编码 Agent 的已授权历史，阅读 Markdown、定位命中消息，再回到原 Agent 继续。
+- **订阅与会话用量**：顶栏查看剩余额度和重置时间；会话显示实际记录的 token 与 API 等值金额，缺失数据和部分估算明确标注。
 - **Agent 辅助初始化**：让外部 AI Agent 盘点你授权的目录，通过 MCP 写入有依据的项目描述、任务和图标。
 - **本地项目库**：中英文搜索 Project，用 Project Collection 整理相关工作，并用 Repository Lineage 关联同一仓库的多个 checkout。
 - **Project Brief 和只读 Files**：集中查看技术栈、环境要求、README、源码、配置、最近活动和运行历史，但不把 RepoAtlas 变成代码编辑器。
@@ -66,6 +67,18 @@ RepoAtlas 把散落在各个磁盘里的本地 checkout 变成一个真正能干
 
 
 ## Sessions 与继续会话
+
+### 一次搜索，接着工作
+
+在窗口内按 **Ctrl+K / Cmd+K** 统一搜索 Project、会话原文和操作。RepoAtlas
+运行时，在其他应用按 **Ctrl+Shift+K / Cmd+Shift+K** 可唤起轻量搜索窗口。
+结果显示命中原文、所属项目、Agent 与时间；可用键盘预览上下文、打开项目，
+或通过原 Agent 继续。恢复前检查目录与会话，失效时显示原因。
+
+完整会话和搜索预览共用 Markdown 阅读器，支持标题、列表、表格、代码块与数学公式。
+客户端上下文和工具通知默认折叠，仍可查看和复制原文。长消息按段读取，
+代码高亮延迟执行，不自动加载远程图片。会话页中的“用量明细”和“会话信息”
+使用独立浮层，打开时保留正文位置；“打开项目”可直接进入对应 Project。
 
 ![Sessions：搜索并预览编码会话](assets/screenshots/zh-light-sessions.jpg)
 
@@ -89,6 +102,30 @@ RepoAtlas 把散落在各个磁盘里的本地 checkout 变成一个真正能干
 ![会话恢复选项](assets/screenshots/zh-light-resume.jpg)
 
 </details>
+
+## 订阅额度与 token 用量
+
+导航栏直接显示已连接服务的剩余额度，不限制为两个。额度弹层展示各周期进度、
+重置时间与缓存状态；进入 **管理用量与连接** 后，可在每个服务的行内设置
+“显示在导航栏”。开关仅影响顶栏展示，不会断开连接。数量较多时可用滚轮、
+触控板或左右方向键横向查看，运行任务、足迹、待处理与说明四个入口保持可见。
+
+目前有 **17 个用量来源**：Codex、Claude、GitHub Copilot、OpenCode Go、Kimi Code、
+Cursor、Z.ai、GLM Coding Plan、MiniMax Global、MiniMax CN、OpenRouter、DeepSeek、
+Grok、Google Antigravity、Factory、Zed、StepFun。OpenRouter 与 DeepSeek 包含 API
+额度或余额；**Google 支持的是已登录且正在运行的 Antigravity 客户端**，并不等于
+Google One 或独立 Gemini 订阅查询。支持范围与来源见[用量说明](docs/usage.md)。
+
+每个服务单独连接，授权历史不会自动授权账号查询。RepoAtlas 只读取已启用服务的
+现有凭据，发送至对应固定用量接口；凭据不进入数据库、日志或 MCP，不代管登录或续期。
+先显示本地缓存，再限流刷新；不可用与过期结果保留明确状态。
+
+会话、搜索结果与继续会话卡片显示 K/M/B 格式的 token 数，明细区分输入、输出、
+缓存和推理。金额是按模型公开 API 定价折算的 **USD 等值估算，不是订阅账单**；
+缺失计数、未知模型和无法定价的部分不会按零收费处理。刷新已授权历史后可补齐旧记录，
+展示时使用缓存，不重复扫描会话文件。
+
+设置页面按 **外观与交互、项目与会话、数据与备份、应用更新** 分组。
 
 ## 项目库
 
@@ -120,7 +157,7 @@ MCP 连接可以跨桌面重启保持可用。只有桌面持有运行锁并恢�
 2. 校验 SHA-256，并和发布时附带的 `SHA256SUMS` 对比：
 
    ```powershell
-   Get-FileHash .\RepoAtlas_0.1.5_x64-setup.exe -Algorithm SHA256
+   Get-FileHash .\RepoAtlas_0.1.6_x64-setup.exe -Algorithm SHA256
    ```
 
 3. 运行安装程序。未签名 Beta 会触发 SmartScreen 的「无法识别的发布者」提示；点击 **更多信息**，再点 **仍要运行**。

@@ -679,6 +679,7 @@ fn migrate(conn: &Connection) -> Result<()> {
     "#)?;
     migrate_activity_counts(conn)?;
     crate::core::sessions::migrate(conn)?;
+    crate::core::usage::migrate(conn)?;
     let indexed: i64 = conn.query_row(
         "SELECT COUNT(*) FROM schema_migrations WHERE version=21",
         [],

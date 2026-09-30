@@ -13,6 +13,10 @@ RepoAtlas already launches installed coding agents and exposes typed local proje
 
 RepoAtlas does not host model providers, model credentials, project chat, generated summaries, or AI Memory. It does not send project evidence to model endpoints. An installed external Agent owns its model, account, provider configuration, conversation, and any decision to read project files.
 
+ADR [0029](0029-observe-agent-usage-without-owning-accounts.md) extends this boundary
+with separately enabled, read-only quota observation using an external login in
+memory. It does not add credential storage, login, renewal or model interaction.
+
 RepoAtlas remains the local control plane around that Agent: it opens the Agent at a Project location, exposes structured Projects, Scan Roots, detected facts, task definitions, Task Runs, and reports through MCP, and turns protected execution requests into desktop Pending Approvals. Existing MCP prohibitions on Git writes, shell evaluation, arbitrary command execution, and filesystem deletion remain unchanged.
 
 The stdio adapter keeps database requests ordered on one bounded worker. Its input loop remains responsive while that worker runs, so MCP cancellation notifications can stop long Scan Root operations without creating a parallel persistence or policy path.

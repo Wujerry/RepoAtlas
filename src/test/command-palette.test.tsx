@@ -288,7 +288,7 @@ describe("CommandPalette", () => {
     fireEvent.change(input, { target: { value: "new" } });
     await screen.findByRole("option", { name: /New Project/ });
     fireEvent.click(await screen.findByRole("option", { name: /Session new/ }));
-    await screen.findByText((_, element) => element?.tagName === "PRE" && element.textContent === "Full transcript new");
+    await screen.findByText((_, element) => element?.tagName === "P" && element.textContent === "Full transcript new");
 
     await act(async () => {
       if (outcome === "resolve") {
@@ -428,7 +428,7 @@ describe("CommandPalette", () => {
     await waitFor(() => expect(mocks.messages).toHaveBeenCalledWith("old", 2, 5));
     rerenderPalette({ open: false });
     rerenderPalette({ open: true });
-    await screen.findByText((_, element) => element?.tagName === "PRE" && element.textContent === "Full transcript new");
+    await screen.findByText((_, element) => element?.tagName === "P" && element.textContent === "Full transcript new");
     await act(async () => {
       if (outcome === "resolve") oldMessages.resolve(messages("Stale transcript"));
       else oldMessages.reject(new Error("Stale transcript failure"));

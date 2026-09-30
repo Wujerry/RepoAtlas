@@ -114,7 +114,68 @@
 - Test/screenshot expectations: Verify every changed layer with focused checks. Visual changes require live Tauri inspection at 1440x920 and 1100x720 in light and dark themes; typecheck and component tests alone do not establish visual correctness.
 
 ## Open questions
+
 - None for the current scope. Dependency graphs, SVG project-icon ingestion, SVN write operations, and configurable external launchers remain future work.
+
+## Usage and session readability
+
+- Usage is a full-page, nonmodal surface below the persistent title bar. Subscription
+  windows and remaining quota lead; local recorded tokens have a separate history
+  view. Never equate quota percentages with tokens.
+- The title bar shows every connected provider whose navigation switch is enabled
+  and its most constrained remaining quota. There is no count cap or overflow badge;
+  the quota rail scrolls horizontally by wheel, trackpad or arrow keys when space
+  is insufficient, while the work tools and window controls stay fixed.
+  Its popover exposes all periods, reset
+  times, cached/error status, refresh and account management. Monetary balances
+  keep their currency; uncapped spend is explicitly labeled used.
+  Only the full Usage page provides per-service visibility switches with
+  pending/save/error feedback. The popover focuses on quota, reset times and
+  per-period meters, without switches or navigation-setting helper text.
+  The popover has an inset thin scrollbar and a fixed footer with a rounded, quiet
+  hover target for account management; scrolling never moves the footer.
+  Hiding affects only the inline readout; the complete Usage page and connections
+  remain available. All-hidden falls back to the compact Usage entry.
+- Running tasks, Footprints, attention center and help remain directly visible in
+  the title bar at the minimum width; never move these four actions into overflow.
+  Search flexes to available width and provider readouts remain compact.
+- Settings use a stable category rail: appearance/interaction, Projects/Sessions,
+  data/backup and updates. Content scrolls independently and switching categories
+  preserves form state. Navigation visibility belongs with the corresponding quota.
+- Compact horizontal account rows align provider identity with up to three quota
+  columns. Disconnected services live in an expandable catalog. Avoid a promotional
+  hero and unequal card heights. Monochrome brand glyphs, tabular counts and slim meters
+  show used quota; the large number explicitly says remaining. Amber marks high
+  consumption and semantic danger marks near exhaustion. Reset countdowns expose
+  absolute timestamps on hover. Expired/failed observations stay labeled as pending
+  or cached instead of assuming replenishment.
+- Each connection has an explicit action disclosing its credential source and
+  destination. Unknown plans/counters are not fabricated. Keyboard actions and
+  pending/failure feedback remain visible; title-bar navigation stays available.
+- Rows, previews and Continue Coding share compact token notation and API-equivalent
+  USD estimates, with partial pricing labeled. Expandable breakdowns expose coverage,
+  pricing date and assumptions; unknown costs never look like a free session.
+  Sessions devote more width to the reader, keep Open Project and Continue visible,
+  and collapse advanced filters, technical metadata and consecutive client notices.
+  Usage details and Session information open in bounded, keyboard-accessible portal
+  popovers. They must not resize the header, displace messages or reset reading position.
+  All message readers use bounded Markdown with headings, lists, tables
+  and code. Known transport envelopes are folded; original-view and verbatim copy
+  remain available. Never automatically fetch message images.
+- All session surfaces share the reader: full history, selected search results and
+  surrounding messages. Home/Project Continue cards and both search result lists use
+  bounded inline Markdown excerpts with emphasis/code and no nested links or controls.
+  Code blocks have language, wrap and copy actions; highlighting runs in the existing
+  worker only when visible. Tables scroll within their message, task lists are read-only,
+  and safe disclosure HTML is sanitized. Explicit double-dollar math is rendered;
+  single-dollar amounts remain text. Search highlighting preserves Markdown structure.
+  Initial messages render at most 4,000 characters (1,200 in search previews); expanded
+  messages page through 12,000-character sections without a total reading cutoff.
+  Source offsets preserve code fences and every character; original copy is unmodified.
+- Usage and the title bar read cached metadata first and query enabled providers only
+  while visible, with five-minute background refresh and Core throttling. Countdown
+  updates do not query providers. Summary queries read
+  metadata without decoding transcripts or probing Agent installations.
 
 ## Module discovery and guidance
 

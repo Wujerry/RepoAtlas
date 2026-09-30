@@ -1,5 +1,5 @@
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { ArrowLeft } from "@phosphor-icons/react";
+import { ArrowLeft, ArrowRight, PaintBrush, FolderOpen, Database, Package } from "@phosphor-icons/react";
 import { useState } from "react";
 import type { MessageKey } from "../i18n";
 import { api } from "../lib/api";
@@ -9,6 +9,7 @@ import { ConfirmDialog } from "./ui/confirm";
 import { EmptyState } from "./ui/feedback";
 import { UpdateSettings } from "./UpdateSettings";
 import { QuickSearchShortcut } from "./QuickSearchShortcut";
+import { Tabs } from "@base-ui/react/tabs";
 
 export interface SettingsPaneProps {
   settings: AppSettings;
@@ -120,16 +121,21 @@ export function SettingsPane({
     <div className="settings-pane">
       <header className="settings-header">
         <Button type="button" className="settings-back" variant="quiet" onClick={(event) => { event.preventDefault(); event.stopPropagation(); onBack(); }}><ArrowLeft aria-hidden="true" />{t("backToProjects")}</Button>
-        <p className="eyebrow">RepoAtlas</p>
-        <h1 id="settings-page-title">{t("settings")}</h1>
-        <p>{t("settingsIntro")}</p>
+        <div><h1 id="settings-page-title">{t("settings")}</h1><p>{t("settingsIntro")}</p></div>
       </header>
-      <div className="settings-content">
-        <QuickSearchShortcut t={t} />
-        <section className="settings-card"><h2>{t("ahSources")}</h2><p>{t("ahSourcesHint")}</p><Button onClick={() => window.dispatchEvent(new CustomEvent("repoatlas:session-history", { detail: { sources: true } }))}>{t("ahSources")}</Button></section>
+      <Tabs.Root defaultValue="general" orientation="vertical" className="settings-layout">
+        <Tabs.List className="settings-nav" aria-label={t("settingsSections")}>
+          <Tabs.Tab value="general"><PaintBrush aria-hidden/><span>{t("settingsGeneral")}</span></Tabs.Tab>
+          <Tabs.Tab value="sources"><FolderOpen aria-hidden/><span>{t("settingsSources")}</span></Tabs.Tab>
+          <Tabs.Tab value="data"><Database aria-hidden/><span>{t("dataAndBackup")}</span></Tabs.Tab>
+          <Tabs.Tab value="updates"><Package aria-hidden/><span>{t("appUpdates")}</span></Tabs.Tab>
+        </Tabs.List>
+        <div className="settings-content">
+        <Tabs.Panel value="general" keepMounted className="settings-section">
+          <header className="settings-section-intro"><h2>{t("settingsGeneral")}</h2><p>{t("settingsGeneralHint")}</p></header>
         <section className="settings-card">
           <div className="settings-card-heading">
-            <div><p className="eyebrow">01</p><h2>{t("appearance")}</h2></div>
+            <div><h2>{t("appearance")}</h2></div>
             <p>{t("appearanceHint")}</p>
           </div>
           <div className="settings-row">
@@ -154,17 +160,22 @@ export function SettingsPane({
           </div>
           <div className="settings-row">
             <div><strong>{t("uiFont")}</strong><span>{t("uiFontHint")}</span></div>
-            <input className="field-control" defaultValue={settings.uiFont ?? ""} key={settings.uiFont ?? ""} placeholder={t("uiFontPlaceholder")} onBlur={(event) => { const uiFont = event.target.value.trim(); if (uiFont !== (settings.uiFont ?? "")) void onSettings({ ...settings, uiFont }); }} />
+            <input className="field-control" aria-label={t("uiFont")} defaultValue={settings.uiFont ?? ""} key={settings.uiFont ?? ""} placeholder={t("uiFontPlaceholder")} onBlur={(event) => { const uiFont = event.target.value.trim(); if (uiFont !== (settings.uiFont ?? "")) void onSettings({ ...settings, uiFont }); }} />
           </div>
           <div className="settings-row">
             <div><strong>{t("consoleFont")}</strong><span>{t("consoleFontHint")}</span></div>
-            <input className="field-control" defaultValue={settings.consoleFont ?? ""} key={settings.consoleFont ?? ""} placeholder={t("consoleFontPlaceholder")} onBlur={(event) => { const consoleFont = event.target.value.trim(); if (consoleFont !== (settings.consoleFont ?? "")) void onSettings({ ...settings, consoleFont }); }} />
+            <input className="field-control" aria-label={t("consoleFont")} defaultValue={settings.consoleFont ?? ""} key={settings.consoleFont ?? ""} placeholder={t("consoleFontPlaceholder")} onBlur={(event) => { const consoleFont = event.target.value.trim(); if (consoleFont !== (settings.consoleFont ?? "")) void onSettings({ ...settings, consoleFont }); }} />
           </div>
         </section>
 
+          <QuickSearchShortcut t={t} />
+        </Tabs.Panel>
+        <Tabs.Panel value="sources" keepMounted className="settings-section">
+          <header className="settings-section-intro"><h2>{t("settingsSources")}</h2><p>{t("settingsSourcesHint")}</p></header>
+          <section className="settings-card settings-source-link"><div><h2>{t("ahSources")}</h2><p>{t("ahSourcesHint")}</p></div><Button onClick={() => window.dispatchEvent(new CustomEvent("repoatlas:session-history", { detail: { sources: true } }))}>{t("settingsManageSources")}<ArrowRight aria-hidden/></Button></section>
         <section className="settings-card">
           <div className="settings-card-heading">
-            <div><p className="eyebrow">02</p><h2>{t("scanRoots")}</h2></div>
+            <div><h2>{t("scanRoots")}</h2></div>
             <div className="settings-card-action"><p>{t("scanRootsHint")}</p><Button variant="primary" onClick={() => void onAddRoot()}>{t("addRoot")}</Button></div>
           </div>
           {scanRoots.length === 0 ? (
@@ -181,13 +192,21 @@ export function SettingsPane({
           )}
         </section>
 
-        <UpdateSettings state={updateState} locale={settings.locale === "zh" || settings.locale === "en" ? settings.locale : undefined} t={t} notify={notify} onCheck={onCheckForUpdates} onDownload={onDownloadUpdate} onInstall={onInstallUpdate} onRestart={onRestartApp} onDefer={onDeferUpdate} />
+        </Tabs.Panel>
+        <Tabs.Panel value="data" keepMounted className="settings-section">
+          <header className="settings-section-intro"><h2>{t("dataAndBackup")}</h2><p>{t("dataHint")}</p></header>
 
         <section className="settings-card">
-          <div className="settings-card-heading"><div><p className="eyebrow">04</p><h2>{t("dataAndBackup")}</h2></div><p>{t("dataHint")}</p></div>
-          <div className="data-actions"><Button variant="primary" loading={dataBusy === "export"} disabled={Boolean(dataBusy)} onClick={() => void exportData()}>{t("exportData")}</Button><Button loading={dataBusy === "import"} disabled={Boolean(dataBusy)} onClick={() => void importData()}>{t("importData")}</Button><Button loading={dataBusy === "backup"} disabled={Boolean(dataBusy)} onClick={() => void backupData()}>{t("backupDatabase")}</Button></div>
+          <div className="settings-data-row"><div><h3>{t("settingsMetadata")}</h3><p>{t("settingsMetadataHint")}</p></div><div className="data-actions"><Button loading={dataBusy === "export"} disabled={Boolean(dataBusy)} onClick={() => void exportData()}>{t("exportData")}</Button><Button loading={dataBusy === "import"} disabled={Boolean(dataBusy)} onClick={() => void importData()}>{t("importData")}</Button></div></div>
+          <div className="settings-data-row"><div><h3>{t("backupDatabase")}</h3><p>{t("settingsBackupHint")}</p></div><Button loading={dataBusy === "backup"} disabled={Boolean(dataBusy)} onClick={() => void backupData()}>{t("backupDatabase")}</Button></div>
         </section>
-      </div>
+        </Tabs.Panel>
+        <Tabs.Panel value="updates" keepMounted className="settings-section">
+          <header className="settings-section-intro"><h2>{t("appUpdates")}</h2><p>{t("settingsUpdatesHint")}</p></header>
+        <UpdateSettings state={updateState} locale={settings.locale === "zh" || settings.locale === "en" ? settings.locale : undefined} t={t} notify={notify} onCheck={onCheckForUpdates} onDownload={onDownloadUpdate} onInstall={onInstallUpdate} onRestart={onRestartApp} onDefer={onDeferUpdate} />
+        </Tabs.Panel>
+        </div>
+      </Tabs.Root>
       <ConfirmDialog open={Boolean(pendingRoot)} title={t("confirmRemoveRoot")} body={pendingRoot ? `${pendingRoot.path}\n${t("confirmRemoveRootHint")}` : ""} confirmLabel={t("remove")} cancelLabel={t("cancel")} busy={Boolean(removingRoot)} onOpenChange={(open) => !open && !removingRoot && setPendingRoot(undefined)} onConfirm={async () => { if (!pendingRoot) return; setRemovingRoot(pendingRoot.id); try { await onRemoveRoot(pendingRoot.id); setPendingRoot(undefined); } catch (error) { notify("error", t("removeRootFailed"), String(error)); } finally { setRemovingRoot(undefined); } }} />
       <ConfirmDialog open={Boolean(pendingImportPath)} title={t("confirmImportData")} body={pendingImportPath ? `${pendingImportPath}\n${t("confirmImportDataHint")}` : ""} confirmLabel={t("importData")} cancelLabel={t("cancel")} busy={dataBusy === "import"} onOpenChange={(open) => !open && dataBusy !== "import" && setPendingImportPath(undefined)} onConfirm={() => void confirmImportData()} />
     </div>

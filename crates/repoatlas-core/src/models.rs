@@ -680,6 +680,8 @@ pub struct AppSettings {
     pub ui_font: String,
     #[serde(default)]
     pub console_font: String,
+    #[serde(default)]
+    pub usage_nav_hidden_providers: Vec<String>,
 }
 
 impl Default for AppSettings {
@@ -689,6 +691,7 @@ impl Default for AppSettings {
             locale: "system".into(),
             ui_font: String::new(),
             console_font: String::new(),
+            usage_nav_hidden_providers: Vec::new(),
         }
     }
 }

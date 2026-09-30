@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import type { TokenUsage } from "./usage";
 export const onSessionSourcesChanged = (handler: () => void) => listen("sessions://sources-changed", handler);
 export const sessionAgents = { claude: "Claude Code", codex: "Codex CLI", opencode: "OpenCode", "cursor-cli": "Cursor CLI", gemini: "Gemini CLI", copilot: "GitHub Copilot CLI", kimi: "Kimi Code", qwen: "Qwen Code" };
 export interface SessionSource { id: string; adapter: string; path: string; enabled: boolean; lastScannedAt: string | null; lastError: string | null }
@@ -9,6 +10,7 @@ export interface AgentSession {
   matchKind: string; cwd: string; title: string; lastUserExcerpt: string; startedAt: string; updatedAt: string;
   messageCount: number; archived: boolean; sourceMissing: boolean; sourceLocator: string; revision: string;
   resumeReason: string | null; capabilities: SessionCapabilities;
+  usage?: TokenUsage | null;
 }
 export interface SessionMessage { index: number; role: string; content: string; timestamp: string }
 export interface SessionQuery { query?: string; projectId?: string; adapter?: string; after?: string; before?: string; archived?: boolean; offset?: number; limit?: number; resumableOnly?: boolean }

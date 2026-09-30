@@ -7,12 +7,14 @@ import type { MessageKey } from "../i18n";
 import { api } from "../lib/api";
 import { onSessionSourcesChanged, openSessionHistory, sessionApi, sessionTime, type AgentSession, type SessionSearchHit, type SessionSource } from "../lib/sessions";
 import { sessionDisplayTitle, sessionExcerpt } from "../lib/session-presentation";
+import { SessionSnippet } from "./ui/session-content";
 import { AgentBrandIcon } from "../lib/brand-icons";
 import type { ProjectSummary, SearchHit } from "../types";
 import { SessionSearchPreview } from "./SessionSearchPreview";
 import { Button } from "./ui/button";
 import { sessionAgentName } from "../lib/sessions";
-import { SearchHighlight, searchExcerpt } from "./ui/search-highlight";
+import { SearchHighlight } from "./ui/search-highlight";
+import { TokenBadge } from "./ui/token-usage";
 
 interface Action { id: string; title: string; hint?: string; run: () => void | Promise<void> }
 type PaletteItem = { key: string; title: string; hint?: string } & (
@@ -193,7 +195,8 @@ export function CommandPalette({ open, onClose, t, projects, actions, onProject,
                     <time dateTime={item.hit.session.updatedAt} title={new Date(item.hit.session.updatedAt).toLocaleString()}>{sessionTime(item.hit.session.updatedAt, chinese)}</time>
                     {item.hit.session.archived && <span>{t("archived")}</span>}
                   </span>
-                  {q && sessionExcerpt(item.hit.snippets[0]?.content || item.hit.session.lastUserExcerpt) && <span className="command-session-excerpt"><SearchHighlight text={searchExcerpt(sessionExcerpt(item.hit.snippets[0]?.content || item.hit.session.lastUserExcerpt), q, 180, 16)} query={q} /></span>}
+                  <TokenBadge usage={item.hit.session.usage} t={t} />
+                  {q && sessionExcerpt(item.hit.snippets[0]?.content || item.hit.session.lastUserExcerpt) && <span className="command-session-excerpt"><SessionSnippet content={item.hit.snippets[0]?.content || item.hit.session.lastUserExcerpt} query={q} /></span>}
                 </> : item.hint && <span className="command-item-hint" title={item.hint}><SearchHighlight text={item.hint} query={q} /></span>}
               </span>
             </button>)}

@@ -17,7 +17,7 @@ RepoAtlas turns scattered local checkouts into one working library. See what eac
 
 > **macOS contributors wanted.** RepoAtlas has not yet been tested on real Mac hardware, so there is no supported macOS build today. If you have a Mac, help us build, test, and document it through [CONTRIBUTING.md](CONTRIBUTING.md), or open an [issue](https://github.com/Wujerry/RepoAtlas/issues) with reproducible results.
 
-> **0.1.5 downloads:** Windows installers are labeled **UNSIGNED** and do not have an Authenticode signature. macOS packages are experimental, ad-hoc signed and not notarized. SmartScreen or Gatekeeper may show a warning. Updater payloads remain signed; release assets include SHA256SUMS.
+> **0.1.6 downloads:** Windows installers are labeled **UNSIGNED** and do not have an Authenticode signature. macOS packages are experimental, ad-hoc signed and not notarized. SmartScreen or Gatekeeper may show a warning. Updater payloads remain signed; release assets include SHA256SUMS.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/en-dark-workspace.jpg" />
@@ -98,6 +98,88 @@ Resume requires an installed Agent, an available session and a valid working dir
 
 Read-only MCP tools: `list_agent_sessions`, `search_agent_sessions`, `get_agent_session`, and `get_agent_session_messages`. They cannot authorize sources or launch a session.
 
+### Token usage and subscription limits
+
+Connected subscriptions show remaining quota directly in the title bar. Click to
+see every window and its reset countdown; **Manage usage & connections** opens
+compact account rows, with additional providers under **Add a service**.
+Use **Show in navigation** on each connected service in the full Usage page.
+The title-bar popover focuses on quotas and reset times; **Manage usage & connections**
+opens the visibility settings. Preferences survive restart without changing connections.
+All-hidden keeps a compact Usage entry; the full Usage page still lists every account.
+Every enabled navigation entry is shown, with no two-provider cap. When space is
+limited, the quota rail scrolls with the wheel/trackpad or left/right arrow keys;
+the four work tools and window controls remain directly visible.
+There are seventeen connections: **Codex, Claude, GitHub Copilot, OpenCode Go, Kimi Code,
+Cursor, Z.ai, GLM Coding Plan, MiniMax Global, MiniMax CN, OpenRouter, DeepSeek,
+Grok, Google Antigravity, Factory, Zed and StepFun**.
+OpenRouter reports key limits/spend and DeepSeek reports API balance, not subscription
+percentages. Enable each connection separately;
+authorizing history does not connect an account. No model calls or credential
+refreshes are made.
+
+| Connection | Existing credential source |
+| --- | --- |
+| Codex | `CODEX_HOME/auth.json` (default `~/.codex/auth.json`), ChatGPT login |
+| Claude | `CLAUDE_CODE_OAUTH_TOKEN`, or `.credentials.json` in `CLAUDE_CONFIG_DIR` / `~/.claude`; default configuration also supports the native Claude credential store on Windows/macOS |
+| GitHub Copilot | `COPILOT_API_TOKEN` or `GITHUB_COPILOT_TOKEN` in RepoAtlas's environment |
+| OpenCode Go | The `opencode-go` entry in `$XDG_DATA_HOME/opencode/auth.json` (default `~/.local/share/opencode/auth.json`); Zen keys are separate |
+| Kimi Code | `KIMI_CODE_API_KEY`, or OpenCode's `kimi-for-coding` entry |
+| Cursor | Read-only `cursorAuth/accessToken` from Cursor's known `User/globalStorage/state.vscdb`, or `CURSOR_SESSION_TOKEN` |
+| Z.ai | `ZAI_API_KEY` / `Z_AI_API_KEY`, or OpenCode `zai-coding-plan` / `zai` |
+| GLM Coding Plan | `ZHIPU_API_KEY` / `GLM_API_KEY`, or OpenCode `zhipuai-coding-plan` / `zhipuai` |
+| MiniMax Global | `MINIMAX_CODING_API_KEY`, or OpenCode `minimax-coding-plan` |
+| MiniMax CN | `MINIMAX_CN_CODING_API_KEY`, or OpenCode `minimax-cn-coding-plan` |
+| OpenRouter | `OPENROUTER_API_KEY`, or OpenCode `openrouter` |
+| DeepSeek | `DEEPSEEK_API_KEY`, or OpenCode `deepseek` |
+| Grok | `GROK_BEARER_TOKEN`, or the xAI login in `GROK_HOME/auth.json` (default `~/.grok/auth.json`) |
+| Google Antigravity | Existing signed-in Antigravity language server / CSRF-enabled CLI hub; the client must be running |
+| Factory | `FACTORY_API_KEY`; current token-limit billing accounts |
+| Zed | `ZED_COOKIE` / `TOKEN_MONITOR_ZED_COOKIE`, containing `zed.session` |
+| StepFun | `STEPFUN_TOKEN` / `TOKEN_MONITOR_STEPFUN_TOKEN`, raw token or `Oasis-Token` cookie |
+
+Credentials stay in memory and go only to that provider's fixed HTTPS usage endpoint
+(Antigravity uses fixed read-only RPCs on the identified client's loopback listener),
+never to RepoAtlas storage, IPC or MCP. Renew expired logins in the external tool.
+Backups omit connections and quota snapshots. Usage endpoints may change; missing
+data and unsupported responses are explicit states. Region-specific credentials
+never fall back to another region. Google support observes Antigravity's quota;
+standalone Gemini / Google One subscriptions and Qwen account quotas are not queried.
+See [usage sources and pricing](docs/usage.md) for adapter scope and limitations.
+
+Session rows, previews and Continue Coding show recorded tokens in K/M/B notation;
+expand details for input, output, cache and reasoning counts. Refresh authorized
+history once to populate older indexed sessions. Counters are extracted during the
+existing incremental refresh and cached in metadata; opening a row never rescans
+its transcript. Missing counters appear as unknown, including Cursor CLI and older
+formats without token records. Cache input and reasoning subsets are not counted
+twice. Known models also show an **API-equivalent USD estimate**, including cache
+discounts, with pricing date and coverage in the breakdown. Unknown models remain
+unpriced; partial estimates are labeled. This is not the subscription bill.
+
+Usage loads cached metadata first. Provider requests run outside the project lock,
+share concurrent refreshes and use a five-minute success cache with retry throttling.
+Failures retain timestamped results; elapsed reset times do not invent replenishment.
+The persistent title bar refreshes only previously enabled connections, after first
+paint and at most every five minutes while visible, with at most three requests
+started concurrently per surface. Hidden windows pause scheduling. Core coalesces
+requests per provider; account queries never block startup or Project selection.
+
+Sessions keep Project navigation and Continue prominent. Click **Open project** to
+select the exact linked Project. Dates/archive filters, source paths and resume
+configuration expand on demand; adjacent client context/tool notices form one
+collapsed group. Search-hit navigation reveals the exact target inside such groups.
+
+Session history, search previews and surrounding messages share a Markdown reader:
+headings, nested lists, task checklists, quotes, tables, safe collapsible details and
+double-dollar math. Code blocks have language labels, syntax highlighting, line wrapping
+and separate copying. Home/Project cards and search lists retain compact inline formatting.
+Known client protocol envelopes are folded; original-view and verbatim copy remain
+available. Long messages expand into bounded, navigable sections; code highlighting is
+off-thread and starts only for visible blocks. HTML is sanitized and message images are
+never loaded automatically. Provider formats were researched in
+[Token Monitor](https://github.com/Javis603/token-monitor).
+
 <details>
 <summary>See the session resume options</summary>
 
@@ -151,7 +233,7 @@ Open the global workbench to follow active runs across Projects. Runtime observa
 2. Verify its SHA-256 checksum against the published `SHA256SUMS`:
 
    ```powershell
-   Get-FileHash .\RepoAtlas_0.1.5_x64-setup.exe -Algorithm SHA256
+   Get-FileHash .\RepoAtlas_0.1.6_x64-setup.exe -Algorithm SHA256
    ```
 
 3. Run the installer. SmartScreen will show an “unknown publisher” warning for the unsigned beta. Choose **More info**, then **Run anyway**.

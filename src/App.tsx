@@ -1,3 +1,6 @@
+import { usageApi } from "./lib/usage";
+import { useUsageNavigation } from "./components/UsageNavSettings";
+import { TitleBarUsage } from "./components/TitleBarUsage";
 import { Tooltip } from "@base-ui/react/tooltip";
 import { Dialog } from "@base-ui/react/dialog";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -33,6 +36,7 @@ import { buildAgentScanInstruction } from "./lib/mcp-setup";
 import { readOnboardingState, resolveOnboardingVisibility, useOnboardingProjectWatch, writeOnboardingState } from "./lib/onboarding";
 import type { AppSettings, AppView, AttentionItem, McpSetupInfo, PendingApproval, ProjectCollection, ProjectDetail, ProjectQuery, ProjectScope, ProjectSummary, ScanProgress, ScanRoot, ToastMessage, ToastTone } from "./types";
 
+const UsagePanel = lazy(() => import("./components/UsagePanel"));
 const Dashboard = lazy(() => import("./components/Dashboard").then(({ Dashboard }) => ({ default: Dashboard })));
 const HomeDashboard = lazy(() => import("./components/HomeDashboard").then(({ HomeDashboard }) => ({ default: HomeDashboard })));
 const LazyHelpPage = lazy(() => import("./components/HelpPage").then(({ HelpPage }) => ({ default: HelpPage })));
@@ -49,6 +53,10 @@ export default function App() {
   const media = useMemo(() => window.matchMedia("(prefers-color-scheme: light)"), []);
   const [systemTheme, setSystemTheme] = useState<"light" | "dark">(media.matches ? "light" : "dark");
   const [settings, setSettings] = useState<AppSettings>({ theme: "system", locale: "system", uiFont: "", consoleFont: "" });
+  const usageNavigation = useUsageNavigation(settings.usageNavHiddenProviders ?? [], async hidden => {
+    const updated = await usageApi.setNavigation(hidden);
+    setSettings(current => ({ ...current, usageNavHiddenProviders: updated.usageNavHiddenProviders }));
+  });
   const [view, setView] = useState<Exclude<AppView, "settings">>("library");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [scope, setScope] = useState<ProjectScope>("projects");
@@ -67,6 +75,7 @@ export default function App() {
   const [approvalsOpen, setApprovalsOpen] = useState(false);
   const [footprintsOpen, setFootprintsOpen] = useState(false);
   const [sessionHistoryOpen, setSessionHistoryOpen] = useState(false);
+  const [usageOpen, setUsageOpen] = useState(false);
   const [approvals, setApprovals] = useState<PendingApproval[]>([]);
   const [attentionItems, setAttentionItems] = useState<AttentionItem[]>([]);
   const [transientAttention, setTransientAttention] = useState<AttentionItem[]>([]);
@@ -309,11 +318,11 @@ export default function App() {
   }, []);
 
   const closePageOverlays = useCallback(() => {
-    setFootprintsOpen(false); setSettingsOpen(false); setApprovalsOpen(false); setActiveTasksOpen(false); setView("library");
+    setUsageOpen(false); setFootprintsOpen(false); setSettingsOpen(false); setApprovalsOpen(false); setActiveTasksOpen(false); setView("library");
     window.dispatchEvent(new Event("repoatlas:close-sessions"));
   }, []);
   useEffect(() => {
-    const sessions = () => { setFootprintsOpen(false); setSettingsOpen(false); setApprovalsOpen(false); setActiveTasksOpen(false); setView("library"); };
+    const sessions = () => { setUsageOpen(false); setFootprintsOpen(false); setSettingsOpen(false); setApprovalsOpen(false); setActiveTasksOpen(false); setView("library"); };
     window.addEventListener("repoatlas:session-history", sessions);
     return () => window.removeEventListener("repoatlas:session-history", sessions);
   }, []);
@@ -785,6 +794,7 @@ export default function App() {
     { id: "scan-all", title: t("scanAll"), run: () => void startScan() }, { id: "add-root", title: t("addRoot"), run: () => void chooseDirectory(false) }, { id: "register", title: t("register"), run: () => void chooseDirectory(true) },
     { id: "open-tasks", title: t("activeTasks"), run: () => { setActiveTasksOpen(true); void loadActiveRuns(); } },
     { id: "open-footprints", title: t("footprints"), run: () => setFootprintsOpen(true) },
+    { id: "open-usage", title: t("usageTitle"), run: () => { closePageOverlays(); setUsageOpen(true); } },
     { id: "open-ai-history", title: t("ahTitle"), run: () => openSessionHistory() },
     { id: "open-approvals", title: t("attentionCenter"), run: () => { setApprovalsOpen(true); void loadApprovals(); } },
     { id: "clear-filters", title: t("clear"), run: () => { setQuery(""); setFilters(emptyFilters); } },
@@ -818,8 +828,8 @@ export default function App() {
 
   return <MotionConfig reducedMotion="user" transition={{ duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}><Tooltip.Provider delay={300}><div className="app-shell">
     {!splashDone && <SplashScreen ready={!booting} onFinished={() => setSplashDone(true)} />}
-    <TitleBar historyOpen={sessionHistoryOpen} historyLabel={t("ahTitle")} title={t("appName")} subtitle={t("appTag")} commandLabel={t("commandShort")} minimizeLabel={t("minimizeWindow")} maximizeLabel={t("maximizeWindow")} closeLabel={t("close")} helpLabel={t("help")} settingsLabel={t("settings")} approvalsLabel={t("attentionCenter")} approvalCount={attentionItems.length} footprintsLabel={t("footprints")} footprintsOpen={footprintsOpen} onFootprints={() => { closePageOverlays(); setFootprintsOpen(true); }} tasksLabel={t("activeTasks")} tasksShortcut="Ctrl + `" tasksCount={activeTaskRuns.length} onTasks={() => { closePageOverlays(); setActiveTasksOpen(true); void loadActiveRuns(); }} activeView={settingsOpen ? "settings" : view} onCommand={() => setPaletteOpen(true)} onLibrary={returnToLibrary} onHelp={openHelp} onSettings={openSettings} onApprovals={() => { closePageOverlays(); setApprovalsOpen(true); void loadApprovals(); }} updateEntry={<TitleBarUpdate state={updateState} locale={settings.locale === "zh" || settings.locale === "en" ? settings.locale : undefined} t={t} onCheck={() => updaterService.checkForUpdates()} onDownload={() => updaterService.downloadUpdate()} onInstall={() => updaterService.installUpdate()} onRestart={() => updaterService.restartApp()} onDefer={() => updaterService.deferUpdate()} />} />
-    <div className="workspace workspace-library" inert={sessionHistoryOpen || footprintsOpen || settingsOpen || view === "help"} style={workspaceStyle}>
+    <TitleBar usageEntry={booting ? undefined : <TitleBarUsage t={t} navigation={usageNavigation} active={usageOpen} onOpen={() => { closePageOverlays(); setUsageOpen(true); }} />} usageLabel={t("usageTitle")} usageOpen={usageOpen} onUsage={() => { closePageOverlays(); setUsageOpen(true); }} historyOpen={sessionHistoryOpen} historyLabel={t("ahTitle")} title={t("appName")} subtitle={t("appTag")} commandLabel={t("commandShort")} minimizeLabel={t("minimizeWindow")} maximizeLabel={t("maximizeWindow")} closeLabel={t("close")} helpLabel={t("help")} settingsLabel={t("settings")} approvalsLabel={t("attentionCenter")} approvalCount={attentionItems.length} footprintsLabel={t("footprints")} footprintsOpen={footprintsOpen} onFootprints={() => { closePageOverlays(); setFootprintsOpen(true); }} tasksLabel={t("activeTasks")} tasksShortcut="Ctrl + `" tasksCount={activeTaskRuns.length} onTasks={() => { closePageOverlays(); setActiveTasksOpen(true); void loadActiveRuns(); }} activeView={settingsOpen ? "settings" : view} onCommand={() => setPaletteOpen(true)} onLibrary={returnToLibrary} onHelp={openHelp} onSettings={openSettings} onApprovals={() => { closePageOverlays(); setApprovalsOpen(true); void loadApprovals(); }} updateEntry={<TitleBarUpdate state={updateState} locale={settings.locale === "zh" || settings.locale === "en" ? settings.locale : undefined} t={t} onCheck={() => updaterService.checkForUpdates()} onDownload={() => updaterService.downloadUpdate()} onInstall={() => updaterService.installUpdate()} onRestart={() => updaterService.restartApp()} onDefer={() => updaterService.deferUpdate()} />} />
+    <div className="workspace workspace-library" inert={usageOpen || sessionHistoryOpen || footprintsOpen || settingsOpen || view === "help"} style={workspaceStyle}>
       <PaneResizer width={listWidth} label={t("resizeSidebar")} onWidthChange={setListWidth} onWidthCommit={commitListWidth} />
       <>
         <ProjectList projects={visibleProjects} allProjects={scopeProjects} selectedId={librarySurface === "project" ? selectedId : undefined} onSelect={(id) => void selectProject(id)} query={query} onQuery={setQuery} filters={filters} onFilters={setFilters} sort={sort} onSort={setSort} scope={scope} onScope={setScope} scanning={scanning} progress={progress} t={t} empty={emptyMessage} onAddRoot={() => void chooseDirectory(false)} onRegister={() => void chooseDirectory(true)} onScan={() => void startScan()} onScanFolder={(path) => void startScan(undefined, path)} onCancelScan={() => void cancelScan()} collectionControls={<CollectionControls collections={collections} selectedId={selectedCollectionId} t={t} notify={notify} onSelect={(id) => { scopeCache.current = undefined; setSelectedCollectionId(id); }} onChanged={async (id) => { scopeCache.current = undefined; await reload(undefined, id ?? null); setSelectedCollectionId(id); }} />} collections={collections} selectedCollectionId={selectedCollectionId} onAddToCollection={(projectId, collectionId) => updateCollectionMembership(projectId, collectionId, true)} onRemoveFromCollection={(projectId, collectionId) => updateCollectionMembership(projectId, collectionId, false)} onRename={async (id, displayName) => { try { await api.updateProject(id, { displayName }); await reload(id); notify("success", t("projectRenamed"), displayName); } catch (error) { notify("error", t("saveFailed"), String(error)); throw error; } }} onDescription={async (id, description) => { try { await api.updateProject(id, { description }); await reload(id); } catch (error) { notify("error", t("saveFailed"), String(error)); throw error; } }} scanRoots={scanRoots} onRemoveProject={async (id) => { try { await removeProjectRecord(id); } catch (error) { notify("error", t("removeRecordFailed"), String(error)); } }} onRemoveFolder={async (path, projectIds) => { try { await removeFolderRecords(path, projectIds); } catch (error) { notify("error", t("removeFolderFailed"), String(error)); } }} onIconError={(error) => notify("error", t("projectIconFailed"), String(error))} onReveal={(path) => void api.openInExplorer(path).catch((error) => notify("error", t("openFailed"), String(error)))} onRelocate={(id) => void relocateProject(id)} />
@@ -866,7 +876,8 @@ export default function App() {
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>
-    <AIHistory t={t} onVisibilityChange={setSessionHistoryOpen} />
+    {usageOpen && <Suspense fallback={<div className="usage-dialog" role="status">{t("loading")}</div>}><UsagePanel t={t} navigation={usageNavigation} onClose={() => setUsageOpen(false)} /></Suspense>}
+    <AIHistory t={t} onVisibilityChange={setSessionHistoryOpen} onOpenProject={async id => { await openProjectFromPalette(id, true); closePageOverlays(); }} />
     <FootprintsDialog
       open={footprintsOpen}
       onOpenChange={setFootprintsOpen}

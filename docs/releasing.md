@@ -1,6 +1,6 @@
 # Releasing RepoAtlas
 
-This document describes the intended release path for the public `Wujerry/RepoAtlas` repository. The repository is being prepared locally; do not add a remote, push a tag, publish a Release, or deploy Pages as part of local preparation.
+This document describes the release path for the public `Wujerry/RepoAtlas` repository. Pushes, tags and publication require an explicit release request; ordinary local preparation does not publish anything.
 
 ## Release contract
 
@@ -8,7 +8,7 @@ This document describes the intended release path for the public `Wujerry/RepoAt
 - GitHub releases are created as drafts. A maintainer reviews artifacts, notes, signatures, and checksums before publishing.
 - Release tags are `vX.Y.Z` for stable releases (for example, `v0.1.0`) or `vX.Y.Z-<prerelease>` for prereleases (for example, `v0.1.0-beta.1`).
 - Root `package.json`, workspace `Cargo.toml`, and `src-tauri/tauri.conf.json` must contain the exact release version, including any prerelease suffix (for example, `0.1.0-beta.2`). The release tag is `v` plus that exact version, so tag `v0.1.0-beta.2` requires `0.1.0-beta.2` in all three sources. The Tauri updater compares the installed app version with the `latest.json` manifest version using SemVer, so prerelease builds must carry the suffix in their app version to stay updatable between betas. `node scripts/check-version.mjs` is the source-of-truth check.
-- Prerelease tags create GitHub prerelease drafts. Windows artifacts built without Authenticode credentials are labeled `UNSIGNED-BETA` in their filenames, the checksum report, and the release notes. Stable tags fail the workflow when Windows Authenticode credentials are missing.
+- Prerelease tags create GitHub prerelease drafts. The current workflow permits unsigned Windows builds for both stable and prerelease tags, labels their filenames `UNSIGNED`, and records that limitation in checksums and notes. Updater signatures remain mandatory. macOS builds without Developer ID/notarization credentials are experimental and ad-hoc signed; do not describe them as notarized or verified on real Mac hardware.
 - First-release installer targets are Windows x64, macOS Intel, and macOS Apple Silicon. Linux is checked in CI but is not packaged for the first release.
 
 The local consistency check is:
@@ -41,7 +41,7 @@ Configure platform credentials only in GitHub encrypted secrets and only when a 
 - `APPLE_CERTIFICATE` (base64-encoded P12), `APPLE_CERTIFICATE_PASSWORD`, and `APPLE_SIGNING_IDENTITY` for the macOS Developer ID certificate.
 - `APPLE_TEAM_ID`, `APPLE_ID`, and `APPLE_PASSWORD` (an app-specific password) for notarization.
 
-The release workflow always creates a draft. A stable tag without Windows Authenticode credentials fails before any build starts; a prerelease tag continues without them and stages Windows artifacts as `UNSIGNED-BETA`. Missing platform-signing secrets are reported in the run summary and must not be treated as stable-release approval. The updater signing key remains mandatory for every tag because a Tauri updater artifact without its signature cannot be consumed by existing installations. Before building, the workflow also asserts that `bundle.windows.nsis.installerHooks` is still configured in `src-tauri/tauri.conf.json`, and `scripts/copy-mcp-sidecar.mjs` rebuilds the MCP sidecar for the target platform so installers never ship a stale binary from another target triple.
+The release workflow creates a draft when none exists. Missing platform-signing secrets are reported in the run summary; Windows artifacts are staged as `UNSIGNED`, and macOS uses ad-hoc signing. This status must remain visible when publishing. The updater signing key remains mandatory for every tag because a Tauri updater artifact without its signature cannot be consumed by existing installations. Before building, the workflow also asserts that `bundle.windows.nsis.installerHooks` is still configured in `src-tauri/tauri.conf.json`, and `scripts/copy-mcp-sidecar.mjs` rebuilds the MCP sidecar for the target platform so installers never ship a stale binary from another target triple.
 
 
 ### SignPath Foundation preparation

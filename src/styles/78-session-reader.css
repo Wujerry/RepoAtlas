@@ -1,0 +1,78 @@
+/* Shared by full history, search previews, and compact session excerpts. */
+.session-content { font-size: 14px; line-height: 1.85; color: var(--text); }
+.session-markdown { min-width: 0; }
+.session-markdown > :first-child { margin-top: 0; }
+.session-markdown > :last-child { margin-bottom: 0; }
+.session-markdown p { margin: 0 0 14px; }
+.session-markdown :is(h1,h2,h3,h4,h5,h6) { color: var(--text); font-weight: 650; line-height: 1.45; margin: 24px 0 10px; letter-spacing: -.015em; }
+.session-markdown h1 { font-size: 1.5em; }
+.session-markdown h2 { font-size: 1.3em; }
+.session-markdown h3 { font-size: 1.15em; }
+.session-markdown :is(h4,h5,h6) { font-size: 1em; }
+.session-markdown :is(ul,ol) { margin: 10px 0 16px; padding-left: 24px; }
+.session-markdown :is(ul,ol) :is(ul,ol) { margin-block: 6px; }
+.session-markdown li { padding-left: 3px; }
+.session-markdown li + li { margin-top: 6px; }
+.session-markdown li::marker { color: var(--muted); }
+.session-markdown li p { margin-bottom: 5px; }
+.session-markdown .contains-task-list { padding-left: 3px; list-style: none; }
+.session-markdown .task-list-item { padding-left: 0; }
+.session-markdown input[type=checkbox] { appearance: auto; accent-color: var(--accent); margin-right: 8px; vertical-align: middle; }
+.session-markdown blockquote { border-left: 3px solid var(--line-strong); padding: 8px 16px; margin: 16px 0; background: var(--bg-elevated); color: var(--text-soft); border-radius: 0 7px 7px 0; }
+.session-markdown blockquote > :last-child { margin-bottom: 0; }
+.session-markdown hr { border: 0; border-top: 1px solid var(--line); margin: 24px 0; }
+.session-markdown :not(pre) > code,.session-snippet code { border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; font-size: .88em; background: var(--bg-elevated); color: var(--text); box-decoration-break: clone; }
+.session-markdown a[href] { text-decoration-color: var(--line-strong); text-underline-offset: 4px; }
+.session-markdown a[href]:hover { text-decoration-color: var(--accent); }
+.session-markdown a:not([href]) { text-decoration: none; }
+.session-markdown :is(a,summary):focus-visible,.session-code-block pre:focus-visible,.session-table-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.session-markdown details { margin: 14px 0; border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; }
+.session-markdown summary { cursor: pointer; color: var(--text-soft); min-height: 32px; line-height: 32px; font-weight: 550; }
+.session-markdown details[open] summary { margin-bottom: 10px; }
+.session-markdown kbd { font-family: var(--font-mono); font-size: .85em; border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 4px; padding: 1px 5px; }
+.session-markdown .katex-display { overflow: auto; max-width: 100%; }
+.session-table-scroll { overflow-x: auto; margin: 16px 0; border: 1px solid var(--line); border-radius: 8px; scrollbar-gutter: auto; }
+.session-table-scroll table { display: table; width: 100%; margin: 0; font-size: 12px; border-collapse: collapse; }
+.session-table-scroll :is(th,td) { border: 0; border-bottom: 1px solid var(--line); padding: 9px 12px; min-width: 90px; }
+.session-table-scroll th { font-weight: 600; background: var(--bg-elevated); color: var(--text); }
+.session-table-scroll tbody tr:last-child td { border-bottom: 0; }
+.session-table-scroll tbody tr:nth-child(even) { background: color-mix(in srgb, var(--bg-elevated) 55%, transparent); }
+.session-code-block { margin: 16px 0; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; background: var(--bg-elevated); min-width: 0; }
+.session-code-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 38px; padding: 3px 8px 3px 14px; border-bottom: 1px solid var(--line); color: var(--muted); }
+.session-code-toolbar > span { font-family: var(--font-mono); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-code-toolbar > div { display: flex; gap: 4px; flex: none; }
+.session-code-toolbar .button { padding: 3px 7px; min-height: 32px; font-size: 10px; color: var(--muted); }
+.session-code-toolbar .button[aria-pressed=true] { color: var(--text); background: var(--bg); }
+.session-code-toolbar .button svg { width: 13px; height: 13px; }
+.session-content .session-code-block pre { margin: 0; border: 0; border-radius: 0; background: transparent; padding: 14px 16px; font-size: 12px; line-height: 1.75; max-height: 360px; tab-size: 2; white-space: pre; overflow: auto; }
+.session-code-block pre.is-wrapped { white-space: pre-wrap; overflow-wrap: anywhere; }
+.session-code-block pre code { font-size: inherit; }
+.session-code-block > p[role=alert] { padding: 6px 14px; margin: 0; font-size: 11px; color: var(--danger); }
+.session-content .session-attachment { display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; background: var(--bg-elevated); border: 1px solid var(--line); border-radius: 6px; }
+.session-content .session-source { font-size: 12px; line-height: 1.7; padding: 14px; }
+.session-content .session-continuation { font-size: 11px; line-height: 1.5; margin: 10px 0; color: var(--muted); }
+.session-content-controls { display: flex; align-items: center; gap: 4px 8px; margin-top: 16px; padding-top: 8px; border-top: 1px solid var(--line); }
+.session-content-controls .button { font-size: 11px; gap: 5px; }
+.session-content-controls .button svg { width: 13px; height: 13px; }
+.session-content-secondary { display: inline-flex; gap: 4px; margin-left: auto; }
+.session-page-controls { display: flex; align-items: center; gap: 3px; }
+.session-content.is-technical .session-content-controls { padding: 0; border: 0; }
+.session-snippet { color: inherit; font-size: inherit; line-height: inherit; }
+.session-snippet :is(strong,em,del,code) { display: inline; }
+.session-snippet strong { font-weight: 550; color: var(--text-soft); }
+.session-snippet code { font-family: var(--font-mono); font-size: .92em; padding: 0 3px; }
+.session-snippet mark,.session-markdown mark { color: var(--text); background: var(--accent-wash); text-decoration: none; border-radius: 2px; }
+.ah-message { padding-block: 24px; }
+.ah-message > .session-content { font-size: 14px; line-height: 1.85; }
+.ah-detail-header { padding-block: 14px 10px; max-height: 40%; }
+.ah-detail-header h2 { font-size: 18px; margin-block: 6px; }
+.ah-detail-actions { margin-top: 8px; }
+.ah-message > header { align-items: center; margin-bottom: 16px; }
+.ah-message > header strong { color: var(--text-soft); font-size: 11px; font-weight: 600; }
+.ah-message.user { background: color-mix(in srgb, var(--bg-elevated) 45%, transparent); }
+.search-preview .session-content { font-size: 13px; line-height: 1.8; }
+.search-preview .session-content-controls { margin-top: 12px; }
+.search-preview .session-content-secondary { margin-left: 0; }
+.command-standalone .session-code-toolbar { gap: 4px; padding-left: 10px; }
+.command-standalone .session-code-toolbar .button { padding-inline: 4px; }
+.command-standalone .session-content .session-code-block pre { padding: 10px; font-size: 11px; }

@@ -13,7 +13,9 @@ pub mod paths;
 mod process;
 pub mod project_files;
 pub mod scan;
+pub mod subscriptions;
 
+pub use crate::core::usage::AgentUsageSummary;
 pub use crate::core::Core;
 pub use broker::{Broker, TaskRuntimeRequest};
 pub use detect::detect;

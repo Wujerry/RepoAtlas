@@ -518,6 +518,7 @@ export interface AppSettings {
   locale: "system" | "zh" | "en" | string;
   uiFont?: string;
   consoleFont?: string;
+  usageNavHiddenProviders?: string[];
 }
 
 export interface ExternalTool {

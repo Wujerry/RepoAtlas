@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AIHistory } from "../components/AIHistory";
 import { dictionaries, type MessageKey } from "../i18n";
@@ -94,6 +94,72 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+it("opens the linked Project and keeps the session visible on navigation failure",async()=>{
+  const selected={...session("linked"),projectId:"project-42",projectName:"App"};
+  mocks.messages.mockResolvedValue(page("linked",0));
+  const navigate=vi.fn().mockRejectedValueOnce(new Error("gone")).mockResolvedValueOnce(undefined);
+  render(<AIHistory t={t} onOpenProject={navigate}/>);
+  await act(async()=>openSessionHistory(undefined,selected));
+  const button=screen.getByRole("button",{name:/App.*Open project/});
+  await act(async()=>fireEvent.click(button));
+  expect(navigate).toHaveBeenCalledWith("project-42");
+  expect(screen.getByRole("dialog")).toBeInTheDocument();
+  expect(screen.getByText(t("projectLoadFailed"))).toBeInTheDocument();
+  await act(async()=>fireEvent.click(button));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
+
+it("opens session details outside the reader without reloading messages or losing scroll", async () => {
+  mocks.messages.mockResolvedValue(page("floating", 0));
+  render(<AIHistory t={t}/>);
+  await act(async () => openSessionHistory(undefined, { ...session("floating"), usage: {
+    totalTokens: 1200, inputTokens: 1000, outputTokens: 200, cacheReadTokens: 600,
+    cacheWriteTokens: null, reasoningTokens: 50, model: "sample", partial: false,
+  }}));
+  act(advanceFrame);
+  const reader = document.querySelector<HTMLElement>(".ah-transcript")!;
+  const message = document.getElementById("ah-message-0");
+  reader.scrollTop = 340;
+  fireEvent.scroll(reader);
+  for (const label of ["usageDetails", "ahSessionDetails"] as const) {
+    const trigger = screen.getByRole("button", { name: t(label) });
+    await act(async () => fireEvent.click(trigger));
+    act(advanceFrame);
+    const popup = screen.getByRole("dialog", { name: t(label) });
+    expect(popup.closest(".ah-detail")).toBeNull();
+    expect(reader.scrollTop).toBe(340);
+    expect(document.getElementById("ah-message-0")).toBe(message);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    await act(async () => fireEvent.click(within(popup).getByRole("button", { name: t("close") })));
+    act(advanceFrame);
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(reader.scrollTop).toBe(340);
+  }
+  // The primary link action still opens metadata after replacing native <details>.
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: t("ahLink") })));
+  expect(screen.getByRole("dialog", { name: t("ahSessionDetails") })).toBeInTheDocument();
+  expect(mocks.messages).toHaveBeenCalledTimes(1);
+  expect(scrolls).toHaveLength(0);
+});
+
+it("groups technical context by default and reveals an exact search-hit anchor",async()=>{
+  const result:SessionMessagePage={total:3,items:[
+    {index:0,role:"user",timestamp:"",content:"<environment_context>private context</environment_context>"},
+    {index:1,role:"user",timestamp:"",content:"<subagent_notification>done</subagent_notification>"},
+    {index:2,role:"user",timestamp:"",content:"Please fix navigation"},
+  ]};
+  mocks.messages.mockResolvedValue(result);
+  render(<AIHistory t={t}/>);
+  await act(async()=>openSessionHistory(undefined,session("technical")));
+  act(advanceFrame);
+  expect(document.querySelector(".ah-technical-group")).not.toHaveAttribute("open");
+  expect(screen.getByText(t("ahSystemContext"))).toBeInTheDocument();
+  await act(async()=>openSessionHistory(undefined,{...session("technical"),revision:"new"},1));
+  act(advanceFrame);
+  expect(document.querySelector(".ah-technical-group")).toHaveAttribute("open");
+  expect(scrolls[scrolls.length-1]?.element.id).toBe("ah-message-1");
+});
+
 it("opens message 47 on page offset 40 after commit and retains its page and scroll position after automatic refresh", async () => {
   const selected = session("selected");
   const initial = deferred<SessionMessagePage>();
@@ -111,7 +177,7 @@ it("opens message 47 on page offset 40 after commit and retains its page and scr
   await deliverMessages(initial, page("selected", 40));
   const target = document.getElementById("ah-message-47")!;
   expect(target).toHaveTextContent("selected message 47");
-  expect(scrolls).toEqual([{ element: target, options: { block: "center" }, committed: true }]);
+  expect(scrolls).toEqual([{ element: target, options: { block: "start" }, committed: true }]);
   expect(screen.getByText("41–80 / 90")).toBeInTheDocument();
   const transcript = target.closest<HTMLElement>(".ah-transcript")!;
   expect(transcript.scrollTop).toBe(anchorScrollTop);
@@ -149,7 +215,7 @@ it.each(["before", "after"] as const)("ignores the previous session's pending me
   await deliverMessages(chosen, page("chosen", 40));
   const target = document.getElementById("ah-message-47")!;
   expect(target).toHaveTextContent("chosen message 47");
-  expect(scrolls).toEqual([{ element: target, options: { block: "center" }, committed: true }]);
+  expect(scrolls).toEqual([{ element: target, options: { block: "start" }, committed: true }]);
 
   if (order === "after") await deliverMessages(previous, page("previous", 0));
   expect(screen.queryByText("previous message 6")).not.toBeInTheDocument();

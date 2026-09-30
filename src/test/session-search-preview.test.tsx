@@ -63,7 +63,8 @@ describe("SessionSearchPreview", () => {
     expect(screen.getByText("Codex CLI")).toBeInTheDocument();
     expect(screen.getByText("Project first")).toBeInTheDocument();
     expect(screen.getByText("F:\\projects\\first")).toBeInTheDocument();
-    expect(container.querySelector(".search-preview-message-match pre")?.textContent).toBe(original);
+    expect(container.querySelector(".search-preview-message-match strong")?.textContent).toBe("User");
+    expect(container.querySelector(".session-content strong")?.textContent).toBe("a+b");
     expect(Array.from(container.querySelectorAll("mark"), node => node.textContent)).toEqual(["a+b", "[x]", "foo.bar"]);
     expect(container.querySelector("img, script, pre strong, pre a")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: t("qsCopyMessage") }));
@@ -241,9 +242,9 @@ describe("SessionSearchPreview", () => {
     mocks.messages.mockResolvedValue(page(message(20, original)));
     const { container } = render(<SessionSearchPreview hit={hit()} query="NEEDLE" t={t} />);
     await screen.findByText("NEEDLE", { selector: "mark" });
-    expect(container.querySelector("pre")?.textContent?.length).toBeLessThan(570);
+    expect(container.querySelector(".session-markdown")?.textContent?.length).toBeLessThan(1300);
     fireEvent.click(screen.getByRole("button", { name: t("qsExpand") }));
-    expect(container.querySelector("pre")?.textContent).toBe(original);
+    expect(container.querySelector(".session-content p")?.textContent).toBe(original.trim());
     expect(screen.getByRole("button", { name: t("qsCollapse") })).toHaveAttribute("aria-expanded", "true");
   });
 });

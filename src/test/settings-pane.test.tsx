@@ -36,6 +36,13 @@ describe("SettingsPane", () => {
       onBack={onBack}
     /></Suspense>);
 
+    expect(screen.getByRole("tab", { name: t("settingsGeneral") })).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByRole("button", { name: t("exportData") })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: t("dataAndBackup") }));
+    expect(screen.getByRole("button", { name: t("exportData") })).toBeVisible();
+    expect(screen.queryByRole("textbox", { name: t("uiFont") })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: t("settingsSources") }));
+    expect(screen.getByRole("button", { name: t("settingsManageSources") })).toBeVisible();
     fireEvent.click(await screen.findByRole("button", { name: t("backToProjects") }));
     expect(onBack).toHaveBeenCalledOnce();
     expect(screen.getByRole("button", { name: t("backToProjects") })).toHaveAttribute("type", "button");

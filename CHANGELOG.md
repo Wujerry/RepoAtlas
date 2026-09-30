@@ -2,6 +2,17 @@
 
 All notable changes to RepoAtlas will be documented here. Package availability is recorded in GitHub Releases.
 
+## [0.1.6] - 2026-09-30
+
+- Add global Ctrl/Cmd+Shift+K quick search across Projects, session text and actions, with keyboard previews and validated original-Agent resume.
+- Render session content consistently as bounded Markdown; fold client/tool envelopes, preserve original text and keep Session details from shifting the reader.
+- Show recorded per-session tokens and dated API-equivalent USD estimates with pricing coverage and explicit unknown/partial values.
+- Add 17 read-only subscription/balance connections, including Grok and Google Antigravity, with period meters, reset times and cached/failure states.
+- Show all enabled subscription readouts in the title bar; keep visibility settings in the full Usage page and preserve the four work-tool entries.
+- Reorganize Settings into four categories and simplify Usage and Sessions, including direct navigation to the linked Project.
+- Cache usage metadata and coalesce bounded refreshes so account queries and token displays do not block local project management.
+- Update bilingual documentation and describe provider coverage, credential boundaries, estimates and platform-signing limitations.
+
 ## [0.1.5] - 2026-09-18
 
 - Improve Project Collection editing with searchable membership, selected-only filtering, bulk selection, and keyboard navigation.

@@ -4,8 +4,9 @@ import type { MessageKey } from "../i18n";
 import { sessionDisplayText, sessionDisplayTitle } from "../lib/session-presentation";
 import { sessionAgentName, sessionApi, sessionTime, type AgentSession, type SessionMessage, type SessionMessagePage, type SessionSearchHit } from "../lib/sessions";
 import { Button } from "./ui/button";
-import { SearchHighlight, searchExcerpt } from "./ui/search-highlight";
 import { SessionAgentLabel } from "./ui/session-agent";
+import { TokenBreakdown } from "./ui/token-usage";
+import { SessionContent } from "./ui/session-content";
 import { SessionResumeButton, sessionResumeReason } from "./ui/session-resume";
 
 export interface SessionSearchPreviewProps {
@@ -35,7 +36,6 @@ export function SessionSearchPreview({ hit, query, t, onProject, onSession, disp
   const [actionError, setActionError] = useState("");
   const [notice, setNotice] = useState("");
   const transcript = useRef<HTMLDivElement>(null);
-  const [expanded, setExpanded] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
   const sequence = useRef(0);
   const actionGuard = useRef(false);
@@ -44,7 +44,7 @@ export function SessionSearchPreview({ hit, query, t, onProject, onSession, disp
     const request = ++sequence.current;
     const current = () => sequence.current === request;
     setAction(null); actionGuard.current = false; setActionError(""); setNotice("");
-    setExpanded(false); setContextOpen(false);
+    setContextOpen(false);
     setLoad({ selection, status: "loading" });
     if (!session.capabilities.transcript) {
       setLoad({ selection, status: "error" });
@@ -72,8 +72,6 @@ export function SessionSearchPreview({ hit, query, t, onProject, onSession, disp
     : page?.items.find(message => message.index === messageIndex);
   const contextMessages = visibleMessages.filter(message => message.index !== copyMessage?.index);
   const title = displayTitle || sessionDisplayTitle(session.title, t("ahUntitled"));
-  const messageText = copyMessage ? (query.trim() ? copyMessage.content : sessionDisplayText(copyMessage.content)) : "";
-  const condensedMessage = messageText.length > 360 ? searchExcerpt(messageText, query, 360, 32) : messageText;
 
   useEffect(() => {
     if (transcript.current) transcript.current.scrollTop = 0;
@@ -111,6 +109,7 @@ export function SessionSearchPreview({ hit, query, t, onProject, onSession, disp
           aria-label={t("moduleOpenProject")} title={session.projectId ? t("moduleOpenProject") : t("ahUnlinked")}
           onClick={() => { if (session.projectId) void runAction("project", () => onProject(session.projectId!)); }}><ArrowSquareOut aria-hidden /></Button>}
       </div>
+      <TokenBreakdown usage={session.usage} t={t} />
     </header>
     <div ref={transcript} className="search-preview-transcript" aria-busy={loading}>
       <div className="search-preview-section-heading"><h3>{t(messageIndex === undefined ? "qsLatest" : "qsMatch")}</h3>
@@ -127,13 +126,12 @@ export function SessionSearchPreview({ hit, query, t, onProject, onSession, disp
       {page && page.items.length > 0 && !copyMessage && <p className="search-preview-empty">{t("qsNoPreview")}</p>}
       {copyMessage && <article className={`search-preview-message search-preview-message-featured${messageIndex !== undefined ? " search-preview-message-match" : ""}`} aria-current="true">
         {messageMeta(copyMessage)}
-        <pre className="search-preview-message-content"><SearchHighlight text={expanded ? messageText : condensedMessage} query={query} /></pre>
-        {condensedMessage !== messageText && <Button variant="quiet" className="search-preview-expand" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{t(expanded ? "qsCollapse" : "qsExpand")}</Button>}
+        <SessionContent key={`${session.id}:${copyMessage.index}`} content={copyMessage.content} query={query} t={t} limit={1200} />
       </article>}
       {contextMessages.length > 0 && <div className="search-preview-context">
         <Button variant="quiet" aria-expanded={contextOpen} onClick={() => setContextOpen(value => !value)}><CaretDown aria-hidden />{t("qsContext")}<span>{contextMessages.length}</span></Button>
         {contextOpen && contextMessages.map(message => <article key={message.index} className="search-preview-message">
-          {messageMeta(message)}<pre className="search-preview-message-content"><SearchHighlight text={sessionDisplayText(message.content)} query={query} /></pre>
+          {messageMeta(message)}<SessionContent content={message.content} query={query} t={t} />
         </article>)}
       </div>}
     </div>

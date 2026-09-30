@@ -4,6 +4,7 @@ use repoatlas_core::core::activity::{
 };
 mod quick_search;
 mod sessions;
+mod usage;
 use repoatlas_core::{
     launch,
     project_files::{self, ProjectPathIndex, ProjectPathSearchResult},
@@ -2238,6 +2239,11 @@ pub fn run() {
             quick_search::quick_search_ready,
             quick_search::quick_search_open_main,
             sessions::session_sources,
+            usage::subscription_usage,
+            usage::set_usage_navigation,
+            usage::set_subscription_enabled,
+            usage::refresh_subscription_usage,
+            usage::session_usage_summary,
             sessions::set_session_source,
             sessions::search_agent_sessions,
             sessions::get_agent_session,

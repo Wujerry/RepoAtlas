@@ -1,5 +1,7 @@
 //! Read-only external conversation adapters. Authorization lives in Core.
 pub mod adapters;
+mod pricing;
+pub mod usage;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,6 +54,8 @@ pub struct AgentSession {
     pub revision: String,
     pub resume_reason: Option<String>,
     pub capabilities: SessionCapabilities,
+    #[serde(default)]
+    pub usage: Option<usage::TokenUsage>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

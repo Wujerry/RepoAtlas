@@ -210,7 +210,7 @@ pub fn fingerprint(path: &Path) -> Result<String> {
     for b in &buffer[..n] {
         h = (h ^ *b as u64).wrapping_mul(1099511628211);
     }
-    let mut result = format!("parser3:{}:{:?}:{h}", m.len(), m.modified()?);
+    let mut result = format!("parser5:{}:{:?}:{h}", m.len(), m.modified()?);
     let wal = PathBuf::from(format!("{}-wal", path.display()));
     if let Ok(w) = fs::metadata(wal) {
         result.push_str(&format!(":{}:{:?}", w.len(), w.modified()?));
@@ -369,10 +369,12 @@ impl SessionAdapter for LocalAdapter {
         });
         let mut messages = Vec::new();
         let mut legacy_messages = Vec::new();
+        let mut usage = usage::UsageAccumulator::default();
         if self.id() == "gemini" {
             let records = read_gemini(&path, cancel)?;
             metadata(&mut session, &records.0);
             for m in &records.1 {
+                usage.observe(self.id(), m);
                 let role = s(m, &["type", "role"]);
                 push(
                     &mut messages,
@@ -421,6 +423,7 @@ impl SessionAdapter for LocalAdapter {
                 if v["isSidechain"] == true || v["isMeta"] == true {
                     continue;
                 }
+                usage.observe(self.id(), &v);
                 match self.id() {
                     "codex" => {
                         let p = &v["payload"];
@@ -590,6 +593,7 @@ impl SessionAdapter for LocalAdapter {
                 .to_string_lossy()
                 .into_owned();
         }
+        session.usage = usage.finish();
         finish(&mut session, &messages, &path)?;
         Ok(vec![(session, messages)])
     }
@@ -669,8 +673,8 @@ fn read_gemini(path: &Path, cancel: &AtomicBool) -> Result<(Value, Vec<Value>)> 
 }
 // Client-injected setup remains in the transcript but is not a user's intent.
 fn user_intent(content: &str) -> Option<&str> {
-    let value = content
-        .split_once("## My request:")
+    let mut value = content
+        .rsplit_once("## My request:")
         .map(|(_, request)| request)
         .unwrap_or(content)
         .trim();
@@ -681,11 +685,30 @@ fn user_intent(content: &str) -> Option<&str> {
             "<skills_instructions>",
             "# AGENTS.md instructions",
             "<permissions instructions>",
+            "<external_codex_apps_open_page>",
+            "<subagent_notification>",
+            "<turn_aborted>",
+            "<collaboration_mode>",
         ]
         .iter()
         .any(|prefix| value.starts_with(prefix))
     {
         return None;
+    }
+    let closing = match value.chars().next() {
+        Some('“') => Some('”'),
+        Some('‘') => Some('’'),
+        Some('"') => Some('"'),
+        _ => None,
+    };
+    if let Some(closing) = closing {
+        if let Some(end) = value.rfind(closing).filter(|end| *end > 0) {
+            let tail = value[end + closing.len_utf8()..]
+                .trim_start_matches([' ', '\n', '\r', '，', ',', '。', ':', '：']);
+            if tail.chars().count() >= 4 {
+                value = tail;
+            }
+        }
     }
     Some(value)
 }
@@ -774,14 +797,27 @@ fn read_opencode(
                 .unwrap_or_default(),
             ..Default::default()
         };
-        let mut ms = db.prepare("SELECT m.data,p.data FROM message m JOIN part p ON p.message_id=m.id WHERE m.session_id=?1 ORDER BY m.time_created,m.id,p.id")?;
+        let mut ms = db.prepare("SELECT m.id,m.data,p.data FROM message m LEFT JOIN part p ON p.message_id=m.id WHERE m.session_id=?1 ORDER BY m.time_created,m.id,p.id")?;
         let mut messages = Vec::new();
+        let mut usage = usage::UsageAccumulator::default();
         for row in ms.query_map([&id], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<String>>(2)?,
+            ))
         })? {
-            let (m, p) = row?;
-            let m: Value =
+            let (message_id, m, p) = row?;
+            let mut m: Value =
                 serde_json::from_str(&m).map_err(|_| Error::msg("unsupported_session_format"))?;
+            if !m.is_object() {
+                return Err(Error::msg("unsupported_session_format"));
+            }
+            m["id"] = Value::String(message_id);
+            usage.observe("opencode", &m);
+            let Some(p) = p else {
+                continue;
+            };
             let p: Value =
                 serde_json::from_str(&p).map_err(|_| Error::msg("unsupported_session_format"))?;
             if p["type"] == "text" && p["synthetic"] != true && p["ignored"] != true {
@@ -793,6 +829,7 @@ fn read_opencode(
                 );
             }
         }
+        session.usage = usage.finish();
         finish(&mut session, &messages, path)?;
         sessions.push((session, messages));
     }

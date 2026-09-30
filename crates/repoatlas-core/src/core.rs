@@ -28,6 +28,7 @@ pub mod activity;
 mod approvals;
 mod modules;
 pub(crate) mod sessions;
+pub(crate) mod usage;
 
 pub struct Core {
     conn: Connection,
@@ -137,6 +138,10 @@ impl Core {
             locale,
             ui_font,
             console_font,
+            usage_nav_hidden_providers: self
+                .setting("usageNavHiddenProviders")?
+                .and_then(|value| serde_json::from_str(&value).ok())
+                .unwrap_or_default(),
         })
     }
 
@@ -145,7 +150,9 @@ impl Core {
         self.put_setting("locale", &settings.locale)?;
         self.put_setting("uiFont", &settings.ui_font)?;
         self.put_setting("consoleFont", &settings.console_font)?;
-        Ok(settings)
+        // Navigation visibility has a dedicated partial setter. A pending
+        // appearance save must not overwrite a newer navigation preference.
+        self.settings()
     }
 
     pub fn add_scan_root(&self, path: impl AsRef<Path>) -> Result<ScanRoot> {

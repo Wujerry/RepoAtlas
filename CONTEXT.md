@@ -107,6 +107,15 @@ a Scan Root and never grants Project discovery authorization.
 **Sessions / Continue Coding**: Search authorized history across Agents, associate
 sessions with Projects, and continue a selected session in its original Agent/cwd.
 
+**Recorded Token Usage**: Counters recorded by an external Agent in an authorized
+Session. Unknown is distinct from zero. Input includes recorded cache reads/writes;
+reasoning is an output subset. Counts are local observations, not an invoice.
+
+**Usage Connection**: A separately enabled, read-only connection to one external
+provider's fixed subscription usage endpoint. It observes quota windows and reset
+times using an existing login without owning or persisting credentials, renewing
+accounts or making model calls. Session Source authorization does not enable it.
+
 **Project Brief**:
 A structured local view of a Project's detected facts, environment, tasks, recent runs, and recent activity.
 _Avoid_: AI Summary, README replacement

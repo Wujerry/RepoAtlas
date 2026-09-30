@@ -1,7 +1,7 @@
 import { Dialog } from "@base-ui/react/dialog";
 import { open as chooseDirectory } from "@tauri-apps/plugin-dialog";
 import { ArrowClockwise, ArrowRight, Copy, FolderOpen, ChatCircleText, ClockCounterClockwise, MagnifyingGlass, SlidersHorizontal, X } from "@phosphor-icons/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MessageKey } from "../i18n";
 import type { ProjectIcon, ProjectSummary } from "../types";
 import { api } from "../lib/api";
@@ -13,7 +13,10 @@ import { SearchPicker } from "./ui/search-picker";
 import { SessionAgentLabel, SessionAgentSelect } from "./ui/session-agent";
 
 import { SessionResumeButton as ResumeButton, sessionResumeReason as reason } from "./ui/session-resume";
-import { sessionDisplayTitle, sessionExcerpt } from "../lib/session-presentation";
+import { sessionDisplayText, sessionDisplayTitle, sessionExcerpt } from "../lib/session-presentation";
+import { SessionContent, SessionSnippet } from "./ui/session-content";
+import { DetailPopover } from "./ui/detail-popover";
+import { TokenBadge, TokenBreakdown } from "./ui/token-usage";
 
 type T = (key: MessageKey) => string;
 function Stamp({ value, t }: { value: string; t: T }) {
@@ -26,8 +29,18 @@ function Highlight({ text, query }: { text: string; query: string }) {
   return <>{text.split(pattern).map((part, i) => i % 2 ? <mark key={i}>{part}</mark> : part)}</>;
 }
 
+function groupMessages(messages:SessionMessage[]) {
+  const groups:{technical:boolean;messages:SessionMessage[]}[]=[];
+  for(const message of messages){
+    const technical=!sessionDisplayText(message.content).trim();
+    const last=groups[groups.length-1];
+    if(last?.technical===technical)last.messages.push(message);else groups.push({technical,messages:[message]});
+  }
+  return groups;
+}
+
 /** Mount independently of the project tree so opening/closing preserves its navigation. */
-export function AIHistory({ t, onVisibilityChange }: { t: T; onVisibilityChange?: (open: boolean) => void }) {
+export function AIHistory({ t, onVisibilityChange, onOpenProject }: { t: T; onVisibilityChange?: (open: boolean) => void; onOpenProject?: (id: string) => void | Promise<void> }) {
   const [isOpen, setOpen] = useState(false); const [sourcesOpen, setSourcesOpen] = useState(false);
   const [query, setQuery] = useState(""); const [projectId, setProjectId] = useState(""); const [adapter, setAdapter] = useState("");
   const [after, setAfter] = useState(""); const [before, setBefore] = useState(""); const [archived, setArchived] = useState(false);
@@ -42,8 +55,11 @@ export function AIHistory({ t, onVisibilityChange }: { t: T; onVisibilityChange?
   const [pendingSource, setPendingSource] = useState<SessionSource>(); const [sourceBusy, setSourceBusy] = useState(false);
   const [sourceError, setSourceError] = useState("");
   const [customAdapter, setCustomAdapter] = useState("claude"); const [customPath, setCustomPath] = useState("");
-  const [rebuild, setRebuild] = useState(false); const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [rebuild, setRebuild] = useState(false);
   const [linking, setLinking] = useState(false);
+  const [openingProject, setOpeningProject] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const projectSettings = useRef<HTMLButtonElement>(null);
   const input = useRef<HTMLInputElement>(null); const resultPane = useRef<HTMLDivElement>(null); const transcript = useRef<HTMLDivElement>(null);
   const sequence = useRef(0); const messageSequence = useRef(0); const opener = useRef<HTMLElement | null>(null);
   const resultScroll = useRef(0); const messageScroll = useRef(new Map<string, number>()); const jump = useRef<number | null>(null);
@@ -115,7 +131,9 @@ export function AIHistory({ t, onVisibilityChange }: { t: T; onVisibilityChange?
       if (jump.current !== null) {
         const target = document.getElementById(`ah-message-${jump.current}`);
         if (!target) return;
-        target.scrollIntoView({ block: "center" });
+        const group = target.closest<HTMLDetailsElement>("details.ah-technical-group");
+        if (group) group.open = true;
+        target.scrollIntoView({ block: "start" });
         if (transcript.current) messageScroll.current.set(`${selected.id}:${messageOffset}`, transcript.current.scrollTop);
         jump.current = null;
       } else if (transcript.current) transcript.current.scrollTop = messageScroll.current.get(`${selected.id}:${messageOffset}`) ?? 0;
@@ -143,14 +161,15 @@ export function AIHistory({ t, onVisibilityChange }: { t: T; onVisibilityChange?
     jump.current = index ?? null; setMessageOffset(index === undefined ? messagePages.current.get(hit.session.id) ?? 0 : Math.floor(index / 40) * 40); setNotice("");
   }
   const enabled = sources.filter(s => s.enabled);
+  const messageGroups = useMemo(()=>groupMessages(messages),[messages]);
   const emptyTitle = !enabled.length ? "ahNoSources" : enabled.every(s => !s.lastScannedAt) ? "ahUnindexed" : "ahEmpty";
-  return <Dialog.Root modal={false} open={isOpen} onOpenChange={setOpen}>
+  return <Dialog.Root modal={false} open={isOpen} onOpenChange={(open, details) => { if(open || (details.reason!=="outside-press" && details.reason!=="focus-out"))setOpen(open); }}>
     <Dialog.Portal><Dialog.Backdrop className="ah-backdrop" />
       <Dialog.Popup className="ah-dialog" initialFocus={input} finalFocus={() => opener.current} onKeyDown={e => {
         if ((e.key === "/" || ((e.ctrlKey || e.metaKey) && e.key === "f")) && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) { e.preventDefault(); input.current?.focus(); }
       }}>
-        <header className="ah-header"><div><Dialog.Title>{t("ahTitle")}</Dialog.Title><Dialog.Description>{t("ahCached")}</Dialog.Description></div>
-          <Button variant="quiet" onClick={() => setSourcesOpen(v => !v)} aria-pressed={sourcesOpen}><SlidersHorizontal />{t("ahSources")}</Button>
+        <header className="ah-header"><div><Dialog.Title>{t("ahTitle")}</Dialog.Title><Dialog.Description className="ah-cache-description">{t("ahCached")}</Dialog.Description></div>
+          <Button className={enabled.some(s => s.lastError)?"ah-source-warning":undefined} title={enabled.some(s => s.lastError)?t("ahPartial"):undefined} variant="quiet" onClick={() => setSourcesOpen(v => !v)} aria-pressed={sourcesOpen}><SlidersHorizontal />{t("ahSources")}</Button>
           <Button variant="quiet" disabled={job?.running || !enabled.length} onClick={() => void refresh()}><ArrowClockwise />{t("refresh")}</Button>
           <Dialog.Close render={<Button variant="quiet" size="icon" aria-label={t("close")}><X /></Button>} />
         </header>
@@ -178,11 +197,13 @@ export function AIHistory({ t, onVisibilityChange }: { t: T; onVisibilityChange?
           <div className="ah-filters"><label className="ah-search"><MagnifyingGlass aria-hidden="true" /><input ref={input} value={query} maxLength={512} placeholder={t("ahSearch")} aria-label={t("ahSearch")} onChange={e => filter(() => setQuery(e.target.value))} />{query && <button aria-label={t("clear")} onClick={() => filter(() => setQuery(""))}><X /></button>}</label>
             <SearchPicker items={projects.map(p => ({ id: p.id, name: p.displayName }))} value={projectId} onChange={id => filter(() => setProjectId(id))} allLabel={t("ahAllProjects")} searchLabel={t("ahLink")} emptyLabel={t("ahEmpty")} />
             <SessionAgentSelect value={adapter} onChange={value => filter(() => setAdapter(value))} label={t("ahAllAgents")} allLabel={t("ahAllAgents")} />
-            <label>{t("ahFrom")}<input type="date" value={after} max={before || undefined} onChange={e => filter(() => setAfter(e.target.value))} /></label>
+            <Button variant="quiet" aria-expanded={filtersOpen} onClick={()=>setFiltersOpen(v=>!v)}><SlidersHorizontal/>{t("ahMoreFilters")}{(after||before||archived) && <span className="ah-filter-dot"/>}</Button>
+          </div>
+          {filtersOpen && <div className="ah-advanced-filters"><label>{t("ahFrom")}<input type="date" value={after} max={before || undefined} onChange={e => filter(() => setAfter(e.target.value))} /></label>
             <label>{t("ahTo")}<input type="date" value={before} min={after || undefined} onChange={e => filter(() => setBefore(e.target.value))} /></label>
             <label className="ah-check"><input type="checkbox" checked={archived} onChange={e => filter(() => setArchived(e.target.checked))} />{t("ahArchived")}</label>
-          </div>
-          {enabled.some(s => s.lastError) && <div className="ah-status">{t("ahPartial")}<Button variant="quiet" onClick={() => setSourcesOpen(true)}>{t("ahSources")}</Button></div>}
+            {(after||before||archived) && <Button variant="quiet" onClick={()=>filter(()=>{setAfter("");setBefore("");setArchived(false);})}>{t("clear")}</Button>}
+          </div>}
           <div className="ah-body"><section className="ah-results"><div className="ah-result-count" aria-live="polite">{total} {t("ahResults")}{busy && <span>{t("ahPending")}</span>}</div>
             <div ref={resultPane} className="ah-result-scroll" aria-busy={busy} onScroll={e => { resultScroll.current = e.currentTarget.scrollTop; }} onKeyDown={e => {
               if (!["ArrowUp", "ArrowDown"].includes(e.key)) return;
@@ -193,33 +214,35 @@ export function AIHistory({ t, onVisibilityChange }: { t: T; onVisibilityChange?
               {!hits.length && !busy && <div className="ah-empty"><MagnifyingGlass /><h3>{t(emptyTitle)}</h3>{!enabled.length && <><p>{t("ahNoSourcesHint")}</p><Button onClick={() => setSourcesOpen(true)}>{t("ahSources")}</Button></>}</div>}
               {hits.map(hit => <button className={`ah-result${selected?.id === hit.session.id ? " is-selected" : ""}`} key={hit.session.id} onClick={() => select(hit)} aria-pressed={selected?.id === hit.session.id}>
                 <span className="ah-result-meta"><span><SessionAgentLabel adapter={hit.session.adapter} /></span><Stamp value={hit.session.updatedAt} t={t} /></span>
-                <strong title={hit.session.title}><Highlight text={sessionDisplayTitle(hit.session.title, t("ahUntitled"))} query={query} /></strong><span className="ah-project-name">{hit.session.projectName ?? t("ahUnlinked")}</span>
-                {hit.snippets.map(m => <p key={m.index}><Highlight text={m.content} query={query} /></p>)}
-                {!hit.snippets.length && hit.session.lastUserExcerpt && <p>{sessionExcerpt(hit.session.lastUserExcerpt)}</p>}
+                <strong title={hit.session.title}><Highlight text={sessionDisplayTitle(hit.session.title, sessionExcerpt(hit.session.lastUserExcerpt) || t("ahUntitled"))} query={query} /></strong>
+                <span className="ah-result-location"><span className="ah-project-name">{hit.session.projectName ?? t("ahUnlinked")}</span><TokenBadge usage={hit.session.usage} t={t} /></span>
+                {hit.snippets.slice(0, 1).map(m => <p key={m.index}><SessionSnippet content={m.content} query={query} /></p>)}
+                {!hit.snippets.length && hit.session.lastUserExcerpt && <p><SessionSnippet content={hit.session.lastUserExcerpt} /></p>}
               </button>)}
             </div><footer className="ah-pagination"><Button variant="quiet" disabled={offset === 0 || busy} onClick={() => { setOffset(v => Math.max(0, v - 50)); resultScroll.current = 0; }}>{t("ahPrevious")}</Button><span>{total ? `${offset + 1}–${Math.min(offset + 50, total)}` : "0"}</span><Button variant="quiet" disabled={offset + 50 >= total || busy} onClick={() => { setOffset(v => v + 50); resultScroll.current = 0; }}>{t("ahNext")}</Button></footer>
           </section><section className="ah-detail" aria-busy={messageBusy}>
             {!selected ? <div className="ah-empty"><h3>{t("ahPreview")}</h3></div> : <>
-              <header className="ah-detail-header"><span><SessionAgentLabel adapter={selected.adapter} /> · <Stamp value={selected.updatedAt} t={t} /></span><h2>{sessionDisplayTitle(selected.title, t("ahUntitled"))}</h2>
-                <code title={selected.cwd}>{selected.cwd || t("ahCwdMissing")}</code><small>{selected.messageCount} {t("ahMessages")} · {selected.projectName ?? t("ahUnlinked")}</small>
-                <div className="ah-detail-actions"><ResumeButton key={selected.id} session={selected} t={t} onError={setError} /><Button variant="quiet" disabled={!selected.capabilities.directResume} onClick={() => void sessionApi.resumeSpec(selected.id).then(spec => navigator.clipboard.writeText(spec.command)).then(() => setNotice(t("ahCopied"))).catch(e => setError(reason(String(e), t)))}><Copy />{t("ahCopy")}</Button></div>
+              <header className="ah-detail-header"><div className="ah-detail-eyebrow"><SessionAgentLabel adapter={selected.adapter}/><Stamp value={selected.updatedAt} t={t}/><span>{selected.messageCount} {t("ahMessages")}</span></div>
+                <h2>{sessionDisplayTitle(selected.title, sessionExcerpt(selected.lastUserExcerpt) || t("ahUntitled"))}</h2>
+                <div className="ah-detail-actions">
+                  {selected.projectId && onOpenProject ? <Button variant="quiet" className="ah-open-project" loading={openingProject} title={selected.cwd} onClick={()=>{setOpeningProject(true);setError("");void Promise.resolve().then(()=>onOpenProject(selected.projectId!)).then(()=>setOpen(false)).catch(()=>setError(t("projectLoadFailed"))).finally(()=>setOpeningProject(false));}}><FolderOpen/><span>{selected.projectName??t("ahOpenProject")}</span><ArrowRight/>{t("ahOpenProject")}</Button> : <Button variant="quiet" onClick={()=>{projectSettings.current?.click();}}><FolderOpen/>{t("ahLink")}</Button>}
+                  <ResumeButton key={selected.id} session={selected} t={t} onError={setError}/>
+                </div>
                 {selected.resumeReason && <p role="status">{reason(selected.resumeReason, t)}</p>}
-                <details><summary>{t("ahLink")} · {t("ahWorkspace")}</summary><div className="ah-link-controls">
+                <div className="ah-detail-secondary" key={selected.id}><TokenBreakdown floating usage={selected.usage} t={t}/>
+                <DetailPopover triggerRef={projectSettings} title={t("ahSessionDetails")} closeLabel={t("close")}><div className="ah-settings-content"><code title={selected.cwd}>{selected.cwd || t("ahCwdMissing")}</code><div className="ah-link-controls">
                   <SearchPicker items={projects.map(p => ({ id: p.id, name: p.displayName }))} value={selected.projectId ?? ""} allLabel={t("ahUnlinked")} searchLabel={t("ahLink")} emptyLabel={t("ahEmpty")} onChange={id => {
                     if (linking) return; setLinking(true); void sessionApi.link(selected.id, id || null).then(() => sessionApi.get(selected.id)).then(s => { setSelected(s); setRevision(v => v + 1); setNotice(t("ahSaved")); }).catch(e => setError(String(e))).finally(() => setLinking(false));
                   }} />
                   <Button variant="quiet" disabled={linking} onClick={() => void chooseDirectory({ directory: true, multiple: false }).then(async p => {
                     if (typeof p !== "string") return; setLinking(true); try { await sessionApi.link(selected.id, selected.projectId, p); setSelected(await sessionApi.get(selected.id)); setNotice(t("ahSaved")); } finally { setLinking(false); }
                   }).catch(e => setError(String(e)))}><FolderOpen />{t("ahRelocate")}</Button>
-                </div><code title={selected.sourceLocator}>{selected.sourceLocator}</code><code>{selected.externalId}</code></details>
+                </div><Button variant="quiet" disabled={!selected.capabilities.directResume} onClick={() => void sessionApi.resumeSpec(selected.id).then(spec => navigator.clipboard.writeText(spec.command)).then(() => setNotice(t("ahCopied"))).catch(e => setError(reason(String(e), t)))}><Copy />{t("ahCopy")}</Button><code title={selected.sourceLocator}>{selected.sourceLocator}</code><code>{selected.externalId}</code></div></DetailPopover></div>
               </header>
               <div className="ah-transcript" ref={transcript} onScroll={e => messageScroll.current.set(`${selected.id}:${messageOffset}`, e.currentTarget.scrollTop)}>
-                {messageBusy ? <p role="status">{t("ahPending")}</p> : messages.map(message => {
-                  const key = `${selected.id}:${message.index}`; const full = expanded.has(key); const long = message.content.length > 2000;
-                  return <article id={`ah-message-${message.index}`} key={key} className={`ah-message ${message.role}`}><header><strong>{t(message.role === "user" ? "ahUser" : "ahAssistant")}</strong>{message.timestamp && <Stamp value={message.timestamp} t={t} />}</header>
-                    <div><Highlight text={long && !full ? message.content.slice(0, 2000) + "…" : message.content} query={query} /></div>
-                    {long && <Button variant="quiet" onClick={() => setExpanded(old => { const next = new Set(old); if (full) next.delete(key); else next.add(key); return next; })}>{t(full ? "ahCollapse" : "ahExpand")}</Button>}
-                  </article>;
+                {messageBusy ? <p role="status">{t("ahPending")}</p> : messageGroups.map(group=>{
+                  const renderMessage=(message:SessionMessage)=><article id={`ah-message-${message.index}`} key={`${selected.id}:${message.index}`} className={`ah-message ${message.role}`}><header><strong>{t(message.role === "user" ? "ahUser" : "ahAssistant")}</strong>{message.timestamp && <Stamp value={message.timestamp} t={t}/>}</header><SessionContent content={message.content} query={query} t={t} copy/></article>;
+                  return group.technical ? <details className="ah-technical-group" key={`${selected.id}:technical:${group.messages[0].index}`}><summary><SlidersHorizontal size={13}/>{t("ahSystemContext")}<span>{group.messages.length}</span></summary>{group.messages.map(renderMessage)}</details> : group.messages.map(renderMessage);
                 })}
               </div><footer className="ah-pagination"><Button variant="quiet" disabled={!messageOffset || messageBusy} onClick={() => setMessageOffset(v => Math.max(0, v - 40))}>{t("ahPrevious")}</Button><span>{selected.messageCount ? `${messageOffset + 1}–${Math.min(messageOffset + 40, selected.messageCount)}` : "0"} / {selected.messageCount}</span><Button variant="quiet" disabled={messageOffset + 40 >= selected.messageCount || messageBusy} onClick={() => setMessageOffset(v => v + 40)}>{t("ahNext")}</Button></footer>
             </>}
@@ -283,13 +306,12 @@ export function ContinueCoding({ t, projectId, onOpenProject, compact = false }:
     {loaded && !sessions.length && <p className="ah-continue-empty">{t("ahNoResume")}</p>}
     {error && <p role="status">{t("ahReadFailed")}: {error}</p>}
     <div className="ah-continue-items">{visible.map(session => {
-      const title = sessionDisplayTitle(session.title, t("ahUntitled"));
-      const excerpt = sessionExcerpt(session.lastUserExcerpt);
+      const title = sessionDisplayTitle(session.title, sessionExcerpt(session.lastUserExcerpt) || t("ahUntitled"));
       const preview = () => openSessionHistory(session.projectId ?? undefined, session);
       return <article className="ah-session-card" key={session.id}>
         <header className="ah-card-header"><button className="ah-card-project" onClick={() => { if (session.projectId && onOpenProject) onOpenProject(session.projectId); else preview(); }} title={session.cwd}><span className="ah-project-symbol">{session.projectId && icons[session.projectId]?.dataUrl ? <img src={icons[session.projectId].dataUrl!} alt="" /> : <FolderOpen aria-hidden="true" />}</span><h3>{session.projectName || session.cwd}</h3></button><span className="ah-agent-badge"><SessionAgentLabel adapter={session.adapter} /></span></header>
         <button className="ah-card-content" onClick={preview} aria-label={`${t("ahPreviewAction")}: ${title}`}>
-          <h4 title={title}>{title}</h4><span className="ah-excerpt-label">{t("ahLatestMessage")}</span><p>{excerpt || t("ahNoMessage")}</p>
+          <h4 title={title}>{title}</h4><TokenBadge usage={session.usage} t={t} /><span className="ah-excerpt-label">{t("ahLatestMessage")}</span><p><SessionSnippet content={session.lastUserExcerpt} fallback={t("ahNoMessage")} /></p>
         </button>
         <footer className="ah-card-footer"><span className="ah-card-time"><ClockCounterClockwise aria-hidden="true" /><Stamp value={session.updatedAt} t={t} /></span><div className="ah-card-actions"><Button variant="quiet" onClick={preview}><ChatCircleText aria-hidden="true" />{t("ahPreviewAction")}</Button><ResumeButton session={session} t={t} onError={setError} /></div></footer>
       </article>;

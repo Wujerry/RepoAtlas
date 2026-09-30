@@ -62,6 +62,9 @@ pub fn export(conn: &Connection) -> Result<String> {
         locale: setting(conn, "locale")?.unwrap_or_else(|| "system".into()),
         ui_font: setting(conn, "uiFont")?.unwrap_or_default(),
         console_font: setting(conn, "consoleFont")?.unwrap_or_default(),
+        usage_nav_hidden_providers: setting(conn, "usageNavHiddenProviders")?
+            .and_then(|value| serde_json::from_str(&value).ok())
+            .unwrap_or_default(),
     };
     let scan_roots = list_scan_roots(conn)?;
     let projects = export_projects(conn)?;
@@ -130,6 +133,20 @@ pub fn import_into(
         put_setting(conn, "locale", &file.settings.locale)?;
         put_setting(conn, "uiFont", &file.settings.ui_font)?;
         put_setting(conn, "consoleFont", &file.settings.console_font)?;
+        let hidden: Vec<_> = crate::subscriptions::PROVIDERS
+            .iter()
+            .filter(|provider| {
+                file.settings
+                    .usage_nav_hidden_providers
+                    .iter()
+                    .any(|item| item == **provider)
+            })
+            .collect();
+        put_setting(
+            conn,
+            "usageNavHiddenProviders",
+            &serde_json::to_string(&hidden).map_err(|_| Error::msg("usage_encode_failed"))?,
+        )?;
 
         for root in &scan_roots {
             let existing_id: Option<String> = conn
@@ -386,6 +403,7 @@ pub fn backup_to(conn: &Connection, dest: &Path) -> Result<()> {
     crate::db::sanitize_project_remotes(&backup_conn)?;
     // A copied database is not authorization to read another machine's histories.
     backup_conn.execute_batch("UPDATE agent_session_sources SET enabled=0,last_scanned_at=NULL,last_error=NULL; DELETE FROM agent_sessions; DELETE FROM agent_session_files;")?;
+    backup_conn.execute_batch("DELETE FROM subscription_usage;")?;
     backup_conn.execute_batch("VACUUM")?;
     Ok(())
 }
