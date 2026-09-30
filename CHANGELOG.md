@@ -11,6 +11,7 @@ All notable changes to RepoAtlas will be documented here. Package availability i
 - Show all enabled subscription readouts in the title bar; keep visibility settings in the full Usage page and preserve the four work-tool entries.
 - Reorganize Settings into four categories and simplify Usage and Sessions, including direct navigation to the linked Project.
 - Cache usage metadata and coalesce bounded refreshes so account queries and token displays do not block local project management.
+- Update the locked optional QUIC protocol dependency to resolve RUSTSEC-2026-0185 and RUSTSEC-2026-0037.
 - Update bilingual documentation and describe provider coverage, credential boundaries, estimates and platform-signing limitations.
 
 ## [0.1.5] - 2026-09-18
