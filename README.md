@@ -61,6 +61,27 @@ Agent changes to the shared library continue to appear after onboarding, includi
 
 ## Sessions & Continue Coding
 
+Press **Ctrl+K** (Windows) or **Cmd+K** (macOS) to search Projects, session text and
+commands together. While RepoAtlas is running, **Ctrl+Shift+K / Cmd+Shift+K** opens
+a compact search window from any application. Escape hides that window. Settings
+shows shortcut registration failures and provides a retry and an Open search
+window action; the in-window shortcut remains available if the global chord is
+already taken.
+
+Search a Project name, path, error or feature, then use Up/Down to preview a result.
+Session results show the Agent, time, working directory and matching text. Enter
+focuses the preview; Tab reaches Copy message text, Open Project, Open full session
+and Continue session. Full-session navigation goes to the matching message. Continue
+checks the original session and working directory and shows the launch target before
+dispatch. Missing histories or directories produce an explanation instead of opening
+another conversation. Search reads authorized cached sources; use History sources
+to authorize or refresh them. The main desktop must remain running for the global
+shortcut.
+
+Use All / Sessions / Projects / Actions to narrow the results. Recent rows stay
+compact; previews start at one matching or latest message, with surrounding context
+and long text available on demand. Copy remains verbatim even when the preview is shortened.
+
 ![Sessions: search and preview coding conversations](assets/screenshots/en-dark-sessions.jpg)
 
 Find a previous coding conversation across Agents and continue the selected session in its original Agent. Open **Sessions** from the title bar or command palette, or use **Continue session** on the home workspace and Project Overview.

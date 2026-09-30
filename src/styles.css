@@ -57,3 +57,16 @@
   --fp-track: rgba(0, 0, 0, .16);
   --fp-selection: rgba(255, 163, 26, .06);
 }
+/* Session Agent identities share the local brand glyphs across labels and pickers. */
+.session-agent-label { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; vertical-align: middle; }
+.session-agent-label > svg, .session-agent-label > .brand-glyph-fallback { width: 14px; height: 14px; flex: none; }
+.session-agent-label > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-agent-select { display: inline-flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 34px; min-width: 150px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--bg-elevated); font-size: 12px; }
+.session-agent-select svg, .session-agent-option svg { width: 14px; height: 14px; }
+.session-agent-positioner { z-index: 100; }
+.session-agent-popup { min-width: var(--anchor-width); max-height: var(--available-height); overflow-y: auto; padding: 5px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-elevated); color: var(--text); box-shadow: var(--shadow-soft); }
+.session-agent-option { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 8px; border-radius: 5px; font-size: 12px; cursor: default; }
+.session-agent-option[data-highlighted] { background: var(--bg-hover); outline: 2px solid var(--accent); outline-offset: -2px; }
+.session-source-confirm, .session-source-confirm > span { display: grid; gap: 8px; }
+.session-source-confirm { gap: 16px; }
+.session-source-confirm code { overflow-wrap: anywhere; }

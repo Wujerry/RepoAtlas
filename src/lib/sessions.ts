@@ -1,4 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+export const onSessionSourcesChanged = (handler: () => void) => listen("sessions://sources-changed", handler);
 export const sessionAgents = { claude: "Claude Code", codex: "Codex CLI", opencode: "OpenCode", "cursor-cli": "Cursor CLI", gemini: "Gemini CLI", copilot: "GitHub Copilot CLI", kimi: "Kimi Code", qwen: "Qwen Code" };
 export interface SessionSource { id: string; adapter: string; path: string; enabled: boolean; lastScannedAt: string | null; lastError: string | null }
 export interface SessionCapabilities { search: boolean; transcript: boolean; directResume: boolean }
@@ -30,7 +32,7 @@ export const sessionApi = {
   cancel: () => invoke<void>("cancel_session_refresh"),
   rebuild: () => invoke<void>("rebuild_session_index"),
 };
-export function openSessionHistory(projectId?: string, session?: AgentSession) { window.dispatchEvent(new CustomEvent("repoatlas:session-history", { detail: { projectId, session } })); }
+export function openSessionHistory(projectId?: string, session?: AgentSession, messageIndex?: number) { window.dispatchEvent(new CustomEvent("repoatlas:session-history", { detail: { projectId, session, messageIndex } })); }
 export function sessionAgentName(adapter: string) { return sessionAgents[adapter as keyof typeof sessionAgents] ?? adapter; }
 export function sessionTime(value: string, chinese: boolean) {
   const delta = (Date.now() - new Date(value).getTime()) / 1000;

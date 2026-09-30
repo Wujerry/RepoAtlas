@@ -28,5 +28,9 @@ tauri-plugin-updater = "2"
 uuid = { version = "1", features = ["v4"] }
 url = "2"
 
+[target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
+# Keep the existing Tauri 2.11 runtime; plugin 2.4 requires Tauri 2.12.
+tauri-plugin-global-shortcut = "~2.3.2"
+
 [dev-dependencies]
 tempfile = "3"

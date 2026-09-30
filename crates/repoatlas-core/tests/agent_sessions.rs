@@ -3,7 +3,7 @@ use repoatlas_core::{
         adapters::{fingerprint, LocalAdapter, SessionAdapter},
         *,
     },
-    Core,
+    Core, ProjectPatch,
 };
 use serde_json::json;
 use std::{fs, path::Path, sync::atomic::AtomicBool};
@@ -16,6 +16,316 @@ fn parse(adapter: &str, path: &Path, root: &Path) -> (AgentSession, Vec<SessionM
         .read(root, path, &AtomicBool::new(false))
         .unwrap()
         .remove(0)
+}
+
+fn index_codex_session(core: &Core, source: &SessionSource, cwd: &Path) -> AgentSession {
+    let path = Path::new(&source.path).join("rollout-selected.jsonl");
+    write(
+        &path,
+        &format!(
+            "{}\n{}\n",
+            json!({"type":"session_meta","payload":{"id":"selected","cwd":cwd}}),
+            json!({"type":"event_msg","payload":{"type":"user_message","message":"Initial request"}}),
+        ),
+    );
+    let (session, messages) = parse("codex", &path, Path::new(&source.path));
+    core.ingest_session(source, session, &messages, &fingerprint(&path).unwrap())
+        .unwrap();
+    core.search_agent_sessions(Default::default())
+        .unwrap()
+        .items
+        .remove(0)
+        .session
+}
+
+#[test]
+fn session_search_finds_current_project_name_and_paths_without_fabricating_messages() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("sessions");
+    fs::create_dir(&root).unwrap();
+    let project_dir = dir.path().join("checkout-locator");
+    write(&project_dir.join("package.json"), r#"{"name":"example"}"#);
+    let core = Core::open(dir.path().join("atlas.sqlite")).unwrap();
+    let project = core
+        .register_project_with_origin(&project_dir, "test")
+        .unwrap();
+    core.update_project(
+        &project.id,
+        ProjectPatch {
+            display_name: Some("Atlas 中文 Project".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let source = core
+        .set_session_source("codex", root.to_str().unwrap(), true)
+        .unwrap();
+    let session = index_codex_session(&core, &source, &project_dir);
+    let replacement = dir.path().join("explicit-replacement");
+    fs::create_dir(&replacement).unwrap();
+    core.link_agent_session(&session.id, Some(&project.id), replacement.to_str())
+        .unwrap();
+
+    for query in [
+        "ATLAS",
+        "中文",
+        "checkout-locator",
+        "explicit-replacement",
+        project_dir.to_str().unwrap(),
+    ] {
+        let result = core
+            .search_agent_sessions(SessionQuery {
+                query: query.into(),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(result.total, 1, "{query}");
+        assert_eq!(result.items[0].session.id, session.id);
+        assert!(
+            result.items[0].snippets.is_empty(),
+            "metadata is not a transcript message"
+        );
+    }
+    assert_eq!(
+        core.search_agent_sessions(SessionQuery {
+            query: "Atlas".into(),
+            project_id: Some("another-project".into()),
+            ..Default::default()
+        })
+        .unwrap()
+        .total,
+        0
+    );
+    assert_eq!(
+        core.search_agent_sessions(SessionQuery {
+            query: "Atlas".into(),
+            adapter: Some("claude".into()),
+            ..Default::default()
+        })
+        .unwrap()
+        .total,
+        0
+    );
+    core.update_project(
+        &project.id,
+        ProjectPatch {
+            display_name: Some("Renamed Project".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        core.search_agent_sessions(SessionQuery {
+            query: "Atlas".into(),
+            ..Default::default()
+        })
+        .unwrap()
+        .total,
+        0
+    );
+    core.set_session_source("codex", &source.path, false)
+        .unwrap();
+    assert_eq!(
+        core.search_agent_sessions(SessionQuery {
+            query: "checkout-locator".into(),
+            ..Default::default()
+        })
+        .unwrap()
+        .total,
+        0
+    );
+}
+
+#[test]
+fn session_search_snippets_locate_original_text_and_large_message_context() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("sessions");
+    fs::create_dir(&root).unwrap();
+    let core = Core::open(dir.path().join("atlas.sqlite")).unwrap();
+    let source = core
+        .set_session_source("codex", root.to_str().unwrap(), true)
+        .unwrap();
+    let session = index_codex_session(&core, &source, dir.path());
+    let messages = vec![
+        SessionMessage {
+            index: 100_004,
+            role: "user".into(),
+            timestamp: "2026-09-30T00:00:00Z".into(),
+            content: "Previous message".into(),
+        },
+        SessionMessage {
+            index: 100_005,
+            role: "assistant".into(),
+            timestamp: "2026-09-30T00:00:01Z".into(),
+            content: format!("{} precise DPI-1047 中文 message", "İ".repeat(600)),
+        },
+        SessionMessage {
+            index: 100_006,
+            role: "user".into(),
+            timestamp: "2026-09-30T00:00:02Z".into(),
+            content: format!("{} café final context", "padding ".repeat(200)),
+        },
+    ];
+    core.ingest_session(&source, session.clone(), &messages, "snippets")
+        .unwrap();
+    for (query, expected_index, expected_text) in [
+        ("DPI-1047", 100_005, "DPI-1047"),
+        ("中文", 100_005, "中文"),
+        ("cafe", 100_006, "café"),
+    ] {
+        let result = core
+            .search_agent_sessions(SessionQuery {
+                query: query.into(),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(result.total, 1, "{query}");
+        assert_eq!(
+            result.items[0].snippets.len(),
+            1,
+            "duplicate FTS hits must merge"
+        );
+        let snippet = &result.items[0].snippets[0];
+        assert_eq!(snippet.index, expected_index);
+        assert!(
+            snippet.content.contains(expected_text),
+            "{query}: {}",
+            snippet.content
+        );
+        assert!(snippet.content.chars().count() <= 320);
+        let context = core
+            .agent_session_messages(&session.id, snippet.index, 1)
+            .unwrap();
+        assert_eq!(context.items.len(), 1);
+        let message = &context.items[0];
+        assert_eq!(message.index, snippet.index);
+        assert_eq!(message.role, snippet.role);
+        assert_eq!(message.timestamp, snippet.timestamp);
+        assert!(message.content.contains(snippet.content.trim_matches('…')));
+    }
+}
+
+#[test]
+fn session_resume_rejects_invalid_cwds_without_falling_back_to_linked_project() {
+    for kind in [
+        "empty",
+        "relative",
+        "missing-relative",
+        "missing-absolute",
+        "file",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("sessions");
+        fs::create_dir(&root).unwrap();
+        let project_dir = dir.path().join("project");
+        write(&project_dir.join("package.json"), r#"{"name":"example"}"#);
+        let core = Core::open(dir.path().join("atlas.sqlite")).unwrap();
+        let project = core
+            .register_project_with_origin(&project_dir, "test")
+            .unwrap();
+        let source = core
+            .set_session_source("codex", root.to_str().unwrap(), true)
+            .unwrap();
+        let session = index_codex_session(&core, &source, &project_dir);
+        let (mut parsed, messages) = parse("codex", Path::new(&session.source_locator), &root);
+        let cwd = match kind {
+            "empty" => String::new(),
+            "relative" => ".".into(),
+            "missing-relative" => "missing-relative-directory".into(),
+            "missing-absolute" => dir
+                .path()
+                .join("missing-directory")
+                .to_string_lossy()
+                .into_owned(),
+            _ => session.source_locator.clone(),
+        };
+        parsed.cwd = cwd.clone();
+        core.ingest_session(&source, parsed.clone(), &messages, "cwd")
+            .unwrap();
+        // A valid Project link must never silently replace the recorded cwd.
+        core.link_agent_session(&session.id, Some(&project.id), None)
+            .unwrap();
+        assert_eq!(
+            core.agent_session_resume_spec(&session.id)
+                .unwrap_err()
+                .to_string(),
+            "session_cwd_missing",
+            "{cwd}"
+        );
+        assert_eq!(
+            core.resume_agent_session(&session.id)
+                .unwrap_err()
+                .to_string(),
+            "session_cwd_missing",
+            "{cwd}"
+        );
+    }
+}
+
+#[test]
+fn session_resume_rejects_stale_identity_missing_files_and_revoked_sources_before_launch() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("sessions");
+    fs::create_dir(&root).unwrap();
+    let core = Core::open(dir.path().join("atlas.sqlite")).unwrap();
+    let source = core
+        .set_session_source("codex", root.to_str().unwrap(), true)
+        .unwrap();
+    let session = index_codex_session(&core, &source, dir.path());
+    let file = Path::new(&session.source_locator);
+    let original = fs::read_to_string(file).unwrap();
+    write(file, &original.replace("selected", "replacement"));
+    assert_eq!(
+        core.resume_agent_session(&session.id)
+            .unwrap_err()
+            .to_string(),
+        "session_source_missing"
+    );
+    fs::remove_file(file).unwrap();
+    for remove_root in [false, true] {
+        if remove_root {
+            fs::remove_dir(&root).unwrap();
+        }
+        let cached = core.get_agent_session(&session.id).unwrap();
+        assert!(cached.source_missing);
+        assert!(!cached.capabilities.direct_resume);
+        assert_eq!(
+            core.agent_session_resume_spec(&session.id)
+                .unwrap_err()
+                .to_string(),
+            "session_source_missing"
+        );
+        assert_eq!(
+            core.resume_agent_session(&session.id)
+                .unwrap_err()
+                .to_string(),
+            "session_source_missing"
+        );
+        assert_eq!(
+            core.search_agent_sessions(SessionQuery {
+                query: "Initial request".into(),
+                ..Default::default()
+            })
+            .unwrap()
+            .total,
+            1,
+            "missing originals retain authorized cached search"
+        );
+    }
+    core.set_session_source("codex", &source.path, false)
+        .unwrap();
+    assert_eq!(
+        core.resume_agent_session(&session.id)
+            .unwrap_err()
+            .to_string(),
+        "session_not_authorized_or_missing"
+    );
+    assert_eq!(
+        core.agent_session_resume_spec("unknown-session")
+            .unwrap_err()
+            .to_string(),
+        "session_not_authorized_or_missing"
+    );
 }
 
 #[test]

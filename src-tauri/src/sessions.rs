@@ -30,6 +30,7 @@ pub async fn session_sources(
 }
 #[tauri::command]
 pub async fn set_session_source(
+    app: AppHandle,
     state: State<'_, Arc<AppState>>,
     adapter: String,
     path: String,
@@ -38,10 +39,13 @@ pub async fn set_session_source(
     if !enabled {
         CANCEL.store(true, Ordering::Relaxed);
     }
-    read(&state, move |c| {
+    let source = read(&state, move |c| {
         c.set_session_source(&adapter, &path, enabled)
     })
-    .await
+    .await?;
+    // Every open search surface must discard excerpts when authorization changes.
+    let _ = app.emit("sessions://sources-changed", ());
+    Ok(source)
 }
 #[tauri::command]
 pub async fn search_agent_sessions(

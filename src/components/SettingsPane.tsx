@@ -8,6 +8,7 @@ import { Button } from "./ui/button";
 import { ConfirmDialog } from "./ui/confirm";
 import { EmptyState } from "./ui/feedback";
 import { UpdateSettings } from "./UpdateSettings";
+import { QuickSearchShortcut } from "./QuickSearchShortcut";
 
 export interface SettingsPaneProps {
   settings: AppSettings;
@@ -124,6 +125,7 @@ export function SettingsPane({
         <p>{t("settingsIntro")}</p>
       </header>
       <div className="settings-content">
+        <QuickSearchShortcut t={t} />
         <section className="settings-card"><h2>{t("ahSources")}</h2><p>{t("ahSourcesHint")}</p><Button onClick={() => window.dispatchEvent(new CustomEvent("repoatlas:session-history", { detail: { sources: true } }))}>{t("ahSources")}</Button></section>
         <section className="settings-card">
           <div className="settings-card-heading">

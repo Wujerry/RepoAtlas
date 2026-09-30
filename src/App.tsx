@@ -4,13 +4,16 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { MotionConfig } from "framer-motion";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
 import { CommandPalette } from "./components/CommandPalette";
+import { QuickSearchShortcut } from "./components/QuickSearchShortcut";
+import { isTauri } from "@tauri-apps/api/core";
+import { connectQuickSearchRequests, quickSearchApi, type QuickSearchRequest } from "./lib/quick-search";
 import { ProjectList, type ProjectFilters } from "./components/ProjectList";
 import { TitleBar } from "./components/TitleBar";
 import { TitleBarUpdate } from "./components/TitleBarUpdate";
 import { OnboardingDialog, type OnboardingStep } from "./components/OnboardingDialog";
 import { FootprintsDialog } from "./components/FootprintsDialog";
 import { AIHistory } from "./components/AIHistory";
-import { openSessionHistory } from "./lib/sessions";
+import { openSessionHistory, sessionApi } from "./lib/sessions";
 import { SplashScreen } from "./components/SplashScreen";
 import { TaskWorkbench } from "./components/TaskWorkbench";
 import { CollectionControls } from "./components/CollectionControls";
@@ -495,11 +498,36 @@ export default function App() {
         setActiveTasksOpen((open) => !open);
         return;
       }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); setPaletteOpen(true); }
-      if (event.key === "Escape") setPaletteOpen(false);
+      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "k" && !event.isComposing) { event.preventDefault(); setPaletteOpen(true); }
     };
     window.addEventListener("keydown", onKey, true); return () => window.removeEventListener("keydown", onKey, true);
   }, []);
+
+  const searchNavigation = useRef<(request: QuickSearchRequest) => Promise<void>>(async () => undefined);
+  searchNavigation.current = async request => {
+    if (request.action !== "open-main") return;
+    setPaletteOpen(false); setSettingsOpen(false); setFootprintsOpen(false); setActiveTasksOpen(false); setApprovalsOpen(false);
+    setView("library");
+    if (request.target.kind === "project") {
+      window.dispatchEvent(new Event("repoatlas:close-sessions"));
+      await openProjectFromPalette(request.target.projectId, true);
+    } else if (request.target.sources) {
+      window.dispatchEvent(new CustomEvent("repoatlas:session-history", { detail: { sources: true } }));
+    } else {
+      const session = request.target.sessionId ? await sessionApi.get(request.target.sessionId) : undefined;
+      openSessionHistory(undefined, session, request.target.messageIndex);
+    }
+  };
+  useEffect(() => {
+    if (booting || !isTauri()) return;
+    const connection = connectQuickSearchRequests(async request => {
+      try { await searchNavigation.current(request); }
+      catch (error) { notify("error", t("openFailed"), String(error)); }
+      // A removed Project/revoked Session is a handled failure, not a queue blocker.
+    }, error => notify("error", t("openFailed"), error.message));
+    void connection.catch(error => notify("error", t("openFailed"), String(error)));
+    return () => { void connection.then(dispose => dispose(), () => undefined); };
+  }, [booting, notify, t]);
 
   const visibleProjects = useMemo(() => projects.filter((project) => (!filters.language || project.languages.includes(filters.language)) && (!filters.tag || project.tags.includes(filters.tag))), [filters, projects]);
   const visibleAttentionItems = useMemo(() => {
@@ -689,7 +717,7 @@ export default function App() {
       if (loaded) void api.markOpened(id).catch(() => undefined);
     });
   }
-  async function openProjectFromPalette(id: string) {
+  async function openProjectFromPalette(id: string, propagateError = false) {
     const queryRequest = ++querySequence.current;
     const detailRequest = ++detailSequence.current;
     try {
@@ -708,7 +736,7 @@ export default function App() {
       setSelectedId(id); setDetail(next); setProjectLoading(false);
       if (cached) void loadProjectDetail(id);
       try { await api.markOpened(id); } catch { /* non-blocking */ }
-    } catch (error) { notify("error", t("projectLoadFailed"), String(error)); }
+    } catch (error) { if (propagateError) throw error; notify("error", t("projectLoadFailed"), String(error)); }
   }
   async function startScan(rootId?: string, folderPath?: string) { if (scanningRef.current) return; scanningRef.current = true; setScanning(true); setProgress(null); try { await api.startScan(rootId, folderPath); } catch (error) { scanningRef.current = false; setScanning(false); notify("error", t("scanFailed"), String(error)); } }
   async function cancelScan() { try { await api.cancelScan(); } catch (error) { notify("error", t("cancelFailed"), String(error)); } }
@@ -751,6 +779,7 @@ export default function App() {
   }
 
   const paletteActions = [
+    ...(isTauri() ? [{ id: "open-quick-search", title: t("qsOpenWindow"), run: () => quickSearchApi.show() }] : []),
     { id: "open-dashboard", title: t("dashboard"), run: returnToLibrary },
     { id: "open-help", title: t("openHelp"), run: openHelp }, { id: "open-settings", title: t("openSettings"), run: openSettings },
     { id: "scan-all", title: t("scanAll"), run: () => void startScan() }, { id: "add-root", title: t("addRoot"), run: () => void chooseDirectory(false) }, { id: "register", title: t("register"), run: () => void chooseDirectory(true) },
@@ -821,7 +850,7 @@ export default function App() {
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>
-    <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} t={t} projects={visibleProjects} actions={paletteActions} onProject={(id) => void openProjectFromPalette(id)} />
+    <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} t={t} projects={visibleProjects} actions={paletteActions} onProject={async id => { await openProjectFromPalette(id, true); closePageOverlays(); }} shortcutHint={<QuickSearchShortcut t={t} compact />} />
     <Dialog.Root modal={false} open={approvalsOpen} onOpenChange={setApprovalsOpen}>
       <Dialog.Portal>
         <Dialog.Backdrop className="dialog-backdrop attention-page-backdrop" />

@@ -2,6 +2,7 @@ use repoatlas_core::core::activity::{
     ActivityDayRange, ActivityQuery, ActivitySummary, HistoryRefreshManager, HistoryRefreshRequest,
     HistoryRefreshStatus,
 };
+mod quick_search;
 mod sessions;
 use repoatlas_core::{
     launch,
@@ -2214,6 +2215,7 @@ pub fn run() {
                 next_file_index_generation: AtomicU64::new(0),
                 git_write_locks: Mutex::new(HashMap::new()),
             }));
+            quick_search::setup(app.handle());
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_millis(2500));
@@ -2229,6 +2231,12 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            quick_search::quick_search_status,
+            quick_search::quick_search_retry_registration,
+            quick_search::quick_search_show,
+            quick_search::quick_search_hide,
+            quick_search::quick_search_ready,
+            quick_search::quick_search_open_main,
             sessions::session_sources,
             sessions::set_session_source,
             sessions::search_agent_sessions,

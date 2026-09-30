@@ -1,6 +1,41 @@
 use super::*;
 use crate::agent_sessions::{adapters, *};
 
+fn session_snippet(content: &str, needle: &str, indexed_excerpt: &str) -> String {
+    let lower = content.to_lowercase();
+    let position = lower.find(needle).or_else(|| {
+        needle
+            .split_whitespace()
+            .filter_map(|term| lower.find(term))
+            .min()
+    });
+    let Some(position) = position else {
+        // unicode61 also matches normalized tokens (e.g. cafe -> café).
+        // Let FTS locate those matches instead of returning the message's beginning.
+        return indexed_excerpt.chars().take(320).collect();
+    };
+    let folded_position = lower[..position].chars().count();
+    let mut folded_offset = 0;
+    let position = content
+        .chars()
+        .take_while(|ch| {
+            if folded_offset >= folded_position {
+                false
+            } else {
+                folded_offset += ch.to_lowercase().count();
+                true
+            }
+        })
+        .count();
+    // Case folding can expand one source character into several characters.
+    // Slice the original text so snippets keep its exact spelling and punctuation.
+    content
+        .chars()
+        .skip(position.saturating_sub(80))
+        .take(320)
+        .collect()
+}
+
 pub(crate) fn migrate(conn: &Connection) -> Result<()> {
     conn.execute_batch("CREATE TABLE IF NOT EXISTS agent_session_sources(id TEXT PRIMARY KEY,adapter TEXT NOT NULL,path TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 0,last_scanned_at TEXT,last_error TEXT,UNIQUE(adapter,path));
         CREATE TABLE IF NOT EXISTS agent_sessions(id TEXT PRIMARY KEY,source_id TEXT NOT NULL REFERENCES agent_session_sources(id) ON DELETE CASCADE,external_id TEXT NOT NULL,project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,manual INTEGER NOT NULL DEFAULT 0,revision TEXT NOT NULL,fingerprint TEXT NOT NULL,locator TEXT NOT NULL,data TEXT NOT NULL,missing INTEGER NOT NULL DEFAULT 0,UNIQUE(source_id,external_id));
@@ -247,7 +282,8 @@ impl Core {
             let matched = projects
                 .iter()
                 .filter(|p| {
-                    !session.cwd.is_empty() && paths::is_within(&cwd, Path::new(&p.canonical_path))
+                    Path::new(&session.cwd).is_absolute()
+                        && paths::is_within(&cwd, Path::new(&p.canonical_path))
                 })
                 .max_by_key(|p| Path::new(&p.canonical_path).components().count());
             if let Some(p) = matched {
@@ -357,12 +393,17 @@ impl Core {
                 serde_json::from_str(&data).map_err(|_| Error::msg("invalid_session_metadata"))?;
             session.project_id = project_id;
             session.project_name = project_name;
-            session.source_missing = missing;
-            session.resume_reason = if missing {
+            session.source_missing = missing
+                || !Path::new(&session.source_locator).is_file()
+                || sources
+                    .iter()
+                    .find(|s| s.id == session.source_id)
+                    .is_none_or(|s| !Path::new(&s.path).is_dir());
+            session.resume_reason = if session.source_missing {
                 Some("session_source_missing")
             } else if resume_args(&session.adapter, &session.external_id).is_err() {
                 Some("invalid_session_id")
-            } else if session.cwd.is_empty() || !Path::new(&session.cwd).is_dir() {
+            } else if !Path::new(&session.cwd).is_absolute() || !Path::new(&session.cwd).is_dir() {
                 Some("session_cwd_missing")
             } else if !installed.iter().any(|a| {
                 a.id == if session.adapter == "opencode" {
@@ -461,7 +502,45 @@ impl Core {
         let needle = q.query.trim().to_lowercase();
         let mut matches: HashMap<(String, String), Vec<SessionMessage>> = HashMap::new();
         let mut ranks: HashMap<(String, String), f64> = HashMap::new();
+        let mut metadata_matches = HashSet::new();
         if !needle.is_empty() {
+            // Project metadata stays authoritative in the main database; it is
+            // neither copied into the transcript index nor given a message index.
+            let mut stmt = self
+                .conn
+                .prepare("SELECT id,canonical_path FROM projects")?;
+            let project_paths = stmt
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<std::result::Result<HashMap<_, _>, _>>()?;
+            let normalize = |text: &str| {
+                let text = text.to_lowercase();
+                if cfg!(windows) {
+                    text.replace('\\', "/")
+                } else {
+                    text
+                }
+            };
+            let metadata_needle = normalize(&needle);
+            for session in &eligible {
+                let project_path = session
+                    .project_id
+                    .as_ref()
+                    .and_then(|id| project_paths.get(id));
+                let metadata = normalize(&format!(
+                    "{}\n{}\n{}",
+                    session.project_name.as_deref().unwrap_or_default(),
+                    session.cwd,
+                    project_path.map(String::as_str).unwrap_or_default(),
+                ));
+                if metadata_needle
+                    .split_whitespace()
+                    .all(|term| metadata.contains(term))
+                {
+                    metadata_matches.insert(session.id.clone());
+                }
+            }
             let index = self.session_index()?;
             index.execute_batch("CREATE TEMP TABLE scope(session_id TEXT,revision TEXT,PRIMARY KEY(session_id,revision)) WITHOUT ROWID;")?;
             let tx = index.unchecked_transaction()?;
@@ -486,13 +565,13 @@ impl Core {
                     continue;
                 }
                 let select = if short {
-                    "SELECT d.id,d.session_id,d.revision,0.0 AS score FROM documents d JOIN scope c ON c.session_id=d.session_id AND c.revision=d.revision WHERE NOT EXISTS(SELECT 1 FROM json_each(?1) term WHERE instr(lower(d.content),term.value)=0)".to_owned()
+                    "SELECT d.id,d.session_id,d.revision,0.0 AS score,d.content AS excerpt FROM documents d JOIN scope c ON c.session_id=d.session_id AND c.revision=d.revision WHERE NOT EXISTS(SELECT 1 FROM json_each(?1) term WHERE instr(lower(d.content),term.value)=0)".to_owned()
                 } else {
-                    format!("SELECT d.id,d.session_id,d.revision,bm25({table}) AS score FROM {table} JOIN documents d ON d.id={table}.rowid JOIN scope c ON c.session_id=d.session_id AND c.revision=d.revision WHERE {table} MATCH ?1")
+                    format!("SELECT d.id,d.session_id,d.revision,bm25({table}) AS score,snippet({table},0,'','','…',32) AS excerpt FROM {table} JOIN documents d ON d.id={table}.rowid JOIN scope c ON c.session_id=d.session_id AND c.revision=d.revision WHERE {table} MATCH ?1")
                 };
                 // Bound returned text per session, not the global hit set. This keeps
                 // Project/date filters and result counts correct for large histories.
-                let sql=format!("WITH hits AS MATERIALIZED ({select}), ranked AS (SELECT *,row_number() OVER(PARTITION BY session_id,revision ORDER BY score,id) AS n FROM hits) SELECT r.session_id,r.revision,d.message_index,d.role,d.timestamp,d.content,r.score FROM ranked r JOIN documents d ON d.id=r.id WHERE n<=4 ORDER BY r.score,r.id");
+                let sql=format!("WITH hits AS MATERIALIZED ({select}), ranked AS (SELECT *,row_number() OVER(PARTITION BY session_id,revision ORDER BY score,id) AS n FROM hits) SELECT r.session_id,r.revision,d.message_index,d.role,d.timestamp,d.content,r.score,r.excerpt FROM ranked r JOIN documents d ON d.id=r.id WHERE n<=4 ORDER BY r.score,r.id");
                 let mut stmt = index.prepare(&sql)?;
                 let rows =
                     stmt.query_map([if short { &short_terms } else { &expression }], |r| {
@@ -504,10 +583,11 @@ impl Core {
                             r.get::<_, String>(4)?,
                             r.get::<_, String>(5)?,
                             r.get::<_, f64>(6)?,
+                            r.get::<_, String>(7)?,
                         ))
                     })?;
                 for row in rows {
-                    let (id, revision, n, role, timestamp, content, rank) = row?;
+                    let (id, revision, n, role, timestamp, content, rank, excerpt) = row?;
                     let key = (id, revision);
                     ranks
                         .entry(key.clone())
@@ -515,19 +595,11 @@ impl Core {
                         .or_insert(rank);
                     let items = matches.entry(key).or_default();
                     if n >= 0 && items.len() < 3 && !items.iter().any(|m| m.index == n as usize) {
-                        let chars: Vec<char> = content.chars().collect();
-                        let lower = content.to_lowercase();
-                        let pos = lower
-                            .find(needle.split_whitespace().next().unwrap_or(""))
-                            .map(|b| lower[..b].chars().count())
-                            .unwrap_or(0);
-                        let start = pos.saturating_sub(80);
-                        let end = (start + 320).min(chars.len());
                         items.push(SessionMessage {
                             index: n as usize,
                             role,
                             timestamp,
-                            content: chars[start.min(end)..end].iter().collect(),
+                            content: session_snippet(&content, &needle, &excerpt),
                         });
                     }
                 }
@@ -536,7 +608,10 @@ impl Core {
         let mut items = Vec::new();
         for session in eligible {
             let key = (session.id.clone(), session.revision.clone());
-            if !needle.is_empty() && !matches.contains_key(&key) {
+            if !needle.is_empty()
+                && !matches.contains_key(&key)
+                && !metadata_matches.contains(&session.id)
+            {
                 continue;
             }
             items.push(SessionSearchHit {
@@ -576,7 +651,7 @@ impl Core {
                 params![
                     id,
                     session.revision,
-                    offset.min(100_000),
+                    i64::try_from(offset).unwrap_or(i64::MAX),
                     limit.clamp(1, 100)
                 ],
                 |r| {
@@ -719,7 +794,9 @@ impl Core {
         self.resume_agent_session_target(id, "cli")
     }
     pub fn resume_agent_session_target(&self, id: &str, target: &str) -> Result<()> {
-        let spec = self.agent_session_resume_spec(id)?;
+        if !["app", "cli"].contains(&target) {
+            return Err(Error::msg("invalid_session_target"));
+        }
         let session = self.get_agent_session(id)?;
         let source = self
             .session_sources()?
@@ -727,6 +804,7 @@ impl Core {
             .find(|source| source.id == session.source_id && source.enabled)
             .ok_or_else(|| Error::msg("source_disabled"))?;
         adapters::validate_resume_source(&source, &session)?;
+        let spec = self.agent_session_resume_spec(id)?;
         let result = if target == "app" {
             if !spec.app.as_ref().is_some_and(|a| a.can_resume) {
                 return Err(Error::msg("session_app_resume_unsupported"));

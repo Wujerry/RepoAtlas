@@ -16,7 +16,7 @@ export function TitleBar({ historyLabel = "Sessions", historyOpen = false, title
           <div className="brand-subtitle">{subtitle}</div>
         </div>
       </button>
-      <button className="titlebar-command" onClick={onCommand} data-tauri-drag-region="false"><Command weight="bold" aria-hidden="true" /><span>{commandLabel}</span><kbd>Ctrl K</kbd></button>
+      <button className="titlebar-command" onClick={onCommand} data-tauri-drag-region="false"><Command weight="bold" aria-hidden="true" /><span>{commandLabel}</span><kbd>{/mac/i.test(navigator.userAgent) ? "Cmd K" : "Ctrl K"}</kbd></button>
       <div className="titlebar-pages" data-tauri-drag-region="false">
         <button className="titlebar-ai-history" aria-pressed={historyOpen} onClick={() => openSessionHistory()} aria-label={historyLabel} title={historyLabel}><Brain weight={historyOpen ? "fill" : "duotone"} aria-hidden="true" /><span>{historyLabel}</span></button>
         <button className={"has-tint" + (tasksCount > 0 ? " has-alert" : "")} onClick={onTasks} aria-label={`${tasksLabel}${tasksCount ? ` (${tasksCount})` : ""}`} aria-keyshortcuts={"Control+`"} title={`${tasksLabel} (${tasksShortcut})`}><Play weight="fill" aria-hidden="true" />{tasksCount > 0 && <span className="titlebar-badge" aria-hidden="true">{tasksCount > 9 ? "9+" : tasksCount}</span>}</button>

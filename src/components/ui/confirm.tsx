@@ -1,4 +1,5 @@
 import { AlertDialog } from "@base-ui/react/alert-dialog";
+import type { ReactNode } from "react";
 import { Button } from "./button";
 
 export function ConfirmDialog({
@@ -15,7 +16,7 @@ export function ConfirmDialog({
 }: {
   open: boolean;
   title: string;
-  body: string;
+  body: ReactNode;
   confirmLabel: string;
   cancelLabel?: string;
   busy?: boolean;

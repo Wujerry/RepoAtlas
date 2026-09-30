@@ -119,9 +119,13 @@ pub fn validate_resume_source(source: &SessionSource, session: &AgentSession) ->
     if !source.enabled || source.id != session.source_id || source.adapter != session.adapter {
         return Err(Error::msg("source_disabled"));
     }
-    let root = paths::canonicalize(Path::new(&source.path))?;
+    let root = paths::canonicalize(Path::new(&source.path))
+        .map_err(|_| Error::msg("session_source_missing"))?;
     let file = paths::canonicalize(Path::new(&session.source_locator))
         .map_err(|_| Error::msg("session_source_missing"))?;
+    if !root.is_dir() || !file.is_file() {
+        return Err(Error::msg("session_source_missing"));
+    }
     if !paths::is_within(&file, &root) {
         return Err(Error::msg("source_path_escape"));
     }

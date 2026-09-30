@@ -17,6 +17,7 @@ import {
   siCursor,
   siGhostty,
   siGit,
+  siGithubcopilot,
   siGooglegemini,
   siIterm2,
   siJetbrains,
@@ -100,6 +101,8 @@ const vendored = (d: string, extra?: Partial<GlyphSpec>): GlyphSpec => ({ paths:
 
 const AGENT_GLYPHS: Record<string, GlyphSpec | null> = {
   cursor: simple(siCursor),
+  "cursor-cli": simple(siCursor),
+  copilot: simple(siGithubcopilot),
   zcode: vendored(ZAI_PATH),
   opencode: simple(siOpencode),
   "opencode-cli": simple(siOpencode),
