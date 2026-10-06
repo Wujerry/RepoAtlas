@@ -30,7 +30,7 @@ url = "2"
 
 [target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
 # Keep the existing Tauri 2.11 runtime; plugin 2.4 requires Tauri 2.12.
-tauri-plugin-global-shortcut = "~2.3.2"
+tauri-plugin-global-shortcut = "~2.4.0"
 
 [dev-dependencies]
 tempfile = "3"
