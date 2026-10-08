@@ -41,6 +41,7 @@ fn git_waiting_for_a_hook_keeps_core_available_for_other_operations() {
         runtime_configs: Mutex::new(HashMap::new()),
         runtime_sampler_started: AtomicBool::new(false),
         port_preflights: Mutex::new(HashMap::new()),
+        port_processes: Mutex::new(Default::default()),
         file_indexes: Mutex::new(HashMap::new()),
         file_index_build_lock: Arc::new(Mutex::new(())),
         file_search_lock: Arc::new(Mutex::new(())),

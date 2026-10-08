@@ -646,3 +646,14 @@ export interface ActivitySummary {
 export interface HistoryRefreshRequest { projectId?: string; startAt: number; endAt: number; force: boolean }
 export interface HistoryRefreshStatus { id: string; state: string; completed: number; total: number; commits: number; failures: string[] }
 export type { AgentSession, SessionSource, SessionCapabilities, SessionMessage, SessionMessagePage, SessionSearchHit, SessionSearchResult, SessionQuery, SessionRefreshJob, SessionResumeSpec } from "./lib/sessions";
+export interface ProcessIdentity { pid: number; createdAt: string; executable: string }
+export interface PortProcess {
+  pid: number; name: string; ports: number[]; identity: ProcessIdentity | null;
+  projectId: string | null; attribution: "task" | "manual" | "cwd" | "executable" | "unknown";
+  runId: string | null; restriction: string | null;
+}
+export interface ProcessInventory { supported: boolean; processes: PortProcess[] }
+export type ProcessStopMode = "graceful" | "force";
+export interface ProcessStopPreview {
+  token: string; target: PortProcess; mode: ProcessStopMode; affected: PortProcess[]; processCount: number;
+}

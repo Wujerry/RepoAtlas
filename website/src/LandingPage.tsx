@@ -16,7 +16,7 @@ import {
   TerminalWindow,
 } from "@phosphor-icons/react";
 import { copy, type Copy, type Locale } from "./copy";
-import { heroShots, markUrl, tasksShots, sessionShots, resumeShots } from "./assets";
+import { heroShots, markUrl, tasksShots, sessionShots, searchShots, usageShots, projectShots } from "./assets";
 
 const EASE: [number, number, number, number] = [0.16, 1, 0.3, 1];
 
@@ -195,8 +195,8 @@ function Hero({ t, locale }: { t: Copy; locale: Locale }) {
               <img
                 src={heroShot}
                 alt={t.heroImageAlt}
-                width={3174}
-                height={1985}
+                width={1600}
+                height={1000}
                 className="block aspect-[16/10] w-full object-cover object-top"
               />
               {!reduce && (
@@ -248,7 +248,7 @@ function Sessions({ t, locale }: { t: Copy; locale: Locale }) {
     <section id="sessions" className="border-t border-line" aria-labelledby="sessions-title">
       <div className="mx-auto w-full max-w-[1400px] px-5 py-20 md:px-8 md:py-28">
         <Reveal>
-          <p className="font-mono text-[12px] text-amber">Sessions</p>
+          <p className="font-mono text-[12px] text-amber">{t.navSessions}</p>
           <h2 id="sessions-title" className="mt-3 max-w-[28ch] text-[clamp(1.9rem,3.6vw,3.1rem)] font-semibold leading-[1.14] tracking-[-0.03em]">{t.sessionsTitle}</h2>
           <p className="mt-4 max-w-[68ch] text-[15px] leading-relaxed text-mute">{t.sessionsBody}</p>
         </Reveal>
@@ -262,12 +262,12 @@ function Sessions({ t, locale }: { t: Copy; locale: Locale }) {
           ))}
         </ol>
         <figure className="mt-10">
-          <img src={sessionShots[locale]} alt={t.sessionsImageAlt} width={1602} height={1002} loading="lazy" className="w-full rounded-[16px] border border-line" />
+          <img src={sessionShots[locale]} alt={t.sessionsImageAlt} width={1600} height={1000} loading="lazy" className="w-full rounded-[16px] border border-line" />
           <figcaption className="mt-3 text-[12px] text-mute">{t.showcaseCaption}</figcaption>
         </figure>
         <details className="mt-5 rounded-[12px] border border-line bg-panel p-5">
-          <summary className="cursor-pointer text-[14px] font-semibold focus-visible:outline-2 focus-visible:outline-amber">{t.resumeImageLabel}</summary>
-          <img src={resumeShots[locale]} alt={t.resumeImageAlt} width={1602} height={1002} loading="lazy" className="mt-5 w-full rounded-[8px] border border-line" />
+          <summary className="cursor-pointer text-[14px] font-semibold focus-visible:outline-2 focus-visible:outline-amber">{t.searchImageLabel}</summary>
+          <img src={searchShots[locale]} alt={t.searchImageAlt} width={1600} height={1000} loading="lazy" className="mt-5 w-full rounded-[8px] border border-line" />
         </details>
         <p className="mt-7 text-[13px] leading-loose">{t.sessionsAgents}</p>
         <p className="mt-3 max-w-[100ch] text-[13px] leading-relaxed text-mute">{t.sessionsNote}</p>
@@ -306,8 +306,8 @@ function Tasks({ t, locale }: { t: Copy; locale: Locale }) {
                 <img
                   src={tasksShots[locale]}
                   alt={t.tasksImageAlt}
-                  width={3174}
-                  height={1985}
+                  width={1600}
+                  height={1000}
                   loading="lazy"
                   className="block aspect-[16/10] w-full object-cover object-top"
                 />
@@ -320,7 +320,24 @@ function Tasks({ t, locale }: { t: Copy; locale: Locale }) {
   );
 }
 
-function Library({ t }: { t: Copy }) {
+function Usage({ t, locale }: { t: Copy; locale: Locale }) {
+  return <section id="usage" className="border-t border-line" aria-labelledby="usage-title">
+    <div className="mx-auto w-full max-w-[1400px] px-5 py-20 md:px-8 md:py-28">
+      <Reveal>
+        <p className="font-mono text-[12px] text-amber">{t.navUsage}</p>
+        <h2 id="usage-title" className="mt-3 max-w-[28ch] text-[clamp(1.9rem,3.6vw,3.1rem)] font-semibold leading-[1.14] tracking-[-0.03em]">{t.usageTitle}</h2>
+        <p className="mt-4 max-w-[72ch] text-[15px] leading-relaxed text-mute">{t.usageBody}</p>
+      </Reveal>
+      <figure className="mt-10">
+        <img src={usageShots[locale]} alt={t.usageImageAlt} width={1600} height={1000} loading="lazy" className="w-full rounded-[16px] border border-line" />
+        <figcaption className="mt-3 text-[12px] text-mute">{t.showcaseCaption}</figcaption>
+      </figure>
+      <p className="mt-5 max-w-[100ch] text-[13px] leading-relaxed text-mute">{t.usageNote}</p>
+    </div>
+  </section>;
+}
+
+function Library({ t, locale }: { t: Copy; locale: Locale }) {
   const [lead, ...rest] = t.libraryCells;
   return (
     <section id="library" className="border-t border-line">
@@ -333,6 +350,10 @@ function Library({ t }: { t: Copy }) {
             {t.libraryBody}
           </p>
         </Reveal>
+        <figure className="mt-10">
+          <img src={projectShots[locale]} alt={t.libraryImageAlt} width={1600} height={1000} loading="lazy" className="w-full rounded-[16px] border border-line" />
+          <figcaption className="mt-3 text-[12px] text-mute">{t.showcaseCaption}</figcaption>
+        </figure>
         <div className="mt-12 grid gap-4 md:grid-cols-3">
           <Reveal className="md:col-span-2">
             <article className="relative h-full overflow-hidden rounded-[16px] border border-line bg-raised p-7 md:p-9">
@@ -423,6 +444,7 @@ export function LandingPage({ locale }: { locale: Locale }) {
         <nav className="flex items-center gap-5 text-[13px] text-mute" aria-label={t.navAria}>
           {[
             { href: "#sessions", label: t.navSessions },
+            { href: "#usage", label: t.navUsage },
             { href: "#tasks", label: t.navTasks },
             { href: "#library", label: t.navLibrary },
             { href: "#safety", label: t.navSafety },
@@ -451,8 +473,9 @@ export function LandingPage({ locale }: { locale: Locale }) {
         <Hero t={t} locale={locale} />
         <Marquee t={t} />
         <Sessions t={t} locale={locale} />
+        <Usage t={t} locale={locale} />
         <Tasks t={t} locale={locale} />
-        <Library t={t} />
+        <Library t={t} locale={locale} />
         <Safety t={t} />
 
         <section className="border-t border-line">

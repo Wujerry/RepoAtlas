@@ -1,6 +1,7 @@
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { ArrowLeft, ArrowRight, PaintBrush, FolderOpen, Database, Package } from "@phosphor-icons/react";
 import { useState } from "react";
+import { SETTINGS_TABS, useStoredChoice } from "../lib/ui-state";
 import type { MessageKey } from "../i18n";
 import { api } from "../lib/api";
 import type { AppSettings, ScanRoot, ToastTone, UpdateState } from "../types";
@@ -50,6 +51,7 @@ export function SettingsPane({
   onDeferUpdate,
   onBack,
 }: SettingsPaneProps) {
+  const [settingsTab, setSettingsTab] = useStoredChoice("repoatlas.settingsTab.v1", SETTINGS_TABS, "general");
   const [removingRoot, setRemovingRoot] = useState<string>();
   const [pendingRoot, setPendingRoot] = useState<ScanRoot>();
   const [dataBusy, setDataBusy] = useState<"export" | "import" | "backup">();
@@ -121,9 +123,9 @@ export function SettingsPane({
     <div className="settings-pane">
       <header className="settings-header">
         <Button type="button" className="settings-back" variant="quiet" onClick={(event) => { event.preventDefault(); event.stopPropagation(); onBack(); }}><ArrowLeft aria-hidden="true" />{t("backToProjects")}</Button>
-        <div><h1 id="settings-page-title">{t("settings")}</h1><p>{t("settingsIntro")}</p></div>
+        <h1 id="settings-page-title">{t("settings")}</h1>
       </header>
-      <Tabs.Root defaultValue="general" orientation="vertical" className="settings-layout">
+      <Tabs.Root value={settingsTab} onValueChange={value => { if (SETTINGS_TABS.includes(value as typeof settingsTab)) setSettingsTab(value as typeof settingsTab); }} orientation="vertical" className="settings-layout">
         <Tabs.List className="settings-nav" aria-label={t("settingsSections")}>
           <Tabs.Tab value="general"><PaintBrush aria-hidden/><span>{t("settingsGeneral")}</span></Tabs.Tab>
           <Tabs.Tab value="sources"><FolderOpen aria-hidden/><span>{t("settingsSources")}</span></Tabs.Tab>

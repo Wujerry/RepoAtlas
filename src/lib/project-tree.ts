@@ -82,10 +82,10 @@ export function groupLabel(path: string, depth: number): string {
   return segment;
 }
 
-function joinPath(parent: string, segment: string): string {
+function joinPath(parent: string, segment: string, windows: boolean): string {
   if (parent === "/") return `/${segment}`;
   if (parent.endsWith("\\")) return `${parent}${segment}`;
-  return parent ? `${parent}\\${segment}` : segment;
+  return parent ? `${parent}${windows ? "\\" : "/"}${segment}` : segment;
 }
 
 function pathKey(path: string, windows: boolean): string {
@@ -155,7 +155,7 @@ export function buildProjectTree(projects: readonly ProjectSummary[], sort: Proj
     let currentMap = roots;
 
     groupSegments.forEach((segment, index) => {
-      currentPath = index === 0 ? (segment === "/" ? "/" : segment) : joinPath(currentPath, segment);
+      currentPath = index === 0 ? (segment === "/" ? "/" : segment) : joinPath(currentPath, segment, parsed.windows);
       const id = pathKey(currentPath, parsed.windows);
       let group = currentMap.get(id);
       if (!group) {
@@ -189,6 +189,21 @@ export function buildProjectTree(projects: readonly ProjectSummary[], sort: Proj
 
 export function collectGroupIds(groups: readonly ProjectPathGroup[]): string[] {
   return groups.flatMap((group) => [group.id, ...collectGroupIds(group.children)]);
+}
+
+/** Display-only compression. Keep the last real directory's identity for actions. */
+export function compactProjectTree(groups: readonly ProjectPathGroup[], depth = 1): ProjectPathGroup[] {
+  return groups.map((group) => {
+    let leaf = group;
+    const labels = [group.label];
+    while (leaf.projects.length === 0 && leaf.children.length === 1) {
+      leaf = leaf.children[0];
+      labels.push(leaf.label);
+    }
+    const separator = group.path.startsWith("/") ? "/" : "\\";
+    const label = labels.join(separator).replace(/^\/\//, "/");
+    return { ...leaf, label, depth, children: compactProjectTree(leaf.children, depth + 1) };
+  });
 }
 
 export function flattenProjectTree(groups: readonly ProjectPathGroup[], expanded: ReadonlySet<string>): ProjectTreeRow[] {

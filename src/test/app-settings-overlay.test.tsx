@@ -12,7 +12,7 @@ const projectContextMenu = vi.hoisted(() => vi.fn());
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
 vi.mock("../components/TitleBar", () => ({
-  TitleBar: ({ onSettings, onHelp }: { onSettings: () => void; onHelp: () => void }) => <><button onClick={onSettings}>Open settings</button><button onClick={onHelp}>Open help</button></>,
+  TitleBar: ({ onTasks, tasksOpen, onSettings, onHelp, onPorts }: { onTasks: () => void; tasksOpen: boolean; onSettings: () => void; onHelp: () => void; onPorts: () => void }) => <><button aria-pressed={tasksOpen} onClick={onTasks}>Tasks</button><button onClick={onPorts}>Ports & processes</button><button onClick={onSettings}>Open settings</button><button onClick={onHelp}>Open help</button><button>Window control</button></>,
 }));
 vi.mock("../components/ProjectList", () => ({
   ProjectList: () => <><label>Library state<input aria-label="Library state" defaultValue="" /></label><button data-repoatlas-context-menu="true" onContextMenu={projectContextMenu}>Project menu</button></>,
@@ -23,7 +23,7 @@ vi.mock("../components/SettingsPane", () => ({
 vi.mock("../components/SplashScreen", () => ({ SplashScreen: () => null }));
 vi.mock("../components/OnboardingDialog", () => ({ OnboardingDialog: () => null }));
 vi.mock("../components/CommandPalette", () => ({ CommandPalette: () => null }));
-vi.mock("../components/TaskWorkbench", () => ({ TaskWorkbench: () => null }));
+vi.mock("../components/TaskWorkbench", () => ({ TaskWorkbench: ({ onClose }: { onClose: () => void }) => <section aria-label="Task workbench"><button onClick={onClose}>Close tasks</button></section> }));
 vi.mock("../components/CollectionControls", () => ({ CollectionControls: () => null }));
 vi.mock("../components/HelpPage", () => ({
   HelpPage: ({ onBack }: { onBack: () => void }) => <section><h1 id="help-page-title">Help</h1><button onClick={onBack}>Close help</button></section>,
@@ -65,6 +65,7 @@ vi.mock("../lib/api", () => ({
       collections: [],
     })),
     listProjects: vi.fn(async () => []),
+    listPortProcesses: vi.fn(async () => ({ supported: true, processes: [] })),
     listPendingApprovals: vi.fn(async () => []),
     listAttentionItems: vi.fn(async () => []),
     getAttentionCenter: vi.fn(async () => ({ approvals: [], items: [] })),
@@ -81,6 +82,28 @@ vi.mock("../lib/api", () => ({
 import App from "../App";
 
 describe("settings overlay", () => {
+  it.each(["settings", "help"])("does not dismiss %s when a title-bar window control is pressed", async page => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: `Open ${page}` }));
+    const name = page === "settings" ? "Settings" : "Help";
+    await screen.findByRole("dialog", { name });
+    const control = screen.getByRole("button", { name: "Window control" });
+    fireEvent.mouseDown(control);
+    fireEvent.mouseUp(control);
+    fireEvent.click(control);
+    control.focus();
+    await waitFor(() => expect(screen.getByRole("dialog", { name })).toBeInTheDocument());
+    expect(JSON.parse(localStorage.getItem("repoatlas.navigation.v1") ?? "{}").page).toBe(page);
+  });
+
+  it("restores Settings as the last page and saves returning to the library", async () => {
+    localStorage.setItem("repoatlas.navigation.v1", JSON.stringify({ page: "settings" }));
+    render(<App />);
+    expect(await screen.findByRole("dialog", { name: "Settings" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close settings" }));
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("repoatlas.navigation.v1") ?? "{}").page).toBe("library"));
+  });
+
   it("keeps the underlying library mounted while settings opens and closes", async () => {
     render(<App />);
     const libraryInput = await screen.findByRole("textbox", { name: "Library state" });
@@ -124,4 +147,34 @@ describe("settings overlay", () => {
     expect(projectEvent.defaultPrevented).toBe(false);
     expect(projectContextMenu).toHaveBeenCalled();
   });
+});
+
+it("opens ports directly from the title bar and switches to another page in one action", async () => {
+  render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: "Ports & processes" }));
+  expect(await screen.findByRole("dialog", { name: "Ports & processes" })).toBeVisible();
+  expect(document.querySelector(".task-workbench")).toBeNull();
+  expect(document.querySelector(".workspace-library")).toHaveAttribute("inert");
+  fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Ports & processes" })).not.toBeInTheDocument());
+  expect(screen.getByRole("heading", { name: "Settings" })).toBeVisible();
+});
+
+it("keeps global navigation operable while Tasks covers and disables the library", async () => {
+  render(<App />);
+  const input = await screen.findByRole("textbox", { name: "Library state" });
+  fireEvent.change(input, { target: { value: "preserve library" } });
+  fireEvent.click(screen.getByRole("button", { name: "Tasks" }));
+  expect(screen.getByRole("region", { name: "Task workbench" })).toBeVisible();
+  expect(document.querySelector(".workspace-library")).toHaveAttribute("inert");
+  expect(screen.getByRole("button", { name: "Tasks" })).toHaveAttribute("aria-pressed", "true");
+  fireEvent.click(screen.getByRole("button", { name: "Ports & processes" }));
+  expect(await screen.findByRole("dialog", { name: "Ports & processes" })).toBeVisible();
+  expect(screen.queryByRole("region", { name: "Task workbench" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Tasks" }));
+  expect(screen.queryByRole("dialog", { name: "Ports & processes" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Tasks" }));
+  expect(screen.queryByRole("region", { name: "Task workbench" })).not.toBeInTheDocument();
+  expect(document.querySelector(".workspace-library")).not.toHaveAttribute("inert");
+  expect(input).toHaveValue("preserve library");
 });

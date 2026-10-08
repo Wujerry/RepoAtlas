@@ -10,7 +10,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use uuid::Uuid;
@@ -63,6 +63,7 @@ struct BrokerInner {
     max_concurrency: usize,
     runs: Vec<LiveRun>,
     system: sysinfo::System,
+    stop_requests: HashSet<String>,
 }
 
 struct LiveRun {
@@ -73,6 +74,7 @@ struct LiveRun {
     child: Box<dyn portable_pty::Child + Send + Sync>,
     writer: Option<Box<dyn Write + Send>>,
     master: Option<Box<dyn MasterPty + Send>>,
+    output_drained: Arc<AtomicBool>,
     #[cfg(windows)]
     job: job_object::JobHandle,
 }
@@ -86,6 +88,7 @@ impl Broker {
                 max_concurrency: DEFAULT_CONCURRENCY,
                 runs: Vec::new(),
                 system: sysinfo::System::new_all(),
+                stop_requests: HashSet::new(),
             })),
         })
     }
@@ -269,6 +272,7 @@ impl Broker {
             job
         };
         let root_pid = child.process_id().unwrap_or(0);
+        let output_drained = Arc::new(AtomicBool::new(false));
         {
             let mut inner = self.inner.lock().map_err(|_| Error::msg("broker lock"))?;
             inner.runs.push(LiveRun {
@@ -279,6 +283,7 @@ impl Broker {
                 child,
                 writer: Some(writer),
                 master: Some(pair.master),
+                output_drained: output_drained.clone(),
                 #[cfg(windows)]
                 job,
             });
@@ -303,6 +308,7 @@ impl Broker {
                     let _ = broker.write_stdin(&run_id, &reply);
                 },
             );
+            output_drained.store(true, Ordering::Release);
             let _ = drained_tx.send(());
         });
         let broker = self.clone();
@@ -335,48 +341,41 @@ impl Broker {
     }
 
     pub fn stop(&self, conn: &Connection, run_id: &str) -> Result<TaskRun> {
-        let (child_pid, writer, master) = {
+        let (child_pid, writer, master, output_drained) = {
             let mut inner = self.inner.lock().map_err(|_| Error::msg("broker lock"))?;
             inner
                 .runs
                 .iter_mut()
                 .find(|run| run.id == run_id)
-                .map(|run| {
-                    (
+                .map(|run| -> Result<_> {
+                    #[cfg(windows)]
+                    run.job.terminate()?;
+                    Ok((
                         run.child.process_id().unwrap_or(0),
                         run.writer.take(),
                         run.master.take(),
-                    )
+                        Some(run.output_drained.clone()),
+                    ))
                 })
-                .unwrap_or((0, None, None))
+                .transpose()?
+                .unwrap_or((0, None, None, None))
         };
+        #[cfg(not(windows))]
         if child_pid > 0 {
-            // Do not run the Windows process manager while holding the Broker
-            // mutex: a hung taskkill must not block log callbacks or other
-            // task controls. Fall back to the direct handle only after the
-            // bounded tree-termination attempt returns.
             let tree_killed = terminate_process_tree(child_pid);
-            let mut inner = self.inner.lock().map_err(|_| Error::msg("broker lock"))?;
-            if let Some(run) = inner.runs.iter_mut().find(|run| run.id == run_id) {
-                #[cfg(windows)]
-                {
-                    // The Job Object is the authoritative cleanup guarantee:
-                    // it terminates every descendant that joined the run,
-                    // including grandchildren that taskkill tree-walks miss
-                    // because their parent exited or was reparented first.
-                    // Closing the handle during reap would also kill them,
-                    // but terminating here stops output immediately.
-                    run.job.terminate();
-                }
-                if !tree_killed {
+            if !tree_killed {
+                let mut inner = self.inner.lock().map_err(|_| Error::msg("broker lock"))?;
+                if let Some(run) = inner.runs.iter_mut().find(|run| run.id == run_id) {
                     terminate_child(run.child.as_mut());
                 }
             }
-        } else {
+        }
+        #[cfg(windows)]
+        let _ = child_pid;
+        #[cfg(not(windows))]
+        if child_pid == 0 {
             let mut inner = self.inner.lock().map_err(|_| Error::msg("broker lock"))?;
             if let Some(run) = inner.runs.iter_mut().find(|run| run.id == run_id) {
-                #[cfg(windows)]
-                run.job.terminate();
                 terminate_child(run.child.as_mut());
             }
         }
@@ -384,6 +383,17 @@ impl Broker {
         drop(writer);
         drop(master);
         self.reap(run_id)?;
+        // Job termination is immediate, but already-buffered PTY bytes may still be
+        // in the reader. Finish that bounded drain before reporting stop complete.
+        if let Some(drained) = output_drained {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            while !drained.load(Ordering::Acquire) && std::time::Instant::now() < deadline {
+                thread::sleep(std::time::Duration::from_millis(10));
+            }
+            if !drained.load(Ordering::Acquire) {
+                return Err(Error::msg("stop_pending"));
+            }
+        }
         get_run(conn, run_id)
     }
 
@@ -404,6 +414,71 @@ impl Broker {
             &HashSet::new(),
             &names,
         ))
+    }
+
+    /// Attribute using kernel Job membership, never an unverified parent PID chain.
+    pub fn managed_process(
+        &self,
+        identity: &crate::port_processes::ProcessIdentity,
+    ) -> Result<Option<(String, String)>> {
+        #[cfg(windows)]
+        {
+            let handle = crate::port_processes::native::Handle::open(identity.pid, false)?;
+            if handle.identity(identity.pid)? != *identity {
+                return Err(Error::msg("identity_changed"));
+            }
+            let inner = self.inner.lock().map_err(|_| Error::msg("broker lock"))?;
+            for run in &inner.runs {
+                if run.job.contains(handle.0) {
+                    return Ok(Some((run.id.clone(), run.project_id.clone())));
+                }
+            }
+        }
+        #[cfg(not(windows))]
+        let _ = identity;
+        Ok(None)
+    }
+
+    pub fn managed_process_count(&self, run_id: &str) -> Result<usize> {
+        let inner = self.inner.lock().map_err(|_| Error::msg("broker lock"))?;
+        let run = inner
+            .runs
+            .iter()
+            .find(|r| r.id == run_id)
+            .ok_or_else(|| Error::msg("process_exited"))?;
+        #[cfg(windows)]
+        {
+            run.job.process_count()
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = run;
+            Ok(1)
+        }
+    }
+
+    pub fn request_normal_stop(&self, run_id: &str) -> Result<()> {
+        let mut inner = self.inner.lock().map_err(|_| Error::msg("broker lock"))?;
+        let run = inner
+            .runs
+            .iter_mut()
+            .find(|r| r.id == run_id)
+            .ok_or_else(|| Error::msg("process_exited"))?;
+        let writer = run
+            .writer
+            .as_mut()
+            .ok_or_else(|| Error::msg("process_exited"))?;
+        writer.write_all(&[3])?;
+        writer.flush()?;
+        inner.stop_requests.insert(run_id.to_string());
+        Ok(())
+    }
+
+    pub fn take_stop_request(&self, run_id: &str) -> bool {
+        self.inner
+            .lock()
+            .map(|mut inner| inner.stop_requests.remove(run_id))
+            .unwrap_or(false)
     }
 
     pub fn runtime_snapshot(
@@ -588,7 +663,7 @@ impl Broker {
                 // Release terminal handles outside the broker mutex: ConPTY
                 // shutdown may wait for the output reader to drain.
                 #[cfg(windows)]
-                run.job.terminate();
+                let _ = run.job.terminate();
                 run.writer.take();
                 run.master.take();
                 let _ = run.child.wait();
@@ -713,6 +788,7 @@ fn executable_candidates(directory: &Path, executable: &str) -> Vec<PathBuf> {
 /// stops the whole run.
 #[cfg(windows)]
 mod job_object {
+    use crate::{Error, Result};
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
     use windows_sys::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
@@ -757,10 +833,41 @@ mod job_object {
         /// Kill every process currently in the job. Descendants that spawn
         /// after the stop request cannot survive: the root is terminated in
         /// the same critical section, and any straggler dies on Drop.
-        pub(super) fn terminate(&self) {
-            unsafe {
-                TerminateJobObject(self.0, 1);
+        pub(super) fn terminate(&self) -> Result<()> {
+            if unsafe { TerminateJobObject(self.0, 1) } == 0 {
+                return Err(Error::msg("permission_denied"));
             }
+            Ok(())
+        }
+
+        pub(super) fn contains(&self, process: HANDLE) -> bool {
+            let mut member = 0;
+            unsafe {
+                windows_sys::Win32::System::JobObjects::IsProcessInJob(process, self.0, &mut member)
+                    != 0
+                    && member != 0
+            }
+        }
+
+        pub(super) fn process_count(&self) -> Result<usize> {
+            use windows_sys::Win32::System::JobObjects::{
+                JobObjectBasicAccountingInformation, QueryInformationJobObject,
+                JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+            };
+            let mut info: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = unsafe { std::mem::zeroed() };
+            let ok = unsafe {
+                QueryInformationJobObject(
+                    self.0,
+                    JobObjectBasicAccountingInformation,
+                    &mut info as *mut _ as *mut _,
+                    std::mem::size_of_val(&info) as u32,
+                    std::ptr::null_mut(),
+                )
+            };
+            if ok == 0 {
+                return Err(Error::msg("inspection_unavailable"));
+            }
+            Ok(info.ActiveProcesses as usize)
         }
     }
 
@@ -818,40 +925,8 @@ fn is_shell_interpreter(executable: &str) -> bool {
     )
 }
 
+#[cfg(not(windows))]
 fn terminate_process_tree(pid: u32) -> bool {
-    #[cfg(windows)]
-    {
-        let pid = pid.to_string();
-        let mut command = Command::new(windows_system_tool("taskkill.exe"));
-        command
-            .args(["/PID", pid.as_str(), "/T", "/F"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        crate::process::suppress_console_window(&mut command);
-        let Ok(mut child) = command.spawn() else {
-            return false;
-        };
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        loop {
-            match child.try_wait() {
-                Ok(Some(status)) => return status.success(),
-                Ok(None) if std::time::Instant::now() < deadline => {
-                    thread::sleep(std::time::Duration::from_millis(10));
-                }
-                Ok(None) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return false;
-                }
-                Err(_) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return false;
-                }
-            }
-        }
-    }
     #[cfg(not(windows))]
     {
         // portable-pty starts the child in its own session, so the negative
@@ -953,9 +1028,14 @@ fn build_endpoints(ports: &[u16], scheme: Option<&str>, path: Option<&str>) -> V
 #[cfg(windows)]
 pub(crate) fn listening_ports() -> Option<Vec<(u16, u32)>> {
     let mut command = Command::new(windows_system_tool("netstat.exe"));
-    command.args(["-ano", "-p", "tcp"]);
+    // Windows -p tcp excludes IPv6 TCP. Parse both TCP families from one
+    // snapshot; the shared parser ignores UDP and non-listening connections.
+    command.args(["-ano"]);
     crate::process::suppress_console_window(&mut command);
     let output = command_output_with_timeout(command, std::time::Duration::from_millis(1500))?;
+    if !output.status.success() {
+        return None;
+    }
     Some(parse_windows_listeners(&String::from_utf8_lossy(
         &output.stdout,
     )))
@@ -994,12 +1074,32 @@ fn command_output_with_timeout(
     mut command: Command,
     timeout: std::time::Duration,
 ) -> Option<Output> {
-    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    command.stdout(Stdio::piped()).stderr(Stdio::null());
     let mut child = command.spawn().ok()?;
+    // Drain concurrently: waiting for exit before reading can deadlock netstat
+    // when a busy machine fills the pipe with established/TIME_WAIT sockets.
+    let stdout = child.stdout.take()?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        const LIMIT: u64 = 4 * 1024 * 1024;
+        let mut bytes = Vec::new();
+        let result = stdout.take(LIMIT + 1).read_to_end(&mut bytes);
+        let _ = tx.send(if result.is_ok() && bytes.len() <= LIMIT as usize {
+            Some(bytes)
+        } else {
+            None
+        });
+    });
     let started = std::time::Instant::now();
     loop {
         match child.try_wait() {
-            Ok(Some(_)) => return child.wait_with_output().ok(),
+            Ok(Some(status)) => {
+                return Some(Output {
+                    status,
+                    stdout: rx.recv_timeout(timeout).ok()??,
+                    stderr: Vec::new(),
+                })
+            }
             Ok(None) if started.elapsed() < timeout => {
                 thread::sleep(std::time::Duration::from_millis(20));
             }

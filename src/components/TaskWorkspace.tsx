@@ -19,6 +19,7 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
   const [pendingRemoval, setPendingRemoval] = useState<ProjectDetail["tasks"][number]>();
   const [removingTask, setRemovingTask] = useState(false);
   const [taskQuery, setTaskQuery] = useState("");
+  const [advancedFilters, setAdvancedFilters] = useState(false);
   const [kindFilter, setKindFilter] = useState("");
   const [sourceFilter, setSourceFilter] = useState<"" | "inferred" | "custom">("");
   const [stateFilter, setStateFilter] = useState<"" | "running" | "lastFailed" | "lastSucceeded">("");
@@ -50,6 +51,8 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
   }
   const normalizedTaskQuery = taskQuery.trim().toLowerCase();
   const taskFiltersActive = Boolean(normalizedTaskQuery || kindFilter || sourceFilter || stateFilter);
+  const showAdvancedFilters = advancedFilters || tasks.length > 5 || Boolean(kindFilter || sourceFilter || stateFilter);
+  const emptyHistory = !loading && !error && runs.length === 0;
   const editingTaskId = editor?.mode === "edit" ? editor.taskId : null;
   const taskMatchesFilters = (task: ProjectDetail["tasks"][number]) => {
     if (normalizedTaskQuery) {
@@ -274,10 +277,10 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
   }
   return (
     <div className="task-layout">
-      <div className="task-main">
+      <div className={`task-main${emptyHistory ? " is-empty-history" : ""}${tasks.length <= 5 ? " is-small-catalog" : ""}`}>
         <section className="content-card task-catalog">
           <div className="section-heading">
-            <div><p className="eyebrow">{t("detectedTasks")}</p><h2>{t("tasks")}</h2></div>
+            <h2>{t("tasks")}</h2>
             <div className="task-heading-actions">
               <span title={taskFiltersActive ? t("taskResults") : undefined}>{taskFiltersActive ? visibleTasks.length + " / " + tasks.length : tasks.length}</span>
               <Button variant="quiet" disabled={Boolean(editor) || savingTask} onClick={openNewTask}>{t("addTask")}</Button>
@@ -289,6 +292,8 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
               <span className="sr-only">{t("taskSearchHint")}</span><MagnifyingGlass aria-hidden="true" />
               <input ref={taskSearchRef} type="search" value={taskQuery} placeholder={t("taskSearchHint")} onChange={(event) => setTaskQuery(event.target.value)} />
             </label>
+            <Button variant="quiet" aria-expanded={showAdvancedFilters} aria-controls="task-advanced-filters" disabled={tasks.length > 5 || Boolean(kindFilter || sourceFilter || stateFilter)} onClick={() => setAdvancedFilters(value => !value)}>{t("taskAdvancedFilters")}</Button>
+            <div id="task-advanced-filters" className="task-advanced-filters" hidden={!showAdvancedFilters}>
             <select aria-label={t("taskFilterKind")} value={kindFilter} onChange={(event) => setKindFilter(event.target.value)}>
               <option value="">{t("allKinds")}</option>
               {taskKinds.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
@@ -315,6 +320,7 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
                 {sortAscending ? <ArrowUp aria-hidden="true" /> : <ArrowDown aria-hidden="true" />}
               </Button>
             </div>
+            </div>
             {taskFiltersActive && <button type="button" className="clear-filters" onClick={clearTaskFilters}>{t("clearTaskFilters")}</button>}
           </div>}
           {tasks.length === 0 && editor?.mode !== "new" ? (
@@ -331,7 +337,6 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
                 return (
                 <article ref={(node) => { if (node) taskCards.current.set(task.id, node); else taskCards.current.delete(task.id); }} tabIndex={-1} aria-label={task.name || task.kind} className={"task-card" + (runningRuns.some((run) => run.taskId === task.id) ? " is-running" : "") + (isEditing ? " is-editing" : "") + (highlightedTaskId === task.id ? " is-located" : "")} key={task.id}>
                   {isEditing ? renderTaskEditor(true) : <>
-                    <span className="task-icon"><Play weight="fill" /></span>
                     <div className="task-card-copy">
                       <div className="task-card-kicker">
                         <span className="task-kind-label">{task.kind}</span>
@@ -347,11 +352,11 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
                         </button>}
                       </div>
                       {task.description && <p className="task-card-description">{task.description}</p>}
-                      <code>{formatCommand(task.executable, task.argv)}</code>
+                      <code title={formatCommand(task.executable, task.argv)}>{formatCommand(task.executable, task.argv)}</code>
                     </div>
                     <div className="task-card-actions">
-                      <Button variant="quiet" data-task-edit aria-expanded={false} aria-controls={`task-editor-${task.id}`} disabled={Boolean(editor) || savingTask} onClick={(event) => openTaskEditor(task, event)}>{t("edit")}</Button>
-                      <Button variant="danger" disabled={removingTask || Boolean(editor) || savingTask} onClick={() => setPendingRemoval(task)}>{t("remove")}</Button>
+                      <Button className="task-card-secondary-action" variant="quiet" data-task-edit aria-expanded={false} aria-controls={`task-editor-${task.id}`} disabled={Boolean(editor) || savingTask} onClick={(event) => openTaskEditor(task, event)}>{t("edit")}</Button>
+                      <Button className="task-card-secondary-action" variant="danger" disabled={removingTask || Boolean(editor) || savingTask} onClick={() => setPendingRemoval(task)}>{t("remove")}</Button>
                       <Button variant="primary" disabled={runningRuns.some((run) => run.kind === task.kind) || Boolean(editor) || savingTask} onClick={() => onRun(task.id)}><Play weight="fill" />{t("run")}</Button>
                     </div>
                   </>}
@@ -360,12 +365,15 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
             </div>
           )}
         </section>
-        <aside className="content-card run-history">
-          <div className="section-heading"><div><p className="eyebrow">{t("recentActivity")}</p><h2>{t("history")}</h2></div></div>
-          {loading ? <Skeleton className="skeleton-list" /> : error ? <InlineLoadError title={t("tasksLoadFailed")} detail={error} retryLabel={t("retry")} onRetry={onRetry} /> : runs.length === 0 ? <p className="muted-copy">{t("noRunHistory")}</p> : (
+        <aside className={`content-card run-history${emptyHistory ? " is-empty" : ""}`}>
+          <div className="section-heading"><h2>{t("history")}</h2><span className="workbench-total">{runs.length}</span></div>
+          {loading && <p role="status">{t(runs.length ? "stateCached" : "stateLoading")}</p>}
+          {error && <InlineLoadError title={t("tasksLoadFailed")} detail={error} retryLabel={t("retry")} onRetry={onRetry} />}
+          {error && runs.length > 0 && <p>{t("stateCached")}</p>}
+          {loading && !runs.length ? <Skeleton className="skeleton-list" /> : !runs.length ? (!error && <p className="muted-copy">{t("noRunHistory")}</p>) : (
             <div className="run-list">
               {runs.map((run) => (
-                <button className={activeRunId === run.id ? "active" : ""} key={run.id} title={`${runName(run)}\n${formatCommand(run.executable, run.argv)}\n${run.cwd}`} onClick={() => selectHistory(run)}>
+                <button className={activeRunId === run.id ? "active" : ""} aria-pressed={activeRunId === run.id} key={run.id} title={`${runName(run)}\n${formatCommand(run.executable, run.argv)}\n${run.cwd}`} onClick={() => selectHistory(run)}>
                   <span className={"run-dot run-" + run.status} />
                   <strong>{runName(run)}</strong>
                   <span>{t(statusKey(run.status))}</span>
@@ -392,12 +400,12 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
                 <strong>{runName(run)}</strong>
               </button>
             ))}
-            {activeRunning && <Button variant="danger" onClick={() => onStopRun(activeRunning.id)}><Square weight="fill" />{t("stop")}</Button>}
+            {activeRunning && <Button variant="danger" onClick={() => onStopRun(activeRunning.id)}><Square weight="fill" />{t("processForce")}</Button>}
             <Button variant="quiet" size="icon" aria-label={consoleTheme === "dark" ? t("consoleLightTheme") : t("consoleDarkTheme")} title={consoleTheme === "dark" ? t("consoleLightTheme") : t("consoleDarkTheme")} onClick={() => setConsoleTheme((theme) => (theme === "dark" ? "light" : "dark"))}>
               {consoleTheme === "dark" ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
             </Button>
-            <Button variant="quiet" disabled={!log} onClick={() => { onClearLog(); notify("info", t("outputCleared")); }}><Trash />{t("clearOutput")}</Button>
-            <Button variant="quiet" disabled={!log} onClick={() => void copyOutput()}><Copy />{t("copyOutput")}</Button>
+            <Button variant="quiet" size="icon" aria-label={t("clearOutput")} title={t("clearOutput")} disabled={!log} onClick={() => { onClearLog(); notify("info", t("outputCleared")); }}><Trash aria-hidden /></Button>
+            <Button variant="quiet" size="icon" aria-label={t("copyOutput")} title={t("copyOutput")} disabled={!log} onClick={() => void copyOutput()}><Copy aria-hidden /></Button>
           </div>
         </div>
         {consoleOpen && (

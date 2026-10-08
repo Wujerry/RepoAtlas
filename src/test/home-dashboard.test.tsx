@@ -94,6 +94,21 @@ const snapshot: DashboardSnapshot = {
 const t = (key: MessageKey) => dictionaries.en[key];
 
 describe("HomeDashboard", () => {
+  it("makes an empty recent-work area actionable without inventing activity", async () => {
+    mocks.getDashboardSnapshot.mockResolvedValueOnce({ ...snapshot, recentProjects: [] });
+    const onAddProject = vi.fn(), onFindProject = vi.fn();
+    render(<HomeDashboard t={t} refreshKey="empty" onAddProject={onAddProject} onFindProject={onFindProject} onOpenProject={vi.fn()} onOpenCollection={vi.fn()} onOpenRun={vi.fn()} onOpenAttention={vi.fn()} onOpenAttentionItem={vi.fn()}/>);
+    fireEvent.click(await screen.findByRole("button", { name: t("register") }));
+    fireEvent.click(screen.getByRole("button", { name: t("chooseProject") }));
+    expect(onAddProject).toHaveBeenCalledOnce();
+    expect(onFindProject).toHaveBeenCalledOnce();
+  });
+  it("puts actionable attention before recent work and Collections", async () => {
+    const { container } = render(<HomeDashboard t={t} refreshKey="order" onOpenProject={vi.fn()} onOpenCollection={vi.fn()} onOpenRun={vi.fn()} onOpenAttention={vi.fn()} onOpenAttentionItem={vi.fn()}/>);
+    await screen.findByText("Tests failed");
+    expect(container.querySelector(".dashboard-attention")!.compareDocumentPosition(container.querySelector(".dashboard-recent-grid")!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(container.querySelector(".dashboard-recent-grid")!.compareDocumentPosition(container.querySelector(".dashboard-collections")!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getDashboardSnapshot.mockResolvedValue(snapshot);

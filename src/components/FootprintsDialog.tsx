@@ -160,14 +160,14 @@ export function FootprintsDialog(props: Props) {
   };
   const latest = f.summary?.latestAt ? localDate(new Date(f.summary.latestAt * 1000)) : undefined;
   const coverage = f.summary?.coverage.filter(c => !c.error && c.startAt <= f.days[0].startAt && c.endAt >= f.days[29].endAt);
-  return <Dialog.Root modal={false} open={open} onOpenChange={onOpenChange}>
+  return <Dialog.Root modal={false} open={open} onOpenChange={(next, details) => { if (next || (details.reason !== "outside-press" && details.reason !== "focus-out")) onOpenChange(next); }}>
     <Dialog.Portal><Dialog.Backdrop className="fp-backdrop" />
       <Dialog.Popup className={`fp-workspace${hidden ? " fp-paused" : ""}`} aria-labelledby="fp-title">
         <header className="fp-header">
-          <div className="fp-brand"><span className="fp-brand-icon"><Footprints weight="duotone" /></span><div>
-            <Dialog.Title id="fp-title">{t("footprints")}<span>{t("fpSubtitle")}</span></Dialog.Title>
-            <Dialog.Description>{t("fpRefreshHint")}</Dialog.Description>
-          </div></div>
+          <div className="fp-brand">
+            <Dialog.Title id="fp-title">{t("footprints")}</Dialog.Title>
+            <Dialog.Description className="sr-only">{t("fpRefreshHint")}</Dialog.Description>
+          </div>
           <div className="fp-sync" role="status" aria-live="polite">
             {running ? <><svg className="fp-progress" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="9" pathLength="100" strokeDasharray={`${100 * f.refresh!.completed / Math.max(1, f.refresh!.total)} 100`} /></svg><span>{t("fpUpdating")}<small>{f.refresh!.completed} / {f.refresh!.total}</small></span></>
               : <><span className="fp-sync-dot" /><span>{t(f.refresh?.state === "partial" ? "fpPartial" : f.refresh?.state === "canceled" ? "fpCanceled" : f.refresh?.state === "completed" && f.refresh.completed > 0 ? "fpCompleted" : "fpCached")}<small>{f.summary?.coverage.length ? fullFormat.format(new Date(Math.max(...f.summary.coverage.map(c => c.checkedAt)) * 1000)) : t("fpUnknown")}</small></span></>}

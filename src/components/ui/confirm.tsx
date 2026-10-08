@@ -13,6 +13,7 @@ export function ConfirmDialog({
   onConfirm,
   className = "",
   confirmVariant = "danger",
+  finalFocus,
 }: {
   open: boolean;
   title: string;
@@ -24,12 +25,13 @@ export function ConfirmDialog({
   onConfirm: () => void | Promise<void>;
   className?: string;
   confirmVariant?: "primary" | "danger";
+  finalFocus?: () => HTMLElement | null;
 }) {
   return (
     <AlertDialog.Root open={open} onOpenChange={onOpenChange}>
       <AlertDialog.Portal>
         <AlertDialog.Backdrop className={`dialog-backdrop ${className}`} />
-        <AlertDialog.Popup className={`dialog-popup ${className}`}>
+        <AlertDialog.Popup className={`dialog-popup ${className}`} finalFocus={finalFocus}>
           <AlertDialog.Title className="dialog-title">{title}</AlertDialog.Title>
           <AlertDialog.Description className="dialog-description">{body}</AlertDialog.Description>
           <div className="dialog-actions">

@@ -37,10 +37,74 @@ vi.mock("../lib/api", () => ({
 
 import { Dashboard } from "../components/Dashboard";
 import { GitWorkspace } from "../components/GitWorkspace";
+import { OverviewWorkspace } from "../components/OverviewWorkspace";
 
 vi.mock("../components/FilesWorkspace", () => ({ FilesWorkspace: ({ project }: { project: { id: string } }) => <div data-testid="files-project">{project.id}</div> }));
 
 const t = (key: MessageKey) => dictionaries.en[key];
+
+function renderOverview(overrides: Partial<React.ComponentProps<typeof OverviewWorkspace>> = {}) {
+  const props = {
+    detail: detail(), git: null, tasks: [], runs: [], readmeLoading: false, agentsLoading: false,
+    agentsMissing: false, environmentLoading: false, t, tagDraft: "", ides: [], agentTools: [],
+    setTagDraft: vi.fn(), onNotes: vi.fn(), onTags: vi.fn(), onNeedAgents: vi.fn(),
+    onRetryReadme: vi.fn(), onRetryEnvironment: vi.fn(), onRetryGit: vi.fn(), onOpenTasks: vi.fn(),
+    notify: vi.fn(), onRefresh: vi.fn(), onRunTask: vi.fn(), onPreviewFile: vi.fn(), ...overrides,
+  };
+  return { ...render(<OverviewWorkspace {...props} />), props };
+}
+
+it("does not invent branch, clean status or sync counts for non-Git Projects", () => {
+  const d = detail();
+  const { container, props } = renderOverview({ detail: { ...d, project: { ...d.project, vcsKind: "none" }, startHere: [] } });
+  expect(container.querySelector(".overview-health")).toHaveTextContent(t("nonGitProject"));
+  expect(container.querySelector(".overview-health")).not.toHaveClass("is-ok");
+  expect(screen.queryByLabelText(t("aheadBehind"))).not.toBeInTheDocument();
+  expect(screen.queryByText(t("cleanWorkspaceHint"))).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: t("openProjectTasks") }));
+  expect(props.onOpenTasks).toHaveBeenCalledOnce();
+});
+
+it("separates unknown, loading, cached failure and verified Git status", () => {
+  const { container, props, rerender } = renderOverview();
+  expect(container.querySelector(".overview-health")).toHaveTextContent(t("stateUnknown"));
+  expect(screen.getByLabelText(t("aheadBehind"))).toHaveTextContent("——");
+  const git = { snapshot: detail().git!, files: [], branches: [], log: [] };
+  rerender(<OverviewWorkspace {...props} git={git} gitLoading />);
+  expect(container.querySelector(".overview-health")).toHaveTextContent(t("stateLoading"));
+  expect(container.querySelector(".overview-health")).not.toHaveClass("is-ok");
+  expect(screen.getByText(new RegExp(t("stateCached")))).toBeInTheDocument();
+  rerender(<OverviewWorkspace {...props} git={git} gitError="Git unavailable" />);
+  expect(container.querySelector(".overview-health")).toHaveTextContent(t("stateReadFailed"));
+  fireEvent.click(screen.getByRole("button", { name: t("retry") }));
+  expect(props.onRetryGit).toHaveBeenCalledOnce();
+  rerender(<OverviewWorkspace {...props} git={git} />);
+  expect(container.querySelector(".overview-health")).toHaveClass("is-ok");
+  rerender(<OverviewWorkspace {...props} git={{ ...git, snapshot: { ...git.snapshot, dirty: null, ahead: null, behind: null } }} />);
+  expect(container.querySelector(".overview-health")).not.toHaveClass("is-ok");
+  expect(screen.getByLabelText(t("aheadBehind"))).toHaveTextContent("——");
+});
+
+it("does not turn failed document, environment or run reads into empty success states", () => {
+  const { container } = renderOverview({ agentsError: "permission denied", readmeError: "read failed", environmentError: "inspection failed", runsError: "history failed" });
+  expect(screen.queryByText(t("noAgentsGuide"))).not.toBeInTheDocument();
+  expect(screen.queryByText(t("noReadme"))).not.toBeInTheDocument();
+  expect(screen.queryByText(t("noEnvironment"))).not.toBeInTheDocument();
+  expect(screen.queryByText(t("noRecentTask"))).not.toBeInTheDocument();
+  expect(container.querySelector(".env-summary")).toHaveTextContent(t("stateReadFailed"));
+});
+
+it("also keeps unknown Git workspace counters and an unread working tree neutral", () => {
+  const onRetry = vi.fn();
+  const git = { snapshot: { ...detail().git!, branch: null, dirty: null, ahead: null, behind: null }, files: [], branches: [], log: [] };
+  render(<GitWorkspace git={git} loading={false} busy={false} commitMessage="" setCommitMessage={vi.fn()} stagedCount={0} diff="" diffLoading={false} t={t} onRetry={onRetry} onGit={vi.fn()} onDiff={vi.fn()}/>);
+  expect(screen.getByRole("status")).toHaveTextContent(t("stateUnknown"));
+  expect(screen.queryByText(t("cleanWorkspaceHint"))).not.toBeInTheDocument();
+  expect(screen.getByLabelText(t("ahead"))).toHaveTextContent("—");
+  expect(screen.getByLabelText(t("behind"))).toHaveTextContent("—");
+  fireEvent.click(screen.getByRole("button", { name: t("retry") }));
+  expect(onRetry).toHaveBeenCalledOnce();
+});
 
 function detail(): ProjectDetail {
   return {
@@ -103,6 +167,17 @@ function environment(): EnvironmentInspection {
 
 describe("overview workspace", () => {
   beforeEach(() => { invalidateOverviewCache(); overviewTools.clear(); });
+  it("restores the Files tab after the workspace is unmounted", async () => {
+    inspectProjectEnvironment.mockResolvedValue(environment());
+    const props = { t, notify: vi.fn(), onFavorite: vi.fn(), onArchive: vi.fn(), onRefresh: vi.fn(), onRemove: vi.fn(), onOpenExplorer: vi.fn(), onOpenTerminal: vi.fn(), onOpenIde: vi.fn(), onOpenAgent: vi.fn(), onDescription: vi.fn(), onNotes: vi.fn(), onTags: vi.fn() };
+    const app = render(<Dashboard {...props} detail={detail()} />);
+    fireEvent.click(screen.getByRole("tab", { name: t("files") }));
+    app.unmount();
+    render(<Dashboard {...props} detail={detail()} />);
+    expect(screen.getByRole("tab", { name: t("files") })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("files-project")).toHaveTextContent("atlas");
+  });
+
   it("carries the current tab across projects and falls back when Git is unavailable", async () => {
     inspectProjectEnvironment.mockResolvedValue(environment());
     const props = { t, notify: vi.fn(), onFavorite: vi.fn(), onArchive: vi.fn(), onRefresh: vi.fn(), onRemove: vi.fn(), onOpenExplorer: vi.fn(), onOpenTerminal: vi.fn(), onOpenIde: vi.fn(), onOpenAgent: vi.fn(), onDescription: vi.fn(), onNotes: vi.fn(), onTags: vi.fn() };

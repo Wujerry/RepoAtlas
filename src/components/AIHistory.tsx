@@ -40,14 +40,15 @@ function groupMessages(messages:SessionMessage[]) {
 }
 
 /** Mount independently of the project tree so opening/closing preserves its navigation. */
-export function AIHistory({ t, onVisibilityChange, onOpenProject }: { t: T; onVisibilityChange?: (open: boolean) => void; onOpenProject?: (id: string) => void | Promise<void> }) {
-  const [isOpen, setOpen] = useState(false); const [sourcesOpen, setSourcesOpen] = useState(false);
+export function AIHistory({ t, initialOpen = false, onVisibilityChange, onOpenProject }: { t: T; initialOpen?: boolean; onVisibilityChange?: (open: boolean) => void; onOpenProject?: (id: string) => void | Promise<void> }) {
+  const [isOpen, setOpen] = useState(initialOpen); const [sourcesOpen, setSourcesOpen] = useState(false);
   const [query, setQuery] = useState(""); const [projectId, setProjectId] = useState(""); const [adapter, setAdapter] = useState("");
   const [after, setAfter] = useState(""); const [before, setBefore] = useState(""); const [archived, setArchived] = useState(false);
   const [offset, setOffset] = useState(0); const [hits, setHits] = useState<SessionSearchHit[]>([]); const [total, setTotal] = useState(0);
   const [selected, setSelected] = useState<AgentSession>(); const [messages, setMessages] = useState<SessionMessage[]>([]);
   const [messageOffset, setMessageOffset] = useState(0); const [messageBusy, setMessageBusy] = useState(false);
   const [sources, setSources] = useState<SessionSource[]>([]); const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [searchError, setSearchError] = useState("");
   const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [notice, setNotice] = useState("");
   const [revision, setRevision] = useState(0); const [job, setJob] = useState<SessionRefreshJob>();
   useEffect(() => { onVisibilityChange?.(isOpen); }, [isOpen, onVisibilityChange]);
@@ -93,7 +94,7 @@ export function AIHistory({ t, onVisibilityChange, onOpenProject }: { t: T; onVi
       try {
         const next = await sessionApi.status(); if (!active) return; setJob(next);
         if (next.running) { poll.current = setTimeout(tick, 900); }
-        else { setRevision(v => v + 1); await reloadSources(); window.dispatchEvent(new Event("repoatlas:sessions-updated")); }
+        else { if (next.errors || next.canceled) setNotice(t(next.canceled ? "ahCanceled" : "ahPartial")); setRevision(v => v + 1); await reloadSources(); window.dispatchEvent(new Event("repoatlas:sessions-updated")); }
       } catch (e) { if (active) setError(String(e)); }
     };
     void sessionApi.refresh().then(() => { if (active) return tick(); }).catch(e => active && setError(String(e)));
@@ -102,15 +103,15 @@ export function AIHistory({ t, onVisibilityChange, onOpenProject }: { t: T; onVi
 
   useEffect(() => {
     if (!isOpen) return;
-    const ticket = ++sequence.current; setBusy(true);
+    const ticket = ++sequence.current; setBusy(true); setSearchError("");
     const timer = setTimeout(() => {
       const until = before ? new Date(`${before}T00:00:00`) : undefined;
       until?.setDate(until.getDate() + 1);
       void sessionApi.search({ query, projectId: projectId || undefined, adapter: adapter || undefined, archived, offset, limit: 50,
         after: after ? new Date(`${after}T00:00:00`).toISOString() : undefined, before: until?.toISOString() }).then(result => {
-        if (ticket !== sequence.current) return; setHits(result.items); setTotal(result.total); setError("");
+        if (ticket !== sequence.current) return; setHits(result.items); setTotal(result.total); setSearchError("");
         requestAnimationFrame(() => { if (resultPane.current) resultPane.current.scrollTop = resultScroll.current; });
-      }).catch(e => ticket === sequence.current && setError(String(e))).finally(() => ticket === sequence.current && setBusy(false));
+      }).catch(e => ticket === sequence.current && setSearchError(String(e))).finally(() => ticket === sequence.current && setBusy(false));
     }, 200);
     return () => { clearTimeout(timer); sequence.current++; };
   }, [isOpen, query, projectId, adapter, after, before, archived, offset, revision]);
@@ -168,15 +169,21 @@ export function AIHistory({ t, onVisibilityChange, onOpenProject }: { t: T; onVi
       <Dialog.Popup className="ah-dialog" initialFocus={input} finalFocus={() => opener.current} onKeyDown={e => {
         if ((e.key === "/" || ((e.ctrlKey || e.metaKey) && e.key === "f")) && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) { e.preventDefault(); input.current?.focus(); }
       }}>
-        <header className="ah-header"><div><Dialog.Title>{t("ahTitle")}</Dialog.Title><Dialog.Description className="ah-cache-description">{t("ahCached")}</Dialog.Description></div>
+        <header className="ah-header"><Dialog.Title className="sr-only">{t("ahTitle")}</Dialog.Title><Dialog.Description className="sr-only">{t("ahCached")}</Dialog.Description>
+          {!sourcesOpen && <>
+            <label className="ah-search"><MagnifyingGlass aria-hidden="true" /><input ref={input} value={query} maxLength={512} placeholder={t("ahSearch")} aria-label={t("ahSearch")} onChange={e => filter(() => setQuery(e.target.value))} />{query && <button aria-label={t("clear")} onClick={() => filter(() => setQuery(""))}><X /></button>}</label>
+            <SearchPicker items={projects.map(p => ({ id: p.id, name: p.displayName }))} value={projectId} onChange={id => filter(() => setProjectId(id))} allLabel={t("ahAllProjects")} searchLabel={t("ahLink")} emptyLabel={t("ahEmpty")} />
+            <SessionAgentSelect value={adapter} onChange={value => filter(() => setAdapter(value))} label={t("ahAllAgents")} allLabel={t("ahAllAgents")} />
+            <Button variant="quiet" aria-expanded={filtersOpen} onClick={()=>setFiltersOpen(v=>!v)}><SlidersHorizontal/>{t("ahMoreFilters")}{(after||before||archived) && <span className="ah-filter-dot"/>}</Button>
+          </>}
           <Button className={enabled.some(s => s.lastError)?"ah-source-warning":undefined} title={enabled.some(s => s.lastError)?t("ahPartial"):undefined} variant="quiet" onClick={() => setSourcesOpen(v => !v)} aria-pressed={sourcesOpen}><SlidersHorizontal />{t("ahSources")}</Button>
           <Button variant="quiet" disabled={job?.running || !enabled.length} onClick={() => void refresh()}><ArrowClockwise />{t("refresh")}</Button>
           <Dialog.Close render={<Button variant="quiet" size="icon" aria-label={t("close")}><X /></Button>} />
         </header>
-        {(error || notice || job?.running) && <div className="ah-status" role="status">
-          {error || (job?.running ? `${t("ahUpdating")} · ${job.processed}` : notice)}
+        {(error || searchError || notice || job?.running) && <div className="ah-status" role="status">
+          {error || searchError || (job?.running ? `${t("ahUpdating")} · ${job.processed}` : notice)}
           {job?.running && <Button variant="quiet" onClick={() => void sessionApi.cancel().catch(e => setError(String(e)))}>{t("cancel")}</Button>}
-          {error && <Button variant="quiet" onClick={() => { setRevision(v => v + 1); void reloadSources().catch(e => setError(String(e))); }}>{t("retry")}</Button>}
+          {(error || searchError) && <Button variant="quiet" onClick={() => { setError(""); setRevision(v => v + 1); void refresh(); }}>{t("retry")}</Button>}
         </div>}
         {sourcesOpen ? <div className="ah-sources">
           <div className="ah-source-heading"><h2>{t("ahSources")}</h2><Button variant="primary" disabled={sourceBusy || !sources.some(s => !s.enabled)} onClick={() => { setSourceError(""); setBulkSources(sources.filter(s => !s.enabled)); }}>{t("ahAuthorizeAll")} ({sources.filter(s => !s.enabled).length})</Button></div><p>{t("ahSourcesHint")}</p>
@@ -194,24 +201,20 @@ export function AIHistory({ t, onVisibilityChange, onOpenProject }: { t: T; onVi
           </form>
           <Button variant="quiet" disabled={job?.running || !enabled.length} onClick={() => setRebuild(true)}>{t("ahRebuild")}</Button>
         </div> : <>
-          <div className="ah-filters"><label className="ah-search"><MagnifyingGlass aria-hidden="true" /><input ref={input} value={query} maxLength={512} placeholder={t("ahSearch")} aria-label={t("ahSearch")} onChange={e => filter(() => setQuery(e.target.value))} />{query && <button aria-label={t("clear")} onClick={() => filter(() => setQuery(""))}><X /></button>}</label>
-            <SearchPicker items={projects.map(p => ({ id: p.id, name: p.displayName }))} value={projectId} onChange={id => filter(() => setProjectId(id))} allLabel={t("ahAllProjects")} searchLabel={t("ahLink")} emptyLabel={t("ahEmpty")} />
-            <SessionAgentSelect value={adapter} onChange={value => filter(() => setAdapter(value))} label={t("ahAllAgents")} allLabel={t("ahAllAgents")} />
-            <Button variant="quiet" aria-expanded={filtersOpen} onClick={()=>setFiltersOpen(v=>!v)}><SlidersHorizontal/>{t("ahMoreFilters")}{(after||before||archived) && <span className="ah-filter-dot"/>}</Button>
-          </div>
           {filtersOpen && <div className="ah-advanced-filters"><label>{t("ahFrom")}<input type="date" value={after} max={before || undefined} onChange={e => filter(() => setAfter(e.target.value))} /></label>
             <label>{t("ahTo")}<input type="date" value={before} min={after || undefined} onChange={e => filter(() => setBefore(e.target.value))} /></label>
             <label className="ah-check"><input type="checkbox" checked={archived} onChange={e => filter(() => setArchived(e.target.checked))} />{t("ahArchived")}</label>
             {(after||before||archived) && <Button variant="quiet" onClick={()=>filter(()=>{setAfter("");setBefore("");setArchived(false);})}>{t("clear")}</Button>}
           </div>}
-          <div className="ah-body"><section className="ah-results"><div className="ah-result-count" aria-live="polite">{total} {t("ahResults")}{busy && <span>{t("ahPending")}</span>}</div>
+          <div className="ah-body"><section className="ah-results"><div className="ah-result-count" aria-live="polite"><span>{total} {t("ahResults")} · {t("ahCached")}</span>{busy && <span>{t("ahPending")}</span>}</div>
             <div ref={resultPane} className="ah-result-scroll" aria-busy={busy} onScroll={e => { resultScroll.current = e.currentTarget.scrollTop; }} onKeyDown={e => {
               if (!["ArrowUp", "ArrowDown"].includes(e.key)) return;
               const buttons = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>("button.ah-result"));
               const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
               buttons[Math.max(0, Math.min(buttons.length - 1, index + (e.key === "ArrowDown" ? 1 : -1)))]?.focus(); e.preventDefault();
             }}>
-              {!hits.length && !busy && <div className="ah-empty"><MagnifyingGlass /><h3>{t(emptyTitle)}</h3>{!enabled.length && <><p>{t("ahNoSourcesHint")}</p><Button onClick={() => setSourcesOpen(true)}>{t("ahSources")}</Button></>}</div>}
+              {(busy || error || searchError) && hits.length > 0 && <p className="muted-copy" role="status">{t("stateCached")}</p>}
+              {!hits.length && !busy && !error && !searchError && <div className="ah-empty"><MagnifyingGlass /><h3>{t(emptyTitle)}</h3>{!enabled.length && <><p>{t("ahNoSourcesHint")}</p><Button onClick={() => setSourcesOpen(true)}>{t("ahSources")}</Button></>}{enabled.length > 0 && <Button onClick={() => { if (query || projectId || adapter || after || before || archived) filter(() => { setQuery(""); setProjectId(""); setAdapter(""); setAfter(""); setBefore(""); setArchived(false); }); else void refresh(); }}>{t(query || projectId || adapter || after || before || archived ? "clear" : "refresh")}</Button>}</div>}
               {hits.map(hit => <button className={`ah-result${selected?.id === hit.session.id ? " is-selected" : ""}`} key={hit.session.id} onClick={() => select(hit)} aria-pressed={selected?.id === hit.session.id}>
                 <span className="ah-result-meta"><span><SessionAgentLabel adapter={hit.session.adapter} /></span><Stamp value={hit.session.updatedAt} t={t} /></span>
                 <strong title={hit.session.title}><Highlight text={sessionDisplayTitle(hit.session.title, sessionExcerpt(hit.session.lastUserExcerpt) || t("ahUntitled"))} query={query} /></strong>
@@ -268,28 +271,54 @@ export function AIHistory({ t, onVisibilityChange, onOpenProject }: { t: T; onVi
   </Dialog.Root>;
 }
 
-export function ContinueCoding({ t, projectId, onOpenProject, compact = false }: { t: T; projectId?: string; onOpenProject?: (id: string) => void; compact?: boolean }) {
+export function ContinueCoding({ t, projectId, onOpenProject, onStart, compact = false }: { t: T; projectId?: string; onOpenProject?: (id: string) => void; onStart?: () => void; compact?: boolean }) {
   const [icons, setIcons] = useState<Record<string, ProjectIcon>>({});
-  const [sessions, setSessions] = useState<AgentSession[]>([]); const [error, setError] = useState(""); const [loaded, setLoaded] = useState(false);
+  const [sessions, setSessions] = useState<AgentSession[]>([]);
+  const [error, setError] = useState("");
+  const [refreshError, setRefreshError] = useState("");
+  const [loaded, setLoaded] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [revision, setRevision] = useState(0);
   useEffect(() => {
-    let active = true; let timer: ReturnType<typeof setTimeout> | undefined;
-    setSessions([]); setLoaded(false); setError("");
+    let active = true;
+    let sequence = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    setError(""); setRefreshError("");
     const load = async () => {
+      const ticket = ++sequence;
       try {
         const items = await sessionApi.recent(projectId);
-        if (active) { setSessions(items); setError(""); setLoaded(true); }
-      } catch (e) { if (active) { setError(String(e)); setLoaded(true); } }
+        if (active && ticket === sequence) { setSessions(items); setError(""); setLoaded(true); }
+      } catch (e) {
+        if (active && ticket === sequence) { setError(String(e)); setLoaded(true); }
+      }
     };
-    const tick = async () => { try { const status = await sessionApi.status(); if (!active) return; if (status.running) timer = setTimeout(tick, 1000); else await load(); } catch (e) { if (active) setError(String(e)); } };
-    const changed = () => { void load(); }; window.addEventListener("repoatlas:sessions-updated", changed);
+    const failRefresh = (e: unknown) => {
+      if (active) { setRefreshError(String(e)); setRefreshing(false); }
+    };
+    const tick = async () => {
+      try {
+        const status = await sessionApi.status();
+        if (!active) return;
+        setRefreshing(status.running);
+        if (status.running) timer = setTimeout(tick, 1000);
+        else {
+          if (status.errors) setRefreshError(t("ahPartial"));
+          if (status.canceled) setRefreshError(t("ahCanceled"));
+          await load();
+        }
+      } catch (e) { failRefresh(e); }
+    };
+    const changed = () => { void load(); };
+    window.addEventListener("repoatlas:sessions-updated", changed);
     void load();
-    // Project navigation reads the index; the home surface initiates refresh.
-    if (!projectId) void sessionApi.refresh().then(() => { if (active) return tick(); }).catch(e => active && setError(String(e)));
-    else void sessionApi.status().then(status => {
-      if (active && status.running) timer = setTimeout(tick, 1000);
-    }).catch(e => active && setError(String(e)));
+    // Ordinary Project selection only reads cached history; Home and retry may refresh.
+    if (!projectId || revision > 0) {
+      setRefreshing(true);
+      void sessionApi.refresh().then(() => { if (active) return tick(); }).catch(failRefresh);
+    } else void tick();
     return () => { active = false; clearTimeout(timer); window.removeEventListener("repoatlas:sessions-updated", changed); };
-  }, [projectId]);
+  }, [projectId, revision, t]);
   const ids = sessions.map(s => s.projectId).filter((id): id is string => !!id).join("|");
   useEffect(() => {
     let active = true;
@@ -299,12 +328,13 @@ export function ContinueCoding({ t, projectId, onOpenProject, compact = false }:
   }, [ids]);
   const visible = compact ? sessions.slice(0, 3) : sessions;
   return <section className={`ah-continue${projectId ? " is-project" : ""}${compact ? " is-compact" : ""}`} aria-label={t("ahContinue")}>
-    <header className="ah-continue-header"><div className="ah-continue-heading"><span className="ah-section-icon"><ClockCounterClockwise weight="duotone" aria-hidden="true" /></span><div><h2>{t("ahContinue")}</h2><p>{t("ahContinueHint")}</p></div>{loaded && sessions.length > 0 && <span className="ah-session-count">{visible.length}</span>}</div>
+    <header className="ah-continue-header"><div className="ah-continue-heading"><h2>{t("ahContinue")}</h2>{loaded && sessions.length > 0 && <span className="ah-session-count">{visible.length}</span>}</div>
       <Button variant="quiet" onClick={() => openSessionHistory(projectId)}>{t("ahMore")}<ArrowRight aria-hidden="true" /></Button>
     </header>
     {!loaded && <p className="ah-continue-empty" role="status">{t("ahPending")}</p>}
-    {loaded && !sessions.length && <p className="ah-continue-empty">{t("ahNoResume")}</p>}
-    {error && <p role="status">{t("ahReadFailed")}: {error}</p>}
+    {loaded && !sessions.length && !error && <div className="ah-continue-empty"><p>{t("ahNoResume")}</p><div className="empty-actions"><Button onClick={() => window.dispatchEvent(new CustomEvent("repoatlas:session-history", { detail: { projectId, sources: true } }))}>{t("sessionConnect")}</Button>{onStart && <Button variant="primary" onClick={onStart}>{t(projectId ? "openAgent" : "chooseProject")}</Button>}</div></div>}
+    {refreshing && <p className="muted-copy" role="status">{t("sessionRefreshing")}</p>}
+    {(error || refreshError) && <div className="session-load-error" role="status"><p>{t(error ? "sessionReadFailed" : "sessionRefreshFailed")}{sessions.length > 0 && error ? ` · ${t("stateCached")}` : ""}</p><p>{error || refreshError}</p><Button loading={refreshing} onClick={() => setRevision(value => value + 1)}>{t("retry")}</Button><Button variant="quiet" onClick={() => window.dispatchEvent(new CustomEvent("repoatlas:session-history", { detail: { projectId, sources: true } }))}>{t("sessionConnect")}</Button></div>}
     <div className="ah-continue-items">{visible.map(session => {
       const title = sessionDisplayTitle(session.title, sessionExcerpt(session.lastUserExcerpt) || t("ahUntitled"));
       const preview = () => openSessionHistory(session.projectId ?? undefined, session);

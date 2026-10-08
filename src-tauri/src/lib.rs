@@ -2,6 +2,7 @@ use repoatlas_core::core::activity::{
     ActivityDayRange, ActivityQuery, ActivitySummary, HistoryRefreshManager, HistoryRefreshRequest,
     HistoryRefreshStatus,
 };
+mod port_processes;
 mod quick_search;
 mod sessions;
 mod usage;
@@ -49,6 +50,7 @@ pub struct AppState {
     runtime_configs: Mutex<HashMap<String, TaskRuntimeConfig>>,
     runtime_sampler_started: AtomicBool,
     port_preflights: Mutex<HashMap<(String, String), CachedPortPreflight>>,
+    port_processes: Mutex<repoatlas_core::port_processes::PortProcessManager>,
     file_indexes: Mutex<HashMap<String, Arc<ProjectFileIndexJob>>>,
     file_index_build_lock: Arc<Mutex<()>>,
     file_search_lock: Arc<Mutex<()>>,
@@ -1169,7 +1171,9 @@ fn start_task_spec(
                                 return;
                             }
                         };
-                        let status = if code == Some(0) {
+                        let status = if state.broker.take_stop_request(&run_id) {
+                            "cancelled"
+                        } else if code == Some(0) {
                             "succeeded"
                         } else {
                             "failed"
@@ -1416,35 +1420,41 @@ fn ensure_runtime_sampler(app: AppHandle) {
 }
 
 #[tauri::command]
-fn preflight_task_ports(
-    state: State<Arc<AppState>>,
+async fn preflight_task_ports(
+    state: State<'_, Arc<AppState>>,
     project_id: String,
     task_id: String,
 ) -> Result<Vec<repoatlas_core::PortConflict>, String> {
-    let task = state
-        .core
-        .lock()
-        .map_err(|error| error.to_string())?
-        .task_for_start(&project_id, &task_id)
-        .map_err(err_to_string)?
-        .1;
-    let conflicts = state
-        .broker
-        .preflight_ports(&task.expected_ports)
-        .map_err(err_to_string)?;
-    let mut preflights = state
-        .port_preflights
-        .lock()
-        .map_err(|error| error.to_string())?;
-    preflights.retain(|_, cached| cached.captured_at.elapsed() < std::time::Duration::from_secs(3));
-    preflights.insert(
-        (project_id, task_id),
-        CachedPortPreflight {
-            captured_at: std::time::Instant::now(),
-            conflicts: conflicts.clone(),
-        },
-    );
-    Ok(conflicts)
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let task = state
+            .core
+            .lock()
+            .map_err(|error| error.to_string())?
+            .task_for_start(&project_id, &task_id)
+            .map_err(err_to_string)?
+            .1;
+        let conflicts = state
+            .broker
+            .preflight_ports(&task.expected_ports)
+            .map_err(err_to_string)?;
+        let mut preflights = state
+            .port_preflights
+            .lock()
+            .map_err(|error| error.to_string())?;
+        preflights
+            .retain(|_, cached| cached.captured_at.elapsed() < std::time::Duration::from_secs(3));
+        preflights.insert(
+            (project_id, task_id),
+            CachedPortPreflight {
+                captured_at: std::time::Instant::now(),
+                conflicts: conflicts.clone(),
+            },
+        );
+        Ok(conflicts)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -1507,14 +1517,21 @@ fn show_main_window(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn stop_task(state: State<Arc<AppState>>, run_id: String) -> Result<TaskRun, String> {
+async fn stop_task(state: State<'_, Arc<AppState>>, run_id: String) -> Result<TaskRun, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || stop_task_inner(&state, &run_id))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+fn stop_task_inner(state: &AppState, run_id: &str) -> Result<TaskRun, String> {
     let core = state.core.lock().map_err(|err| err.to_string())?;
     let run = state
         .broker
-        .stop(core.connection(), &run_id)
+        .stop(core.connection(), run_id)
         .map_err(err_to_string)?;
     let finished = core
-        .finish_task_run(&run_id, "cancelled", run.exit_code)
+        .finish_task_run(run_id, "cancelled", run.exit_code)
         .map_err(err_to_string)?;
     let _ = core.record_project_event(
         &finished.project_id,
@@ -2194,6 +2211,18 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_filter(|label| label == "main")
+                // Visibility stays under SplashScreen control. Never reopen
+                // minimized/hidden or apply main-window geometry to quick search.
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::SIZE
+                        | tauri_plugin_window_state::StateFlags::POSITION
+                        | tauri_plugin_window_state::StateFlags::MAXIMIZED,
+                )
+                .build(),
+        )
         .setup(|app| {
             let path = db_path(app.handle())?;
             let core = Core::open(&path).map_err(|err| err.to_string())?;
@@ -2210,6 +2239,7 @@ pub fn run() {
                 runtime_configs: Mutex::new(HashMap::new()),
                 runtime_sampler_started: AtomicBool::new(false),
                 port_preflights: Mutex::new(HashMap::new()),
+                port_processes: Mutex::new(Default::default()),
                 file_indexes: Mutex::new(HashMap::new()),
                 file_index_build_lock: Arc::new(Mutex::new(())),
                 file_search_lock: Arc::new(Mutex::new(())),
@@ -2337,6 +2367,10 @@ pub fn run() {
             start_task,
             write_task_stdin,
             stop_task,
+            port_processes::list_port_processes,
+            port_processes::associate_port_process,
+            port_processes::preview_process_stop,
+            port_processes::confirm_process_stop,
             resize_task_run,
             show_main_window,
             open_in_explorer,

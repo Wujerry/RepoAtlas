@@ -13,18 +13,20 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-FFA31A.svg" alt="MIT License" /></a>
 </p>
 
-RepoAtlas turns scattered local checkouts into one working library. See what each Project is, open it in the right coding Agent or tool, run repeatable development tasks, and keep the output and history on your machine.
+RepoAtlas brings local Projects, coding sessions, and development tasks into one desktop app. Find a checkout, continue a conversation in its original Agent, review Git changes, or run a saved task. Connected Agent quotas stay visible in the title bar; your Project records and task history stay on your machine.
+
+[Download](https://github.com/Wujerry/RepoAtlas/releases) · [Website](https://wujerry.github.io/RepoAtlas/) · [Report an issue](https://github.com/Wujerry/RepoAtlas/issues)
 
 > **macOS contributors wanted.** RepoAtlas has not yet been tested on real Mac hardware, so there is no supported macOS build today. If you have a Mac, help us build, test, and document it through [CONTRIBUTING.md](CONTRIBUTING.md), or open an [issue](https://github.com/Wujerry/RepoAtlas/issues) with reproducible results.
 
-> **0.1.6 downloads:** Windows installers are labeled **UNSIGNED** and do not have an Authenticode signature. macOS packages are experimental, ad-hoc signed and not notarized. SmartScreen or Gatekeeper may show a warning. Updater payloads remain signed; release assets include SHA256SUMS.
+> **0.1.7 downloads:** Windows installers are labeled **UNSIGNED** and do not have an Authenticode signature. macOS packages are experimental, ad-hoc signed and not notarized. SmartScreen or Gatekeeper may show a warning. Updater payloads remain signed; release assets include SHA256SUMS.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/en-dark-workspace.jpg" />
   <img src="assets/screenshots/en-light-workspace.jpg" alt="RepoAtlas home workspace: recent sessions, Projects and task runs" />
 </picture>
 
-Desktop screenshots use fictional demonstration data.
+Desktop screenshots use fictional Projects, conversations, token counts, and subscription quotas. See the [capture guide](docs/demo-showcase.md) for the isolated data and reproducible, cursor-free captures.
 
 ## Let your AI Agent do the setup
 
@@ -43,8 +45,10 @@ Agent changes to the shared library continue to appear after onboarding, includi
 
 ## Main features
 
+- **Pick up where you left off** — restore window size, position and maximized state, the last page and Project, workspace tab, Settings category, list filters and sidebar width after reopening.
 - **Home workspace** — open recent Projects, continue coding sessions, review recent runs and handle items that need attention.
 - **Sessions** — search authorized history across eight coding Agents, preview messages and resume a selected session in its original Agent.
+- **Agent quotas at a glance** — see connected services' remaining quotas in the title bar. Open the readout for usage windows and reset countdowns; choose which services appear in navigation.
 - **Agent-assisted initialization** — let an external AI Agent inventory approved directories and write evidence-backed descriptions, tasks, and icons through MCP.
 - **Project library** — search Projects in English or Chinese, group related work with Project Collections, and relate multiple checkouts through Repository Lineage.
   Rename Projects from their title without changing directories. Create Collections with searchable membership, selected-only review, and keyboard selection; an empty Collection can be filled later.
@@ -100,6 +104,15 @@ Read-only MCP tools: `list_agent_sessions`, `search_agent_sessions`, `get_agent_
 
 ### Token usage and subscription limits
 
+![Title-bar quotas for Codex, Claude, GitHub Copilot and OpenCode Go, with usage windows and reset countdowns](assets/screenshots/en-dark-usage.jpg)
+
+<details>
+<summary>View the separate session Token breakdown</summary>
+
+![Recorded input, output, cache and reasoning tokens with an API-equivalent estimate](assets/screenshots/en-dark-tokens.jpg)
+
+</details>
+
 Connected subscriptions show remaining quota directly in the title bar. Click to
 see every window and its reset countdown; **Manage usage & connections** opens
 compact account rows, with additional providers under **Add a service**.
@@ -107,6 +120,8 @@ Use **Show in navigation** on each connected service in the full Usage page.
 The title-bar popover focuses on quotas and reset times; **Manage usage & connections**
 opens the visibility settings. Preferences survive restart without changing connections.
 All-hidden keeps a compact Usage entry; the full Usage page still lists every account.
+Navigation icons play a brief animation when selected, with distinct motion for each feature. System reduced-motion preferences keep them static.
+
 Every enabled navigation entry is shown, with no two-provider cap. When space is
 limited, the quota rail scrolls with the wheel/trackpad or left/right arrow keys;
 the four work tools and window controls remain directly visible.
@@ -181,9 +196,9 @@ never loaded automatically. Provider formats were researched in
 [Token Monitor](https://github.com/Javis603/token-monitor).
 
 <details>
-<summary>See the session resume options</summary>
+<summary>See unified Project and session search</summary>
 
-![Session resume options](assets/screenshots/en-dark-resume.jpg)
+![Ctrl+K search with a matching session and message preview](assets/screenshots/en-dark-search.jpg)
 
 </details>
 
@@ -205,6 +220,8 @@ Projects remain tied to their real paths. Collections organize them without movi
 
 RepoAtlas opens on the Dashboard instead of choosing a Project for you. Collections are quick entries into the existing filtered project tree; the snapshot is calculated from bounded local records and does not scan checkouts, refresh Git, read source files, or contact a remote analytics service.
 
+The home workspace puts attention needing action before recent coding sessions, Projects and Task Runs. Empty work areas offer a next step; failed refreshes retain cached content with an explicit warning and retry. Non-Git Projects do not show Git success or sync counts, and unknown Git counts use a dash. Core navigation includes text labels. Consecutive single-child project directories are compacted by default; use Tree view > Show full hierarchy to expand them. Task catalogs with five or fewer definitions reveal advanced filters on demand, and empty history stays compact.
+
 The home workspace brings recent coding sessions, Projects and Task Runs together. Project icons identify each entry; select a Project title to open it, preview a session to read its messages, or use Continue session to review its launch options.
 
 The project tree toolbar adds expand-all, collapse-all, collapse-to-selected, and jump-to-current-project controls so long collections stay navigable without scrolling blind.
@@ -225,7 +242,7 @@ Task status follows the process exit code, even when a terminal output stream re
 
 A **Task Definition** records the executable, argument vector, and working directory instead of hiding work inside an assembled shell string. Each **Task Run** streams through a real PTY and retains its exit code and full log.
 
-Open the global workbench to follow active runs across Projects. Runtime observations sit beside each terminal, with CPU, memory, process count, detected listening ports, and safe localhost preview links available while work remains active. Stopping a task terminates its process tree.
+Open the global workbench to follow active runs across Projects. Search its run list by Project, task kind or command without changing the displayed output. A compact toolbar switches between a single terminal and up to four terminals. Current CPU, memory, detected listening ports and safe localhost preview links remain visible; expand More metrics for peak usage and process count. Stopping a task terminates its process tree.
 
 ## Download — Windows x64 beta
 
@@ -233,7 +250,7 @@ Open the global workbench to follow active runs across Projects. Runtime observa
 2. Verify its SHA-256 checksum against the published `SHA256SUMS`:
 
    ```powershell
-   Get-FileHash .\RepoAtlas_0.1.6_x64-setup.exe -Algorithm SHA256
+   Get-FileHash .\RepoAtlas_0.1.7_x64-setup.exe -Algorithm SHA256
    ```
 
 3. Run the installer. SmartScreen will show an “unknown publisher” warning for the unsigned beta. Choose **More info**, then **Run anyway**.
@@ -297,3 +314,11 @@ Open **Footprints** from the title bar to browse a 30-day activity track, search
 Footprints supports English and Chinese, light and dark themes, and keyboard navigation. Search covers the selected day’s records, including records outside the current page.
 
 Scroll down at the end of a day's records to load the previous day, or scroll up at the top to load the next day (up to today). Page Up/Down also work at list boundaries. The current records remain visible until the adjacent day loads; filters stay applied and empty dates remain selectable. Large days continue paging before moving to the previous day.
+
+### Windows ports and processes
+
+Click the port, process, PID or Project column header to switch between ascending and descending order. Sorting defaults to the lowest listening port, and stays selected through searches, filters and refreshes while the page is open.
+
+Open **Ports & processes** in the top navigation bar (also available in the command palette) to search native TCP listeners by port, PID, process or Project. It includes services launched in terminals and IDEs. Unknown attribution stays unknown; manual associations apply only to the current process instance and desktop session. Stops disclose all affected ports and processes and recheck exact Windows process identity. Managed tasks support a cooperative Ctrl+C request or explicit Job Object termination. For external processes, stop normally in their original terminal/IDE or explicitly force terminate only that process. Port-conflict dialogs can locate owners and recheck through the existing preflight. No automatic termination, elevation, port edits, external restart, WSL or Docker management.
+
+Rows directly show ports, process, PID, the full selectable executable path, managed-task or external-process source, and Project checkout path and attribution evidence. Long paths wrap and unavailable paths are explicitly labeled. Stop restrictions remain visible, and each row offers only its available stop modes.

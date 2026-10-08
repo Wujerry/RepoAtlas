@@ -2,6 +2,8 @@ import { invalidateOverviewCache } from "../lib/overview-cache";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectQuery, ProjectSummary } from "../types";
+import { NAVIGATION_STORAGE_KEY, readNavigationState, writeUiState } from "../lib/ui-state";
+import { api } from "../lib/api";
 
 const first: ProjectSummary = {
   id: "first", canonicalPath: "C:\\code\\first", displayName: "First Project", detectedName: "first", notes: null, description: null,
@@ -66,6 +68,60 @@ describe("App dashboard navigation", () => {
     invalidateOverviewCache();
     vi.clearAllMocks();
     apiMocks.getDataVersion.mockResolvedValue(1);
+  });
+
+  it("restores the selected Project on remount without recording a new open", async () => {
+    apiMocks.listProjects.mockResolvedValue([first, second]);
+    apiMocks.getProject.mockImplementation(async (id: string) => ({ project: id === first.id ? first : second, facts: [], tasks: [] }));
+    const app = render(<App />);
+    await screen.findByRole("heading", { name: "Working Dashboard" });
+    fireEvent.click(screen.getByRole("button", { name: "Second Project" }));
+    await screen.findByRole("heading", { name: "Second Project workspace" });
+    await waitFor(() => expect(readNavigationState().selectedId).toBe("second"));
+    app.unmount();
+    invalidateOverviewCache();
+    apiMocks.markOpened.mockClear();
+    render(<App />);
+    await screen.findByRole("heading", { name: "Second Project workspace" });
+    expect(document.querySelector("aside")).toHaveAttribute("data-selected", "second");
+    expect(apiMocks.markOpened).not.toHaveBeenCalled();
+  });
+
+  it("keeps Home as the last surface even when a Project was previously selected", async () => {
+    writeUiState(NAVIGATION_STORAGE_KEY, { librarySurface: "dashboard", selectedId: "first" });
+    apiMocks.listProjects.mockResolvedValue([first, second]);
+    render(<App />);
+    await screen.findByRole("heading", { name: "Working Dashboard" });
+    expect(apiMocks.getProject).not.toHaveBeenCalled();
+  });
+
+  it("restores archived Projects and the saved list scope, Collection, search and sort", async () => {
+    const archived = { ...second, id: "archived", archived: true, languages: ["Rust"], tags: ["dev"] };
+    writeUiState(NAVIGATION_STORAGE_KEY, { librarySurface: "project", selectedId: "archived", scope: "archived", collectionId: "release", query: "Second", sort: "name", filters: { language: "Rust", tag: "dev" } });
+    apiMocks.listProjects.mockResolvedValue([archived]);
+    apiMocks.getProject.mockResolvedValue({ project: archived, facts: [], tasks: [] });
+    render(<App />);
+    await screen.findByRole("heading", { name: "Second Project workspace" });
+    await waitFor(() => expect(apiMocks.listProjects).toHaveBeenCalledWith({ section: "archived", includeArchived: true, collectionId: "release", search: "Second" }));
+    expect(readNavigationState()).toMatchObject({ scope: "archived", sort: "name", collectionId: "release", filters: { language: "Rust", tag: "dev" } });
+  });
+
+  it("returns Home and clears a deleted Project and Collection", async () => {
+    writeUiState(NAVIGATION_STORAGE_KEY, { librarySurface: "project", selectedId: "removed", collectionId: "removed" });
+    apiMocks.listProjects.mockResolvedValue([first, second]);
+    render(<App />);
+    await screen.findByRole("heading", { name: "Working Dashboard" });
+    expect(apiMocks.getProject).not.toHaveBeenCalled();
+    await waitFor(() => expect(readNavigationState()).toMatchObject({ librarySurface: "dashboard", selectedId: undefined, collectionId: undefined }));
+  });
+
+  it("preserves saved navigation when bootstrap fails", async () => {
+    const raw = JSON.stringify({ librarySurface: "project", selectedId: "second" });
+    localStorage.setItem(NAVIGATION_STORAGE_KEY, raw);
+    vi.mocked(api.bootstrap).mockRejectedValueOnce(new Error("database unavailable"));
+    render(<App />);
+    await screen.findByRole("button", { name: "Retry" });
+    expect(localStorage.getItem(NAVIGATION_STORAGE_KEY)).toBe(raw);
   });
 
   it("starts on the Dashboard and the title-bar brand returns there", async () => {

@@ -1,4 +1,5 @@
 import { usageApi } from "./lib/usage";
+import { NAVIGATION_STORAGE_KEY, readNavigationState, writeUiState } from "./lib/ui-state";
 import { useUsageNavigation } from "./components/UsageNavSettings";
 import { TitleBarUsage } from "./components/TitleBarUsage";
 import { Tooltip } from "@base-ui/react/tooltip";
@@ -19,6 +20,9 @@ import { AIHistory } from "./components/AIHistory";
 import { openSessionHistory, sessionApi } from "./lib/sessions";
 import { SplashScreen } from "./components/SplashScreen";
 import { TaskWorkbench } from "./components/TaskWorkbench";
+import { PortProcessesPage } from "./components/PortProcessesPage";
+import { PortConflictDialog } from "./components/PortConflictDialog";
+import { openPortProcesses, reviewPortConflicts, type PortConflictContext } from "./lib/port-processes";
 import { CollectionControls } from "./components/CollectionControls";
 import { setFormatLocale } from "./lib/format";
 import { Button } from "./components/ui/button";
@@ -50,6 +54,7 @@ function queryForScope(scope: ProjectScope, search = "", collectionId?: string):
 }
 
 export default function App() {
+  const [savedNavigation] = useState(readNavigationState);
   const media = useMemo(() => window.matchMedia("(prefers-color-scheme: light)"), []);
   const [systemTheme, setSystemTheme] = useState<"light" | "dark">(media.matches ? "light" : "dark");
   const [settings, setSettings] = useState<AppSettings>({ theme: "system", locale: "system", uiFont: "", consoleFont: "" });
@@ -57,25 +62,25 @@ export default function App() {
     const updated = await usageApi.setNavigation(hidden);
     setSettings(current => ({ ...current, usageNavHiddenProviders: updated.usageNavHiddenProviders }));
   });
-  const [view, setView] = useState<Exclude<AppView, "settings">>("library");
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [scope, setScope] = useState<ProjectScope>("projects");
+  const [view, setView] = useState<Exclude<AppView, "settings">>(savedNavigation.page === "help" ? "help" : "library");
+  const [settingsOpen, setSettingsOpen] = useState(savedNavigation.page === "settings");
+  const [scope, setScope] = useState<ProjectScope>(savedNavigation.scope);
   const [scanRoots, setScanRoots] = useState<ScanRoot[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [scopeProjects, setScopeProjects] = useState<ProjectSummary[]>([]);
   const [collections, setCollections] = useState<ProjectCollection[]>([]);
-  const [selectedCollectionId, setSelectedCollectionId] = useState<string>();
-  const [librarySurface, setLibrarySurface] = useState<"dashboard" | "project">("dashboard");
-  const [selectedId, setSelectedId] = useState<string>();
+  const [selectedCollectionId, setSelectedCollectionId] = useState(savedNavigation.collectionId);
+  const [librarySurface, setLibrarySurface] = useState(savedNavigation.librarySurface);
+  const [selectedId, setSelectedId] = useState(savedNavigation.selectedId);
   const [detail, setDetail] = useState<ProjectDetail | null>(null);
-  const [query, setQuery] = useState("");
-  const [filters, setFilters] = useState<ProjectFilters>(emptyFilters);
-  const [sort, setSort] = useState<ProjectSort>("default");
+  const [query, setQuery] = useState(savedNavigation.query);
+  const [filters, setFilters] = useState<ProjectFilters>(savedNavigation.filters);
+  const [sort, setSort] = useState<ProjectSort>(savedNavigation.sort);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [approvalsOpen, setApprovalsOpen] = useState(false);
-  const [footprintsOpen, setFootprintsOpen] = useState(false);
-  const [sessionHistoryOpen, setSessionHistoryOpen] = useState(false);
-  const [usageOpen, setUsageOpen] = useState(false);
+  const [footprintsOpen, setFootprintsOpen] = useState(savedNavigation.page === "footprints");
+  const [sessionHistoryOpen, setSessionHistoryOpen] = useState(savedNavigation.page === "sessions");
+  const [usageOpen, setUsageOpen] = useState(savedNavigation.page === "usage");
   const [approvals, setApprovals] = useState<PendingApproval[]>([]);
   const [attentionItems, setAttentionItems] = useState<AttentionItem[]>([]);
   const [transientAttention, setTransientAttention] = useState<AttentionItem[]>([]);
@@ -83,6 +88,13 @@ export default function App() {
   const [resolvingApproval, setResolvingApproval] = useState<string>();
   const activeTaskRuns = useSyncExternalStore(subscribeActiveTaskRuns, getActiveTaskRunsSnapshot, getActiveTaskRunsSnapshot);
   const [activeTasksOpen, setActiveTasksOpen] = useState(false);
+  const [portsOpen, setPortsOpen] = useState(false);
+  const [portContext, setPortContext] = useState<PortConflictContext>();
+  useEffect(() => {
+    const open = (event: Event) => { setPortContext((event as CustomEvent<PortConflictContext | undefined>).detail); setPortsOpen(true); setActiveTasksOpen(false); window.dispatchEvent(new Event("repoatlas:close-sessions")); setUsageOpen(false); setFootprintsOpen(false); setSettingsOpen(false); setApprovalsOpen(false); setView("library"); };
+    window.addEventListener("repoatlas:port-processes", open);
+    return () => window.removeEventListener("repoatlas:port-processes", open);
+  }, []);
   const [stoppingRunId, setStoppingRunId] = useState<string>();
   const [stoppingAll, setStoppingAll] = useState(false);
   const [nowTick, setNowTick] = useState(() => Date.now());
@@ -254,8 +266,31 @@ export default function App() {
       setLibraryVersion(boot.dataVersion ?? null);
       setSettings(boot.settings); setScanRoots(boot.scanRoots); setProjects(boot.projects); setScopeProjects(boot.projects); setCollections(boot.collections ?? []);
       scopeCache.current = { scope: "projects", projects: boot.projects };
-      setLibrarySurface("dashboard");
-      await loadProjectDetail();
+      const collectionId = boot.collections?.some(item => item.id === savedNavigation.collectionId)
+        ? savedNavigation.collectionId : undefined;
+      setSelectedCollectionId(collectionId);
+      if (savedNavigation.scope !== "projects" || collectionId || savedNavigation.query.trim()) {
+        const scoped = await api.listProjects(queryForScope(savedNavigation.scope, "", collectionId));
+        const filtered = savedNavigation.query.trim()
+          ? await api.listProjects(queryForScope(savedNavigation.scope, savedNavigation.query, collectionId)) : scoped;
+        scopeCache.current = { scope: savedNavigation.scope, collectionId, projects: scoped };
+        setScopeProjects(scoped); setProjects(filtered);
+      }
+      if (savedNavigation.librarySurface === "project" && savedNavigation.selectedId) {
+        // Bootstrap omits archived Projects; validate against the full local library.
+        const candidates = boot.projects.some(item => item.id === savedNavigation.selectedId)
+          ? boot.projects : await api.listProjects({ includeArchived: true });
+        if (candidates.some(item => item.id === savedNavigation.selectedId)
+          && await loadProjectDetail(savedNavigation.selectedId)) {
+          setLibrarySurface("project");
+        } else {
+          setLibrarySurface("dashboard");
+          await loadProjectDetail();
+        }
+      } else {
+        setLibrarySurface("dashboard");
+        await loadProjectDetail();
+      }
       if (!onboardingResolved.current) {
         onboardingResolved.current = true;
         const decision = resolveOnboardingVisibility({
@@ -272,7 +307,16 @@ export default function App() {
     } catch (error) {
       const detail = String(error); setBootError(detail); notify("error", t("startupFailed"), detail);
     } finally { setBooting(false); }
-  }, [loadProjectDetail, notify, t]);
+  }, [loadProjectDetail, notify, savedNavigation, t]);
+
+  useEffect(() => {
+    // Do not erase the last good state while bootstrap is pending or failed.
+    if (booting || bootError) return;
+    writeUiState(NAVIGATION_STORAGE_KEY, {
+      page: settingsOpen ? "settings" : view === "help" ? "help" : sessionHistoryOpen ? "sessions" : footprintsOpen ? "footprints" : usageOpen ? "usage" : "library",
+      librarySurface, selectedId, scope, collectionId: selectedCollectionId, query, filters, sort,
+    });
+  }, [booting, bootError, settingsOpen, view, sessionHistoryOpen, footprintsOpen, usageOpen, librarySurface, selectedId, scope, selectedCollectionId, query, filters, sort]);
 
   useEffect(() => {
     if (booted.current) return;
@@ -318,11 +362,11 @@ export default function App() {
   }, []);
 
   const closePageOverlays = useCallback(() => {
-    setUsageOpen(false); setFootprintsOpen(false); setSettingsOpen(false); setApprovalsOpen(false); setActiveTasksOpen(false); setView("library");
+    setUsageOpen(false); setFootprintsOpen(false); setSettingsOpen(false); setApprovalsOpen(false); setActiveTasksOpen(false); setPortsOpen(false); setView("library");
     window.dispatchEvent(new Event("repoatlas:close-sessions"));
   }, []);
   useEffect(() => {
-    const sessions = () => { setUsageOpen(false); setFootprintsOpen(false); setSettingsOpen(false); setApprovalsOpen(false); setActiveTasksOpen(false); setView("library"); };
+    const sessions = () => { setUsageOpen(false); setFootprintsOpen(false); setSettingsOpen(false); setApprovalsOpen(false); setActiveTasksOpen(false); setPortsOpen(false); setView("library"); };
     window.addEventListener("repoatlas:session-history", sessions);
     return () => window.removeEventListener("repoatlas:session-history", sessions);
   }, []);
@@ -412,6 +456,8 @@ export default function App() {
   }, [activeTasksOpen, loadActiveRuns]);
 
   async function stopRun(runId: string) {
+    const target = activeTaskRuns.find(run => run.id === runId);
+    if (!target || !window.confirm(`${t("processTaskForceConfirm")}\n${target.kind} · ${target.cwd}`)) return;
     setStoppingRunId(runId);
     try {
       await api.stopTask(runId);
@@ -422,6 +468,7 @@ export default function App() {
   }
 
   async function stopAllRuns() {
+    if (!window.confirm(`${t("processTaskForceConfirm")}\n${activeTaskRuns.map(run => `${run.kind} · ${run.cwd}`).join("\n")}`)) return;
     setStoppingAll(true);
     try {
       await Promise.all(activeTaskRuns.map((run) => api.stopTask(run.id)));
@@ -438,7 +485,7 @@ export default function App() {
       let allowPortConflicts = false;
       if (approved && approval.taskId) {
         const conflicts = await api.preflightTaskPorts(approval.projectId, approval.taskId);
-        allowPortConflicts = conflicts.length > 0 && window.confirm(`${t("portConflictConfirm")}\n${conflicts.map((item) => `${item.port}${item.processName ? ` · ${item.processName}` : ""}${item.pid ? ` · PID ${item.pid}` : ""}`).join("\n")}`);
+        allowPortConflicts = conflicts.length > 0 && await reviewPortConflicts(approval.projectId, approval.taskId, conflicts);
         if (conflicts.length > 0 && !allowPortConflicts) return;
       }
       await api.resolvePendingApproval(approval.id, approved, allowPortConflicts);
@@ -504,6 +551,7 @@ export default function App() {
         if (event.repeat) return;
         event.preventDefault();
         setPaletteOpen(false);
+        setPortsOpen(false);
         setActiveTasksOpen((open) => !open);
         return;
       }
@@ -546,11 +594,12 @@ export default function App() {
     return all.filter((item) => !item.projectId || projectIds.has(item.projectId));
   }, [attentionItems, scopeProjects, selectedCollectionId, transientAttention]);
   useEffect(() => {
+    if (booting || bootError) return;
     if (librarySurface === "dashboard") return;
     if (projectLoading) return;
     if (visibleProjects.length === 0) { if (selectedId) void loadProjectDetail(); return; }
     if (!visibleProjects.some((project) => project.id === selectedId)) void loadProjectDetail(visibleProjects[0]?.id);
-  }, [librarySurface, loadProjectDetail, projectLoading, selectedId, visibleProjects]);
+  }, [booting, bootError, librarySurface, loadProjectDetail, projectLoading, selectedId, visibleProjects]);
 
   async function relocateProject(id: string) {
     const path = await open({ directory: true, multiple: false });
@@ -792,7 +841,9 @@ export default function App() {
     { id: "open-dashboard", title: t("dashboard"), run: returnToLibrary },
     { id: "open-help", title: t("openHelp"), run: openHelp }, { id: "open-settings", title: t("openSettings"), run: openSettings },
     { id: "scan-all", title: t("scanAll"), run: () => void startScan() }, { id: "add-root", title: t("addRoot"), run: () => void chooseDirectory(false) }, { id: "register", title: t("register"), run: () => void chooseDirectory(true) },
-    { id: "open-tasks", title: t("activeTasks"), run: () => { setActiveTasksOpen(true); void loadActiveRuns(); } },
+    { id: "open-ports", title: t("portProcesses"), run: () => openPortProcesses() },
+    { id: "open-ports", title: t("portProcesses"), run: () => openPortProcesses() },
+    { id: "open-tasks", title: t("activeTasks"), run: () => { closePageOverlays(); setActiveTasksOpen(true); void loadActiveRuns(); } },
     { id: "open-footprints", title: t("footprints"), run: () => setFootprintsOpen(true) },
     { id: "open-usage", title: t("usageTitle"), run: () => { closePageOverlays(); setUsageOpen(true); } },
     { id: "open-ai-history", title: t("ahTitle"), run: () => openSessionHistory() },
@@ -828,19 +879,19 @@ export default function App() {
 
   return <MotionConfig reducedMotion="user" transition={{ duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}><Tooltip.Provider delay={300}><div className="app-shell">
     {!splashDone && <SplashScreen ready={!booting} onFinished={() => setSplashDone(true)} />}
-    <TitleBar usageEntry={booting ? undefined : <TitleBarUsage t={t} navigation={usageNavigation} active={usageOpen} onOpen={() => { closePageOverlays(); setUsageOpen(true); }} />} usageLabel={t("usageTitle")} usageOpen={usageOpen} onUsage={() => { closePageOverlays(); setUsageOpen(true); }} historyOpen={sessionHistoryOpen} historyLabel={t("ahTitle")} title={t("appName")} subtitle={t("appTag")} commandLabel={t("commandShort")} minimizeLabel={t("minimizeWindow")} maximizeLabel={t("maximizeWindow")} closeLabel={t("close")} helpLabel={t("help")} settingsLabel={t("settings")} approvalsLabel={t("attentionCenter")} approvalCount={attentionItems.length} footprintsLabel={t("footprints")} footprintsOpen={footprintsOpen} onFootprints={() => { closePageOverlays(); setFootprintsOpen(true); }} tasksLabel={t("activeTasks")} tasksShortcut="Ctrl + `" tasksCount={activeTaskRuns.length} onTasks={() => { closePageOverlays(); setActiveTasksOpen(true); void loadActiveRuns(); }} activeView={settingsOpen ? "settings" : view} onCommand={() => setPaletteOpen(true)} onLibrary={returnToLibrary} onHelp={openHelp} onSettings={openSettings} onApprovals={() => { closePageOverlays(); setApprovalsOpen(true); void loadApprovals(); }} updateEntry={<TitleBarUpdate state={updateState} locale={settings.locale === "zh" || settings.locale === "en" ? settings.locale : undefined} t={t} onCheck={() => updaterService.checkForUpdates()} onDownload={() => updaterService.downloadUpdate()} onInstall={() => updaterService.installUpdate()} onRestart={() => updaterService.restartApp()} onDefer={() => updaterService.deferUpdate()} />} />
-    <div className="workspace workspace-library" inert={usageOpen || sessionHistoryOpen || footprintsOpen || settingsOpen || view === "help"} style={workspaceStyle}>
+    <TitleBar attentionOpen={approvalsOpen} tasksOpen={activeTasksOpen} navigationLabels={{ tasks: t("navTasks"), attention: t("navAttention"), ports: t("navPorts") }} portsLabel={t("portProcesses")} portsOpen={portsOpen} onPorts={() => { if (portsOpen) setPortsOpen(false); else openPortProcesses(); }} usageEntry={booting ? undefined : <TitleBarUsage t={t} navigation={usageNavigation} active={usageOpen} onOpen={() => { closePageOverlays(); setUsageOpen(true); }} />} usageLabel={t("usageTitle")} usageOpen={usageOpen} onUsage={() => { closePageOverlays(); setUsageOpen(true); }} historyOpen={sessionHistoryOpen} historyLabel={t("ahTitle")} title={t("appName")} subtitle={t("appTag")} commandLabel={t("commandShort")} minimizeLabel={t("minimizeWindow")} maximizeLabel={t("maximizeWindow")} closeLabel={t("close")} helpLabel={t("help")} settingsLabel={t("settings")} approvalsLabel={t("attentionCenter")} approvalCount={attentionItems.length} footprintsLabel={t("footprints")} footprintsOpen={footprintsOpen} onFootprints={() => { closePageOverlays(); setFootprintsOpen(true); }} tasksLabel={t("activeTasks")} tasksShortcut="Ctrl + `" tasksCount={activeTaskRuns.length} onTasks={() => { closePageOverlays(); if (!activeTasksOpen) { setActiveTasksOpen(true); void loadActiveRuns(); } }} activeView={settingsOpen ? "settings" : view} onCommand={() => setPaletteOpen(true)} onLibrary={returnToLibrary} onHelp={openHelp} onSettings={openSettings} onApprovals={() => { closePageOverlays(); setApprovalsOpen(true); void loadApprovals(); }} updateEntry={<TitleBarUpdate state={updateState} locale={settings.locale === "zh" || settings.locale === "en" ? settings.locale : undefined} t={t} onCheck={() => updaterService.checkForUpdates()} onDownload={() => updaterService.downloadUpdate()} onInstall={() => updaterService.installUpdate()} onRestart={() => updaterService.restartApp()} onDefer={() => updaterService.deferUpdate()} />} />
+    <div className="workspace workspace-library" inert={activeTasksOpen || portsOpen || usageOpen || sessionHistoryOpen || footprintsOpen || settingsOpen || view === "help"} style={workspaceStyle}>
       <PaneResizer width={listWidth} label={t("resizeSidebar")} onWidthChange={setListWidth} onWidthCommit={commitListWidth} />
       <>
         <ProjectList projects={visibleProjects} allProjects={scopeProjects} selectedId={librarySurface === "project" ? selectedId : undefined} onSelect={(id) => void selectProject(id)} query={query} onQuery={setQuery} filters={filters} onFilters={setFilters} sort={sort} onSort={setSort} scope={scope} onScope={setScope} scanning={scanning} progress={progress} t={t} empty={emptyMessage} onAddRoot={() => void chooseDirectory(false)} onRegister={() => void chooseDirectory(true)} onScan={() => void startScan()} onScanFolder={(path) => void startScan(undefined, path)} onCancelScan={() => void cancelScan()} collectionControls={<CollectionControls collections={collections} selectedId={selectedCollectionId} t={t} notify={notify} onSelect={(id) => { scopeCache.current = undefined; setSelectedCollectionId(id); }} onChanged={async (id) => { scopeCache.current = undefined; await reload(undefined, id ?? null); setSelectedCollectionId(id); }} />} collections={collections} selectedCollectionId={selectedCollectionId} onAddToCollection={(projectId, collectionId) => updateCollectionMembership(projectId, collectionId, true)} onRemoveFromCollection={(projectId, collectionId) => updateCollectionMembership(projectId, collectionId, false)} onRename={async (id, displayName) => { try { await api.updateProject(id, { displayName }); await reload(id); notify("success", t("projectRenamed"), displayName); } catch (error) { notify("error", t("saveFailed"), String(error)); throw error; } }} onDescription={async (id, description) => { try { await api.updateProject(id, { description }); await reload(id); } catch (error) { notify("error", t("saveFailed"), String(error)); throw error; } }} scanRoots={scanRoots} onRemoveProject={async (id) => { try { await removeProjectRecord(id); } catch (error) { notify("error", t("removeRecordFailed"), String(error)); } }} onRemoveFolder={async (path, projectIds) => { try { await removeFolderRecords(path, projectIds); } catch (error) { notify("error", t("removeFolderFailed"), String(error)); } }} onIconError={(error) => notify("error", t("projectIconFailed"), String(error))} onReveal={(path) => void api.openInExplorer(path).catch((error) => notify("error", t("openFailed"), String(error)))} onRelocate={(id) => void relocateProject(id)} />
         <div className={"detail-pane" + (librarySurface === "project" && projectLoading && detail ? " is-switching" : "")}>
           <Suspense fallback={<div className="detail-pane-shell"><AppSkeleton /></div>}>
-          {booting ? <div className="detail-pane-shell"><AppSkeleton /></div> : bootError ? <div className="detail-pane-shell"><main id="main-content" className="main-pane"><EmptyState title={t("startupFailed")} body={bootError} actions={<Button variant="primary" onClick={() => void bootstrapApp()}>{t("retry")}</Button>} /></main></div> : librarySurface === "dashboard" ? <div className="detail-pane-shell"><HomeDashboard t={t} refreshKey={dashboardRefreshKey} onOpenProject={(id) => void openProjectFromPalette(id)} onOpenCollection={(id) => void openCollectionFromDashboard(id)} onOpenRun={(runId) => void openTaskRun(runId).then(() => setActiveTasksOpen(true)).catch((error) => notify("error", t("tasksLoadFailed"), String(error)))} onOpenAttention={() => { setApprovalsOpen(true); void loadApprovals(); }} onOpenAttentionItem={openDashboardAttentionItem} /></div> : detail ? <div className="detail-pane-shell"><Dashboard detail={detail} onRename={async (displayName) => { await api.updateProject(detail.project.id, { displayName }); await reload(detail.project.id); notify("success", t("projectRenamed"), displayName); }} refreshing={projectRefreshing} t={t} notify={notify} onFavorite={async () => { await api.updateProject(detail.project.id, { favorite: !detail.project.favorite }); await reload(detail.project.id); }} onArchive={async () => { await api.updateProject(detail.project.id, { archived: !detail.project.archived }); notify("success", detail.project.archived ? t("projectRestored") : t("projectArchived")); await reload(); }} onRefresh={async () => { await api.refreshProject(detail.project.id); await reload(detail.project.id); }} onRemove={async () => { try { await removeProjectRecord(detail.project.id); } catch (error) { notify("error", t("removeRecordFailed"), String(error)); } }} onOpenExplorer={() => void api.openInExplorer(detail.project.canonicalPath).catch((error) => notify("error", t("openFailed"), String(error)))} onOpenTerminal={(terminal) => void api.openInTerminal(detail.project.canonicalPath, terminal).catch((error) => notify("error", t("openFailed"), String(error)))} onOpenIde={(ide) => void api.openInIde(detail.project.canonicalPath, ide).then(() => reload(detail.project.id)).catch((error) => notify("error", t("openFailed"), String(error)))} onOpenAgent={(agent) => void api.openInAgent(detail.project.canonicalPath, agent).then(() => reload(detail.project.id)).catch((error) => notify("error", t("openFailed"), String(error)))} onOpenProject={(id) => void openProjectFromPalette(id)} onRelocate={() => void relocateProject(detail.project.id)} onDescription={async (description) => { try { await api.updateProject(detail.project.id, { description }); await reload(detail.project.id); } catch (error) { notify("error", t("saveFailed"), String(error)); throw error; } }} onNotes={(notes) => void api.updateProject(detail.project.id, { notes }).then(() => { notify("success", t("settingsSaved")); return reload(detail.project.id); }).catch((error) => notify("error", t("saveFailed"), String(error)))} onTags={(tags) => void api.updateProject(detail.project.id, { tags }).then(() => { notify("success", t("settingsSaved")); return reload(detail.project.id); }).catch((error) => notify("error", t("saveFailed"), String(error)))} /></div> : projectLoading ? <div className="detail-pane-shell"><AppSkeleton /></div> : <div className="detail-pane-shell"><main id="main-content" className="main-pane"><EmptyState title={t("noSelection")} body={t("selectProjectHint")} actions={<Button variant="primary" onClick={() => void chooseDirectory(false)}>{t("addRoot")}</Button>} /></main></div>}
+          {booting ? <div className="detail-pane-shell"><AppSkeleton /></div> : bootError ? <div className="detail-pane-shell"><main id="main-content" className="main-pane"><EmptyState title={t("startupFailed")} body={bootError} actions={<Button variant="primary" onClick={() => void bootstrapApp()}>{t("retry")}</Button>} /></main></div> : librarySurface === "dashboard" ? <div className="detail-pane-shell"><HomeDashboard onAddProject={() => void chooseDirectory(true)} onFindProject={() => setPaletteOpen(true)} t={t} refreshKey={dashboardRefreshKey} onOpenProject={(id) => void openProjectFromPalette(id)} onOpenCollection={(id) => void openCollectionFromDashboard(id)} onOpenRun={(runId) => void openTaskRun(runId).then(() => setActiveTasksOpen(true)).catch((error) => notify("error", t("tasksLoadFailed"), String(error)))} onOpenAttention={() => { setApprovalsOpen(true); void loadApprovals(); }} onOpenAttentionItem={openDashboardAttentionItem} /></div> : detail ? <div className="detail-pane-shell"><Dashboard detail={detail} onRename={async (displayName) => { await api.updateProject(detail.project.id, { displayName }); await reload(detail.project.id); notify("success", t("projectRenamed"), displayName); }} refreshing={projectRefreshing} t={t} notify={notify} onFavorite={async () => { await api.updateProject(detail.project.id, { favorite: !detail.project.favorite }); await reload(detail.project.id); }} onArchive={async () => { await api.updateProject(detail.project.id, { archived: !detail.project.archived }); notify("success", detail.project.archived ? t("projectRestored") : t("projectArchived")); await reload(); }} onRefresh={async () => { await api.refreshProject(detail.project.id); await reload(detail.project.id); }} onRemove={async () => { try { await removeProjectRecord(detail.project.id); } catch (error) { notify("error", t("removeRecordFailed"), String(error)); } }} onOpenExplorer={() => void api.openInExplorer(detail.project.canonicalPath).catch((error) => notify("error", t("openFailed"), String(error)))} onOpenTerminal={(terminal) => void api.openInTerminal(detail.project.canonicalPath, terminal).catch((error) => notify("error", t("openFailed"), String(error)))} onOpenIde={(ide) => void api.openInIde(detail.project.canonicalPath, ide).then(() => reload(detail.project.id)).catch((error) => notify("error", t("openFailed"), String(error)))} onOpenAgent={(agent) => void api.openInAgent(detail.project.canonicalPath, agent).then(() => reload(detail.project.id)).catch((error) => notify("error", t("openFailed"), String(error)))} onOpenProject={(id) => void openProjectFromPalette(id)} onRelocate={() => void relocateProject(detail.project.id)} onDescription={async (description) => { try { await api.updateProject(detail.project.id, { description }); await reload(detail.project.id); } catch (error) { notify("error", t("saveFailed"), String(error)); throw error; } }} onNotes={(notes) => void api.updateProject(detail.project.id, { notes }).then(() => { notify("success", t("settingsSaved")); return reload(detail.project.id); }).catch((error) => notify("error", t("saveFailed"), String(error)))} onTags={(tags) => void api.updateProject(detail.project.id, { tags }).then(() => { notify("success", t("settingsSaved")); return reload(detail.project.id); }).catch((error) => notify("error", t("saveFailed"), String(error)))} /></div> : projectLoading ? <div className="detail-pane-shell"><AppSkeleton /></div> : <div className="detail-pane-shell"><main id="main-content" className="main-pane"><EmptyState title={t("noSelection")} body={t("selectProjectHint")} actions={<Button variant="primary" onClick={() => void chooseDirectory(false)}>{t("addRoot")}</Button>} /></main></div>}
           </Suspense>
         </div>
       </>
     </div>
-    <Dialog.Root modal={false} open={view === "help"} onOpenChange={(open) => { if (!open) closeHelp(); }}>
+    <Dialog.Root modal={false} open={view === "help"} onOpenChange={(open, details) => { if (!open && details.reason !== "outside-press" && details.reason !== "focus-out") closeHelp(); }}>
       <Dialog.Portal>
         <Dialog.Backdrop className="settings-page-backdrop" />
         <Dialog.Popup className="settings-page-dialog" aria-labelledby="help-page-title">
@@ -850,7 +901,7 @@ export default function App() {
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>
-    <Dialog.Root modal={false} open={settingsOpen} onOpenChange={(open) => { if (!open) closeSettings(); }}>
+    <Dialog.Root modal={false} open={settingsOpen} onOpenChange={(open, details) => { if (!open && details.reason !== "outside-press" && details.reason !== "focus-out") closeSettings(); }}>
       <Dialog.Portal>
         <Dialog.Backdrop className="settings-page-backdrop" />
         <Dialog.Popup className="settings-page-dialog" aria-labelledby="settings-page-title">
@@ -877,7 +928,7 @@ export default function App() {
       </Dialog.Portal>
     </Dialog.Root>
     {usageOpen && <Suspense fallback={<div className="usage-dialog" role="status">{t("loading")}</div>}><UsagePanel t={t} navigation={usageNavigation} onClose={() => setUsageOpen(false)} /></Suspense>}
-    <AIHistory t={t} onVisibilityChange={setSessionHistoryOpen} onOpenProject={async id => { await openProjectFromPalette(id, true); closePageOverlays(); }} />
+    <AIHistory t={t} initialOpen={savedNavigation.page === "sessions"} onVisibilityChange={setSessionHistoryOpen} onOpenProject={async id => { await openProjectFromPalette(id, true); closePageOverlays(); }} />
     <FootprintsDialog
       open={footprintsOpen}
       onOpenChange={setFootprintsOpen}
@@ -893,12 +944,14 @@ export default function App() {
       nowTick={nowTick}
       stoppingRunId={stoppingRunId}
       stoppingAll={stoppingAll}
-      onClose={() => setActiveTasksOpen(false)}
+      onClose={() => { setActiveTasksOpen(false); setPortsOpen(false); }}
       onStop={(runId) => void stopRun(runId)}
       onStopAll={() => void stopAllRuns()}
       onJump={(projectId) => { setActiveTasksOpen(false); void jumpToProject(projectId); }}
       onPreviewError={(error) => notify("error", t("openPreviewFailed"), String(error))}
     />}
+    <PortProcessesPage open={portsOpen} t={t} context={portContext} onClose={() => setPortsOpen(false)} onJump={(id) => { setPortsOpen(false); void jumpToProject(id); }} />
+    <PortConflictDialog t={t} />
     <OnboardingDialog
       open={onboardingOpen}
       step={onboardingStep}

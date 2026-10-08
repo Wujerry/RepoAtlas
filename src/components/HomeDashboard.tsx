@@ -23,6 +23,8 @@ export interface HomeDashboardProps {
   t: Translator;
   refreshKey: string;
   onOpenProject: (projectId: string) => void;
+  onAddProject?: () => void;
+  onFindProject?: () => void;
   onOpenCollection: (collectionId: string) => void;
   onOpenRun: (runId: string) => void;
   onOpenAttention: () => void;
@@ -45,7 +47,7 @@ function statusClass(status: string): string {
   return "is-muted";
 }
 
-export function HomeDashboard({ t, refreshKey, onOpenProject, onOpenCollection, onOpenRun, onOpenAttention, onOpenAttentionItem }: HomeDashboardProps) {
+export function HomeDashboard({ t, refreshKey, onAddProject, onFindProject, onOpenProject, onOpenCollection, onOpenRun, onOpenAttention, onOpenAttentionItem }: HomeDashboardProps) {
   const [snapshot, setSnapshot] = useState<DashboardSnapshot>();
   const [icons, setIcons] = useState<Record<string, ProjectIcon>>({});
   const [loading, setLoading] = useState(true);
@@ -55,6 +57,7 @@ export function HomeDashboard({ t, refreshKey, onOpenProject, onOpenCollection, 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setError(undefined);
     api.getDashboardSnapshot().then((next) => {
       if (cancelled) return;
       setSnapshot(next);
@@ -81,7 +84,7 @@ export function HomeDashboard({ t, refreshKey, onOpenProject, onOpenCollection, 
 
   if (loading && !snapshot) {
     return <main id="main-content" className="home-dashboard" aria-busy="true">
-      <div className="home-dashboard-header"><div><span className="eyebrow">RepoAtlas</span><h1>{t("dashboard")}</h1><p>{t("dashboardHint")}</p></div></div>
+      <div className="home-dashboard-header"><h1>{t("dashboard")}</h1></div>
       <div className="dashboard-metric-grid" aria-hidden="true">{[0, 1, 2, 3].map((item) => <div className="dashboard-metric skeleton-block" key={item} />)}</div>
       <div className="dashboard-skeleton-grid" aria-hidden="true"><div className="skeleton-block" /><div className="skeleton-block" /></div>
     </main>;
@@ -101,17 +104,23 @@ export function HomeDashboard({ t, refreshKey, onOpenProject, onOpenCollection, 
 
   return <main id="main-content" className="home-dashboard">
     <header className="home-dashboard-header">
-      <div><span className="eyebrow">RepoAtlas</span><h1>{t("dashboard")}</h1><p>{t("dashboardHint")}</p></div>
+      <h1>{t("dashboard")}</h1>
       <div className="home-dashboard-updated" title={`${t("dashboardGeneratedAt")} ${formatTime(snapshot.generatedAt)}`}><span>{t("dashboardGeneratedAt")} {formatTime(snapshot.generatedAt)}</span><Button size="icon" variant="quiet" loading={loading} aria-label={t("refresh")} onClick={() => setReloadToken((value) => value + 1)}><ArrowClockwise aria-hidden="true" /></Button></div>
     </header>
 
-    {error && <div className="dashboard-inline-error" role="status"><WarningCircle aria-hidden="true" />{t("dashboardRefreshFailed")}<Button variant="quiet" onClick={() => setReloadToken((value) => value + 1)}>{t("retry")}</Button></div>}
+    {error && <div className="dashboard-inline-error" role="status"><WarningCircle aria-hidden="true" />{t("dashboardRefreshFailed")} · {t("stateCached")}<Button variant="quiet" onClick={() => setReloadToken((value) => value + 1)}>{t("retry")}</Button></div>}
 
+    {loading && <p className="muted-copy" role="status">{t("stateCached")}</p>}
     <section className="home-status-strip" aria-label={t("dashboardStatusSummary")}>
       {metrics.map(metric => <div key={metric.label}><span>{metric.label}</span><strong>{metric.value}</strong></div>)}
       <Button variant="quiet" onClick={onOpenAttention}>{t("attentionCenter")}<ArrowRight /></Button>
     </section>
-    <ContinueCoding t={t} compact onOpenProject={onOpenProject} />
+      <section className="dashboard-section dashboard-attention" hidden={snapshot.attentionCount === 0}>
+        <div className="dashboard-section-heading"><div><span className="eyebrow">{t("needsAction")}</span><h2>{t("attentionCenter")}</h2></div>{snapshot.attentionCount > snapshot.attentionPreview.length && <Button variant="quiet" onClick={onOpenAttention}>{t("viewAll")}</Button>}</div>
+        {snapshot.attentionPreview.length === 0 ? <Button onClick={onOpenAttention}>{t("viewAll")}</Button> : <div className="dashboard-attention-list">{snapshot.attentionPreview.map((item) => <button key={item.id} className={`dashboard-attention-item severity-${item.severity}`} onClick={() => onOpenAttentionItem(item)}><WarningCircle weight="fill" aria-hidden="true" /><span><strong>{item.title}</strong><small>{item.detail}</small><time>{formatTime(item.occurredAt)}</time></span><ArrowRight aria-hidden="true" /></button>)}</div>}
+      </section>
+    {snapshot.recentProjects.length === 0 && <section className="dashboard-start"><h2>{t("dashboardStart")}</h2><p>{t("dashboardStartHint")}</p><div className="empty-actions">{onAddProject && <Button variant="primary" onClick={onAddProject}>{t("register")}</Button>}{snapshot.projectCount > 0 && onFindProject && <Button onClick={onFindProject}>{t("chooseProject")}</Button>}</div></section>}
+    <ContinueCoding t={t} compact onOpenProject={onOpenProject} onStart={onFindProject} />
 
     <div className="dashboard-content-grid dashboard-recent-grid">
       <section className="dashboard-section">
@@ -119,7 +128,7 @@ export function HomeDashboard({ t, refreshKey, onOpenProject, onOpenCollection, 
         {snapshot.recentProjects.length === 0 ? <p className="dashboard-empty-copy">{t("dashboardNoRecentProjects")}</p> : <div className="dashboard-project-list">{snapshot.recentProjects.slice(0, 5).map(({ project, git, latestRun }) => <button key={project.id} className="dashboard-project" onClick={() => onOpenProject(project.id)}>
           <span className="project-identity-mark" aria-hidden="true">{icons[project.id]?.dataUrl ? <img src={icons[project.id].dataUrl ?? undefined} alt="" /> : <LanguageGlyph language={languageFallback(project)} />}</span>
           <span className="dashboard-project-copy"><strong>{project.displayName}</strong><code title={project.canonicalPath}>{project.canonicalPath}</code><span>{stackOf(project).slice(0, 3).map((value) => <small className="badge" key={value}>{value}</small>)}</span></span>
-          <span className="dashboard-project-state">{project.availability !== "ready" ? <small className="is-danger">{t("unavailable")}</small> : git?.branch ? <small><GitBranch aria-hidden="true" />{git.branch}{git.dirty === true ? ` · ${t("dirty")}` : ""}</small> : null}{latestRun && <small className={statusClass(latestRun.status)}>{statusLabel(latestRun.status, t)} · {formatTime(latestRun.finishedAt ?? latestRun.startedAt)}</small>}</span>
+          <span className="dashboard-project-state" title={git ? `${t("stateObserved")} ${formatTime(git.observedAt)}` : undefined}>{project.availability !== "ready" ? <small className="is-danger">{t("unavailable")}</small> : project.vcsKind === "git" && git?.branch ? <small><GitBranch aria-hidden="true" />{git.branch}{git.dirty === true ? ` · ${t("dirty")}` : ""}<span className="dashboard-observation">{t("stateObserved")} {formatTime(git.observedAt)}</span></small> : null}{latestRun && <small className={statusClass(latestRun.status)}>{statusLabel(latestRun.status, t)} · {formatTime(latestRun.finishedAt ?? latestRun.startedAt)}</small>}</span>
           <ArrowRight aria-hidden="true" />
         </button>)}</div>}
       </section>
@@ -130,7 +139,7 @@ export function HomeDashboard({ t, refreshKey, onOpenProject, onOpenCollection, 
       </section>
     </div>
 
-    <div className={`dashboard-content-grid${snapshot.collections.length === 0 ? " is-single" : ""}`} hidden={snapshot.collections.length === 0 && snapshot.attentionCount === 0}>
+    <div className="dashboard-content-grid is-single" hidden={snapshot.collections.length === 0}>
       <section className="dashboard-section dashboard-collections" hidden={snapshot.collections.length === 0}>
         <div className="dashboard-section-heading"><div><span className="eyebrow">{t("projectOrganization")}</span><h2>{t("collections")}</h2></div></div>
         {snapshot.collections.length === 0 ? <p className="dashboard-empty-copy">{t("dashboardNoCollections")}</p> : <div className="dashboard-collection-list">{snapshot.collections.map((collection) => <button className="dashboard-collection" key={collection.id} onClick={() => onOpenCollection(collection.id)}>
@@ -140,10 +149,7 @@ export function HomeDashboard({ t, refreshKey, onOpenProject, onOpenCollection, 
         </button>)}</div>}
       </section>
 
-      <section className="dashboard-section dashboard-attention">
-        <div className="dashboard-section-heading"><div><span className="eyebrow">{t("needsAction")}</span><h2>{t("attentionCenter")}</h2></div>{snapshot.attentionCount > snapshot.attentionPreview.length && <Button variant="quiet" onClick={onOpenAttention}>{t("viewAll")}</Button>}</div>
-        {snapshot.attentionPreview.length === 0 ? <p className="dashboard-empty-copy is-clear"><CheckCircle weight="fill" aria-hidden="true" />{t("dashboardNoAttention")}</p> : <div className="dashboard-attention-list">{snapshot.attentionPreview.map((item) => <button key={item.id} className={`dashboard-attention-item severity-${item.severity}`} onClick={() => onOpenAttentionItem(item)}><WarningCircle weight="fill" aria-hidden="true" /><span><strong>{item.title}</strong><small>{item.detail}</small><time>{formatTime(item.occurredAt)}</time></span><ArrowRight aria-hidden="true" /></button>)}</div>}
-      </section>
+
     </div>
 
     <section className="dashboard-section dashboard-results" hidden={snapshot.sevenDayRuns.total === 0}>

@@ -6,7 +6,7 @@ import { selectTaskRun, setTaskLayout } from "../lib/task-runs";
 
 const t = (key: MessageKey) => dictionaries.en[key];
 
-const mockState = vi.hoisted(() => ({ empty: false }));
+const mockState = vi.hoisted(() => ({ empty: false, recentOnly: false }));
 const getTaskRuntimeSnapshots = vi.hoisted(() => vi.fn(async () => [{
   runId: "run-1",
   capturedAt: "2026-09-01T00:01:00Z",
@@ -64,9 +64,10 @@ vi.mock("../lib/task-runs", async () => {
     projectNames: {},
     inputOwner: undefined,
   };
+  const recentSnapshot = { ...emptySnapshot, recent: [{ ...run, id: "ended-1", status: "failed" }], projectNames: snapshot.projectNames };
   return {
     ...actual,
-    getTaskRunSnapshot: () => (mockState.empty ? emptySnapshot : snapshot),
+    getTaskRunSnapshot: () => (mockState.empty ? emptySnapshot : mockState.recentOnly ? recentSnapshot : snapshot),
     subscribeTaskRuns: (listener: () => void) => {
       listener();
       return () => undefined;
@@ -78,10 +79,56 @@ vi.mock("../lib/task-runs", async () => {
 });
 
 describe("TaskWorkbench", () => {
+  const mount = (onClose = vi.fn()) => render(<TaskWorkbench open t={t} theme="light" nowTick={Date.parse("2026-09-01T00:01:00Z")} stoppingAll={false} onClose={onClose} onStop={vi.fn()} onStopAll={vi.fn()} onJump={vi.fn()} onPreviewError={vi.fn()} />);
   afterEach(() => {
     mockState.empty = false;
+    mockState.recentOnly = false;
     vi.clearAllMocks();
     openDevEndpoint.mockResolvedValue(undefined);
+  });
+
+  it("searches Project and command without changing the open terminal", () => {
+    mount();
+    const input = screen.getByRole("textbox", { name: t("workbenchSearch") });
+    fireEvent.change(input, { target: { value: "ATLAS" } });
+    expect(screen.getByRole("button", { name: /Atlas/ })).toBeVisible();
+    fireEvent.change(input, { target: { value: "pnpm dev" } });
+    expect(screen.getByRole("button", { name: /Atlas/ })).toBeVisible();
+    fireEvent.change(input, { target: { value: "missing" } });
+    expect(screen.queryByRole("button", { name: /Atlas/ })).not.toBeInTheDocument();
+    expect(screen.getByText(t("noTaskMatches"))).toBeVisible();
+    expect(screen.getByText("listening on 5173")).toBeVisible();
+    expect(selectTaskRun).not.toHaveBeenCalled();
+    fireEvent.click(screen.getAllByRole("button", { name: t("clear") })[0]);
+    expect(input).toHaveFocus();
+    expect(screen.getByRole("button", { name: /Atlas/ })).toBeVisible();
+  });
+
+  it("keeps secondary metrics collapsed until requested", async () => {
+    mount();
+    expect(await screen.findByText("12.5%")).toBeVisible();
+    const peak = screen.getByText("72.0 MB");
+    expect(peak).not.toBeVisible();
+    fireEvent.click(screen.getByText(t("runtimeDetails")));
+    expect(peak).toBeVisible();
+  });
+
+  it("offers a working return action and disables empty layout switches", () => {
+    mockState.empty = true;
+    const close = vi.fn(); mount(close);
+    expect(screen.getByRole("button", { name: t("singleOutput") })).toBeDisabled();
+    expect(screen.getByRole("button", { name: t("tiledOutputs") })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: t("backToProjects") }));
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("opens recent output when no tasks are running", () => {
+    mockState.recentOnly = true;
+    mount();
+    expect(screen.getByRole("button", { name: t("singleOutput") })).toBeEnabled();
+    expect(screen.getByRole("button", { name: t("tiledOutputs") })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: t("viewRecentOutput") }));
+    expect(selectTaskRun).toHaveBeenCalledWith("ended-1");
   });
 
   it("shows the run list, runtime observation, preview, and live output together", async () => {
@@ -192,7 +239,7 @@ describe("TaskWorkbench", () => {
     const actions = document.querySelector(".task-terminal-pane-actions");
     expect(actions).not.toBeNull();
     expect(actions).toContainElement(screen.getByRole("button", { name: t("jumpToProject") }));
-    expect(actions).toContainElement(screen.getByRole("button", { name: t("stop") }));
+    expect(actions).toContainElement(screen.getByRole("button", { name: t("processForce") }));
   });
 
   it("shows a designed empty state when no terminals are open", () => {

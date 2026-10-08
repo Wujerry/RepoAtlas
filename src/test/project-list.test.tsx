@@ -99,13 +99,31 @@ beforeEach(() => {
 });
 
 describe("ProjectList tree", () => {
+  it("can restore full ancestors while preserving keyboard access to the Project", async () => {
+    renderList();
+    const tree = screen.getByRole("tree");
+    expect(await screen.findByRole("treeitem", { name: "atlas" })).toHaveAttribute("aria-level", "2");
+    expect(screen.queryByRole("button", { name: t("fullPaths") })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: t("treeView") }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("fullPaths") }));
+    expect(screen.getByRole("treeitem", { name: "atlas" })).toHaveAttribute("aria-level", "3");
+    fireEvent.click(screen.getByRole("button", { name: t("revealSelected") }));
+    expect(tree).toHaveAttribute("aria-activedescendant", "project:atlas");
+    fireEvent.keyDown(tree, { key: "ArrowLeft" });
+    expect(tree).toHaveAttribute("aria-activedescendant", "group:path:c:\\code");
+  });
+  it("offers an exit from an empty Favorites scope instead of only adding Projects", () => {
+    const onScope = vi.fn();
+    renderList({ projects: [], scope: "favorites", onScope });
+    fireEvent.click(screen.getByRole("button", { name: t("projects") }));
+    expect(onScope).toHaveBeenCalledWith("projects");
+  });
   it("renders an expanded path tree and moves active selection with arrows", async () => {
     renderList();
     const tree = screen.getByRole("tree");
     await waitFor(() => expect(screen.getByRole("treeitem", { name: "atlas" })).toBeInTheDocument());
     expect(screen.getByRole("treeitem", { name: /code/ })).toHaveAttribute("aria-expanded", "true");
 
-    fireEvent.keyDown(tree, { key: "ArrowDown" });
     fireEvent.keyDown(tree, { key: "ArrowDown" });
     expect(tree).toHaveAttribute("aria-activedescendant", "project:atlas");
   });

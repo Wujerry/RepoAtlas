@@ -16,7 +16,7 @@ const updateState: UpdateState = { status: "idle", currentVersion: "0.1.0", down
 describe("SettingsPane", () => {
   it("offers an explicit route back to the project library", async () => {
     const onBack = vi.fn();
-    render(<Suspense fallback={null}><SettingsPane
+    const element = <Suspense fallback={null}><SettingsPane
       settings={{ theme: "system", locale: "en", uiFont: "", consoleFont: "" }}
       scanRoots={[]}
       scanning={false}
@@ -34,7 +34,8 @@ describe("SettingsPane", () => {
       onRestartApp={vi.fn(async () => undefined)}
       onDeferUpdate={vi.fn(async () => undefined)}
       onBack={onBack}
-    /></Suspense>);
+    /></Suspense>;
+    const view = render(element);
 
     expect(screen.getByRole("tab", { name: t("settingsGeneral") })).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByRole("button", { name: t("exportData") })).not.toBeInTheDocument();
@@ -43,6 +44,9 @@ describe("SettingsPane", () => {
     expect(screen.queryByRole("textbox", { name: t("uiFont") })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: t("settingsSources") }));
     expect(screen.getByRole("button", { name: t("settingsManageSources") })).toBeVisible();
+    view.unmount();
+    render(element);
+    expect(screen.getByRole("tab", { name: t("settingsSources") })).toHaveAttribute("aria-selected", "true");
     fireEvent.click(await screen.findByRole("button", { name: t("backToProjects") }));
     expect(onBack).toHaveBeenCalledOnce();
     expect(screen.getByRole("button", { name: t("backToProjects") })).toHaveAttribute("type", "button");

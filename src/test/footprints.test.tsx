@@ -26,7 +26,7 @@ const props = () => ({ open: true, onOpenChange: vi.fn(), t: (key: keyof typeof 
 beforeEach(() => {
   vi.clearAllMocks();
   HTMLElement.prototype.scrollTo = vi.fn();
-  vi.mocked(api.getActivityHistory).mockResolvedValue(response([item]));
+  vi.mocked(api.getActivityHistory).mockReset().mockResolvedValue(response([item]));
   vi.mocked(api.getActivityDetail).mockImplementation(async id => ({ ...item, id, detail: "Full commit body" }));
   vi.mocked(api.getActivitySummary).mockImplementation(async days => ({ days: days.map(d => ({ date: d.date, totalCount: d.date === today ? 1 : 0, gitCount: 1, taskCount: 0, toolCount: 0, maintenanceCount: 0 })), openCounts: days.map(() => 0), projectCounts: days.map(() => 1), latestAt: Date.now() / 1000, projects: [{ id: "p1", name: "RepoAtlas" }], coverage: [] }));
 });

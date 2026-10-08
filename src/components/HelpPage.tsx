@@ -32,7 +32,7 @@ export function HelpPage({ locale, t, notify, scanning = false, onReplayOnboardi
   }
 
   return <main id="main-content" className="help-page">
-    <header className="help-header">{onBack ? <Button type="button" className="settings-back" variant="quiet" onClick={onBack}><ArrowLeft aria-hidden="true" />{t("backToProjects")}</Button> : null}<p className="eyebrow">RepoAtlas Guide</p><h1 id="help-page-title">{t("help")}</h1><p>{t("helpIntro")}</p></header>
+    <header className="help-header">{onBack ? <Button type="button" className="settings-back" variant="quiet" onClick={onBack}><ArrowLeft aria-hidden="true" />{t("backToProjects")}</Button> : null}<h1 id="help-page-title">{t("help")}</h1></header>
     <div className="help-content">
       <section className="help-card help-mcp">
         <h2>{t("helpInitializePrompt")}</h2>

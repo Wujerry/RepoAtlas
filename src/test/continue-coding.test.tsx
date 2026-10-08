@@ -1,0 +1,45 @@
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, expect, it, vi } from "vitest";
+import { ContinueCoding } from "../components/AIHistory";
+import { dictionaries, type MessageKey } from "../i18n";
+const mocks = vi.hoisted(() => ({ recent: vi.fn(), status: vi.fn(), refresh: vi.fn() }));
+vi.mock("../lib/sessions", async original => ({ ...await original<typeof import("../lib/sessions")>(), sessionApi: mocks }));
+vi.mock("../lib/api", () => ({ api: { readProjectIcons: vi.fn(async () => []) } }));
+const t = (key: MessageKey) => dictionaries.en[key];
+const complete = { running: false, canceled: false, errors: 0, processed: 0, sourceId: null };
+beforeEach(() => { vi.resetAllMocks(); mocks.recent.mockResolvedValue([]); mocks.status.mockResolvedValue(complete); mocks.refresh.mockResolvedValue(complete); });
+it("offers source management and a working start action when history is empty", async () => {
+  const onStart = vi.fn(); const event = vi.fn();
+  window.addEventListener("repoatlas:session-history", event);
+  render(<ContinueCoding t={t} projectId="atlas" onStart={onStart}/>);
+  expect(await screen.findByText(t("ahNoResume"))).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: t("openAgent") }));
+  expect(onStart).toHaveBeenCalledOnce();
+  fireEvent.click(screen.getByRole("button", { name: t("sessionConnect") }));
+  expect(event.mock.calls[0][0].detail).toEqual({ projectId: "atlas", sources: true });
+  expect(mocks.refresh).not.toHaveBeenCalled();
+  window.removeEventListener("repoatlas:session-history", event);
+});
+it("keeps initial loading and failed reads distinct from a genuinely empty history", async () => {
+  let reject!: (e: Error) => void;
+  mocks.recent.mockReturnValue(new Promise((_, no) => { reject = no; }));
+  mocks.status.mockReturnValue(new Promise(() => {}));
+  render(<ContinueCoding t={t} projectId="atlas"/>);
+  expect(screen.getByText(t("ahPending"))).toBeInTheDocument();
+  expect(screen.queryByText(t("ahNoResume"))).not.toBeInTheDocument();
+  await act(async () => reject(new Error("history unavailable")));
+  expect(screen.getByText(t("sessionReadFailed"))).toBeInTheDocument();
+  expect(screen.queryByText(t("ahNoResume"))).not.toBeInTheDocument();
+  mocks.recent.mockResolvedValue([]); mocks.status.mockResolvedValue(complete);
+  fireEvent.click(screen.getByRole("button", { name: t("retry") }));
+  expect(await screen.findByText(t("ahNoResume"))).toBeInTheDocument();
+  expect(screen.queryByText(t("sessionReadFailed"))).not.toBeInTheDocument();
+});
+it("does not hide a background refresh failure when the cached query succeeds", async () => {
+  mocks.refresh.mockRejectedValue(new Error("index unavailable"));
+  render(<ContinueCoding t={t}/>);
+  expect(await screen.findByText(t("sessionRefreshFailed"))).toBeInTheDocument();
+  await act(async () => window.dispatchEvent(new Event("repoatlas:sessions-updated")));
+  await waitFor(() => expect(mocks.recent.mock.calls.length).toBeGreaterThan(1));
+  expect(screen.getByText(t("sessionRefreshFailed"))).toBeInTheDocument();
+});

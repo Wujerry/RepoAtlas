@@ -2,6 +2,16 @@
 
 All notable changes to RepoAtlas will be documented here. Package availability is recorded in GitHub Releases.
 
+## [0.1.7] - 2026-10-08
+
+- Restore the main window's size, position, selected Project, workspace tab, and Settings category across restarts.
+- Add a Windows Ports and processes view with listener search, Project and Task Run context, and confirmed stops bound to process identity.
+- Detect port conflicts before launching tasks, with a review dialog and clear retry and stop feedback.
+- Improve Continue coding, Project navigation, task controls, and keyboard-accessible work-tool navigation.
+- Refine subscription quota readouts in the title bar and preserve the full Usage view.
+- Refresh the English and Chinese README and website with fictional showcase data and new cursor-free desktop screenshots, including title-bar quotas, token usage, Sessions, and quick search.
+- Add reproducible isolated showcase preparation and screenshot capture scripts.
+
 ## [0.1.6] - 2026-09-30
 
 - Add global Ctrl/Cmd+Shift+K quick search across Projects, session text and actions, with keyboard previews and validated original-Agent resume.

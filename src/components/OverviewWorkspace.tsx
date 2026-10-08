@@ -13,6 +13,14 @@ import { ContinueCoding } from "./AIHistory";
 export function OverviewWorkspace(props: {
   detail: ProjectDetail;
   git: GitStatus | null;
+  gitLoading?: boolean;
+  gitError?: string;
+  onRetryGit?: () => void;
+  runsLoading?: boolean;
+  runsError?: string;
+  onRetryRuns?: () => void;
+  onOpenTasks?: () => void;
+  onChooseAgent?: () => void;
   readme?: ReadmeDocument;
   readmeLoading: boolean;
   readmeError?: string;
@@ -20,6 +28,8 @@ export function OverviewWorkspace(props: {
   agents?: ReadmeDocument;
   agentsLoading: boolean;
   agentsMissing: boolean;
+  agentsError?: string;
+  onRetryAgents?: () => void;
   onNeedAgents: () => void;
   t: (key: MessageKey) => string;
   tagDraft: string;
@@ -42,6 +52,12 @@ export function OverviewWorkspace(props: {
 }) {
   const { detail, git, readme, readmeLoading, readmeError, onRetryReadme, agents, agentsLoading, onNeedAgents, t, tagDraft, setTagDraft, onNotes, onTags, tasks, runs, environment, environmentLoading, environmentError, onRetryEnvironment, notify, onRefresh, ides, agentTools, onRunTask, onPreviewFile, onOpenProject } = props;
   const project = detail.project;
+  const isGit = project.vcsKind === "git";
+  const status = isGit ? git?.snapshot : undefined;
+  const pending = props.gitLoading;
+  const cached = Boolean(status && (pending || props.gitError));
+  const verified = Boolean(status && !pending && !props.gitError && status.dirty !== null);
+  const stateLabel = !isGit ? (project.vcsKind === "svn" ? "SVN" : t("nonGitProject")) : pending ? t("stateLoading") : props.gitError ? t("stateReadFailed") : !verified ? t("stateUnknown") : status?.dirty ? t("dirty") : t("clean");
   useEffect(() => { onNeedAgents(); }, [onNeedAgents, project.id]);
   const factGroup = (kind: string, fallback: string[] = []) => {
     const facts = detail.facts.filter((fact) => fact.kind === kind);
@@ -59,7 +75,10 @@ export function OverviewWorkspace(props: {
   const latestRun = runs[0];
   const quickTasks = tasks.slice(0, 3);
   const environmentSummary = (() => {
-    const runtimes = environment?.runtimes ?? [];
+    if (environmentError) return environment ? t("stateCached") : t("stateReadFailed");
+    if (environmentLoading) return t("stateLoading");
+    if (!environment) return t("environmentNotRead");
+    const runtimes = environment.runtimes;
     if (!runtimes.length) return t("noEnvironment");
     const match = runtimes.filter((item) => item.matchState === "match").length;
     const mismatch = runtimes.filter((item) => item.matchState === "mismatch").length;
@@ -82,27 +101,29 @@ export function OverviewWorkspace(props: {
   }, new Map<string, { file: ProjectFile; kinds: string[] }>()).values());
   const matchLabel = (state: string) => state === "match" ? t("versionMatch") : state === "mismatch" ? t("versionMismatch") : state === "missing" ? t("versionMissing") : state === "undeclared" ? t("undeclaredVersion") : t("unknownVersion");
   const attentionCount = git?.snapshot.dirty ? new Set(git.files.map((file) => file.path)).size : 0;
-  const branchName = git?.snapshot.branch ?? (project.vcsKind === "git" ? t("detachedHead") : project.vcsKind);
+  const branchName = status?.branch ?? t("stateUnknown");
   const startHere = detail.startHere?.length ? detail.startHere : quickTasks.map((task) => ({ taskId: task.id, kind: task.kind, name: task.name, source: t("inferredTask"), inferred: task.inferred }));
   const recentEvents = (detail.recentEvents ?? []).filter((event) => !(event.kind === "open" && !event.detail));
   return <div className="overview-layout">
-    <ContinueCoding key={project.id} projectId={project.id} t={t} />
+    <ContinueCoding key={project.id} projectId={project.id} t={t} onStart={props.onChooseAgent} />
     <section id="overview-status" aria-labelledby="overview-status-title" className="content-card continue-card">
-      <div className="section-heading overview-card-heading"><div><p className="eyebrow">{t("workspaceState")}</p><h2 id="overview-status-title">{t("continueWork")}</h2></div><span className={`overview-health ${git?.snapshot.dirty ? "is-warning" : "is-ok"}`}>{git?.snapshot.dirty ? <WarningCircle weight="fill" /> : <CheckCircle weight="fill" />}{git?.snapshot.dirty ? t("dirty") : project.vcsKind === "git" ? t("clean") : project.vcsKind}</span></div>
+      <div className="section-heading overview-card-heading"><div><p className="eyebrow">{t("workspaceState")}</p><h2 id="overview-status-title">{t("continueWork")}</h2></div><span role="status" className={`overview-health ${verified ? status?.dirty ? "is-warning" : "is-ok" : "is-unknown"}`}>{verified && (status?.dirty ? <WarningCircle weight="fill" /> : <CheckCircle weight="fill" />)}{stateLabel}</span></div>
+      {isGit && <div className="overview-observation"><span>{cached ? t("stateCached") : status ? t("stateObserved") : t("stateUnknown")}{status && ` · ${formatTime(status.observedAt)}`}</span><Button variant="quiet" loading={pending} onClick={props.onRetryGit}>{t("refresh")}</Button></div>}
+      {props.gitError && isGit && <InlineLoadError title={t("gitLoadFailed")} detail={props.gitError} retryLabel={t("retry")} onRetry={props.onRetryGit} />}
       <div className="continue-command-center">
         <div className="workspace-focus">
-          <div className="workspace-focus-icon"><GitBranch weight="duotone" /></div>
-          <div className="workspace-focus-copy"><span>{t("currentBranch")}</span><strong>{branchName}</strong><p>{git?.snapshot.dirty ? `${attentionCount} ${t("dirtyFiles")}` : t("cleanWorkspaceHint")}</p></div>
-          <div className="sync-pair" aria-label={t("aheadBehind")}><span aria-label={`${t("ahead")} ${git?.snapshot.ahead ?? 0}`}><ArrowUp aria-hidden="true" />{git?.snapshot.ahead ?? 0}</span><span aria-label={`${t("behind")} ${git?.snapshot.behind ?? 0}`}><ArrowDown aria-hidden="true" />{git?.snapshot.behind ?? 0}</span></div>
+          <div className="workspace-focus-icon">{isGit ? <GitBranch weight="duotone" /> : <Code />}</div>
+          <div className="workspace-focus-copy"><span>{t(isGit ? "currentBranch" : "vcs")}</span><strong>{isGit ? branchName : project.vcsKind === "svn" ? "SVN" : t("nonGitProject")}</strong><p>{!isGit ? t("nonGitHint") : !verified ? t("gitUnknownHint") : status?.dirty ? `${attentionCount} ${t("dirtyFiles")}` : t("cleanWorkspaceHint")}</p></div>
+          {isGit && <div className="sync-pair" aria-label={t("aheadBehind")}><span aria-label={`${t("ahead")} ${status?.ahead ?? t("stateUnknown")}`}><ArrowUp aria-hidden="true" />{status?.ahead ?? "—"}</span><span aria-label={`${t("behind")} ${status?.behind ?? t("stateUnknown")}`}><ArrowDown aria-hidden="true" />{status?.behind ?? "—"}</span></div>}
         </div>
         <div className="workspace-signals">
-          <div className="workspace-signal"><span>{t("recentTask")}</span><strong>{latestRun ? latestRun.kind : t("noRecentTask")}</strong><em data-tone={latestRun?.status ?? "idle"}>{latestRun ? t(statusKey(latestRun.status)) : t("history")}</em></div>
-          <div className={`workspace-signal ${attentionCount ? "needs-attention" : ""}`}><span>{t("attention")}</span><strong>{attentionCount ? `${attentionCount} ${t("dirtyFiles")}` : t("clean")}</strong><em>{attentionCount ? t("workspaceState") : t("operationCompleted")}</em></div>
+          <div className="workspace-signal"><span>{t("recentTask")}</span><strong>{props.runsError ? t("stateReadFailed") : props.runsLoading ? t("stateLoading") : latestRun ? (tasks.find(task => task.id === latestRun.taskId)?.name ?? latestRun.kind) : t("noRecentTask")}</strong>{props.runsError ? <Button variant="quiet" onClick={props.onRetryRuns}>{t("retry")}</Button> : latestRun && <em data-tone={latestRun.status}>{t(statusKey(latestRun.status))}</em>}</div>
+          {isGit && <div className={`workspace-signal ${verified && attentionCount ? "needs-attention" : ""}`}><span>{t("gitChanges")}</span><strong>{!verified ? t("stateUnknown") : attentionCount ? `${attentionCount} ${t("dirtyFiles")}` : t("gitNoChanges")}</strong></div>}
         </div>
       </div>
       <div className="start-here-row overview-subsection">
         <div className="overview-subsection-heading"><span>{t("startHere")}</span><small>{String(startHere.length).padStart(2, "0")}</small></div>
-        {startHere.length === 0 ? <p className="muted-copy">{t("noQuickTasks")}</p> : <div className="start-here-grid">{startHere.map((task) => <button className="start-here-action" key={task.taskId} onClick={() => onRunTask(task.taskId)}><span className="start-here-icon"><Play weight="fill" /></span><span className="start-here-copy"><strong>{task.name}</strong><em>{task.source}</em></span><span className="start-here-kind">{task.kind}</span></button>)}</div>}
+        {startHere.length === 0 ? <div className="empty-actions"><p className="muted-copy">{t("noQuickTasks")}</p><Button onClick={props.onOpenTasks}>{t("openProjectTasks")}</Button></div> : <div className="start-here-grid">{startHere.map((task) => <button className="start-here-action" key={task.taskId} onClick={() => onRunTask(task.taskId)}><span className="start-here-icon"><Play weight="fill" /></span><span className="start-here-copy"><strong>{task.name}</strong><em>{task.source}</em></span><span className="start-here-kind">{task.kind}</span></button>)}</div>}
       </div>
       <div className="activity-list overview-subsection">
         <div className="overview-subsection-heading"><span>{t("recentActivity")}</span><small>{String(recentEvents.length).padStart(2, "0")}</small></div>
@@ -112,7 +133,7 @@ export function OverviewWorkspace(props: {
     </section>
     <section id="overview-environment" aria-labelledby="overview-environment-title" className="content-card environment-card">
       <div className="section-heading overview-card-heading"><div><p className="eyebrow">{t("detectedEvidence")}</p><h2 id="overview-environment-title">{t("environment")}</h2></div><span className="env-summary">{environmentSummary}</span></div>
-      {environmentLoading && environment && <p className="muted-copy" role="status">{t("refreshingOverview")}</p>}
+      {environmentLoading && environment && <p className="muted-copy" role="status">{t("stateCached")}</p>}
       {environmentError && <InlineLoadError title={t("environmentLoadFailed")} detail={environmentError} retryLabel={t("retry")} onRetry={onRetryEnvironment} />}
       {environmentLoading && !environment ? <Skeleton className="skeleton-list" /> : environmentError && !environment ? null : (
         <>
@@ -130,7 +151,7 @@ export function OverviewWorkspace(props: {
             {(environment?.runtimes ?? []).length === 0 ? <p className="muted-copy">{t("noEnvironment")}</p> : environment?.runtimes.map((runtime: RuntimeStatus) => (
               <div className="runtime-card" key={`${runtime.ecosystem}-${runtime.source ?? "inferred"}-${runtime.constraint ?? "undeclared"}`}>
                 <div className="runtime-card-heading"><span className="runtime-monogram" aria-hidden="true"><RuntimeBrandIcon ecosystem={runtime.ecosystem} /></span><div><strong>{runtime.label}</strong><small>{runtime.ecosystem}</small></div><em data-state={runtime.matchState}><i />{matchLabel(runtime.matchState)}</em></div>
-                <div className="runtime-versions"><div><span>{t("requiredVersion")}</span><strong>{runtime.constraint ?? t("undeclaredVersion")}</strong></div><div><span>{t("localVersion")}</span><strong>{runtime.localVersion ?? t("versionMissing")}</strong></div></div>
+                <div className="runtime-versions"><div><span>{t("requiredVersion")}</span><strong>{runtime.constraint ?? t("undeclaredVersion")}</strong></div><div><span>{t("localVersion")}</span><strong>{runtime.localVersion ?? t(runtime.matchState === "missing" ? "versionMissing" : "stateUnknown")}</strong></div></div>
                 {runtime.source ? <button type="button" className="runtime-source" onClick={() => { const source = runtime.source; if (!source) return; onPreviewFile({ kind: "runtime", path: source.split("#")[0], source }); }}><Code />{runtime.source}</button> : <span className="runtime-source is-empty">{t("undeclaredVersion")}</span>}
               </div>
             ))}
@@ -150,13 +171,14 @@ export function OverviewWorkspace(props: {
     </section>
     <ModulesPanel detail={detail} t={t} notify={notify} onRefresh={onRefresh} onOpenProject={onOpenProject} onRunTask={onRunTask} ides={ides} agents={agentTools} id="overview-modules" />
     <section id="overview-readme" className="content-card overview-readme"><div className="section-heading"><div><p className="eyebrow">{readme?.path ?? detail.readmePath ?? "README"}</p><h2>{t("readme")}</h2></div>{readme?.truncated && <span className="status-warning">{t("readmeTruncated")}</span>}</div>
-      {readmeLoading && readme && <p className="muted-copy" role="status">{t("refreshingOverview")}</p>}
+      {(readmeLoading || readmeError) && (readme || detail.readmeExcerpt) && <p className="muted-copy" role="status">{t("stateCached")}</p>}
       {readmeError && <InlineLoadError title={t("readmeLoadFailed")} detail={readmeError} retryLabel={t("retry")} onRetry={onRetryReadme} />}
-      {readmeLoading && !readme && !detail.readmeExcerpt ? <Skeleton className="skeleton-code" /> : readme?.content || detail.readmeExcerpt ? <MarkdownDocument content={readme?.content ?? detail.readmeExcerpt ?? ""} projectId={detail.project.id} documentPath={readme?.path ?? detail.readmePath ?? "README.md"} /> : <p className="muted-copy">{t("noReadme")}</p>}
+      {readmeLoading && !readme && !detail.readmeExcerpt ? <Skeleton className="skeleton-code" /> : readme?.content || detail.readmeExcerpt ? <MarkdownDocument content={readme?.content ?? detail.readmeExcerpt ?? ""} projectId={detail.project.id} documentPath={readme?.path ?? detail.readmePath ?? "README.md"} /> : readmeError ? null : <p className="muted-copy">{t("noReadme")}</p>}
     </section>
     <section id="overview-agents" className="content-card overview-readme"><div className="section-heading"><div><p className="eyebrow">{agents?.path ?? "AGENTS.md"}</p><h2>{t("agentsGuide")}</h2></div>{agents?.truncated && <span className="status-warning">{t("readmeTruncated")}</span>}</div>
-      {agentsLoading && agents && <p className="muted-copy" role="status">{t("refreshingOverview")}</p>}
-      {agentsLoading && !agents ? <Skeleton className="skeleton-code" /> : agents?.content ? <MarkdownDocument content={agents.content} projectId={detail.project.id} documentPath={agents.path} /> : <p className="muted-copy">{t("noAgentsGuide")}</p>}
+      {(agentsLoading || props.agentsError) && agents && <p className="muted-copy" role="status">{t("stateCached")}</p>}
+      {props.agentsError && <InlineLoadError title={t("agentsReadFailed")} detail={props.agentsError} retryLabel={t("retry")} onRetry={props.onRetryAgents} />}
+      {agentsLoading && !agents ? <Skeleton className="skeleton-code" /> : agents?.content ? <MarkdownDocument content={agents.content} projectId={detail.project.id} documentPath={agents.path} /> : props.agentsError ? null : <p className="muted-copy">{t("noAgentsGuide")}</p>}
     </section>
     <section id="overview-profile" className="content-card overview-facts"><div className="section-heading"><div><p className="eyebrow">{t("detectedEvidence")}</p><h2>{t("projectProfile")}</h2></div><span>{groups.length}</span></div>
       {groups.length === 0 ? <p className="muted-copy">{t("noFacts")}</p> : <div className="profile-groups">{groups.map((group) => <div className="profile-group" key={group.label}><span>{group.label}</span><div>{group.values.map((value, index) => <span className="badge" title={group.sources?.[index]} key={group.label + "-" + value}>{value}</span>)}</div></div>)}</div>}

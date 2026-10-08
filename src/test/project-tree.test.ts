@@ -1,4 +1,4 @@
-import { buildProjectTree, collectGroupIds, collectProjectsInGroup, flattenProjectTree, isSameOrAncestorPath, scanRootsUnderPath, sortProjects, splitCanonicalPath } from "../lib/project-tree";
+import { buildProjectTree, compactProjectTree, collectGroupIds, collectProjectsInGroup, flattenProjectTree, isSameOrAncestorPath, scanRootsUnderPath, sortProjects, splitCanonicalPath } from "../lib/project-tree";
 import type { ProjectSummary } from "../types";
 import { describe, expect, it } from "vitest";
 
@@ -32,6 +32,32 @@ function withTimes(id: string, canonicalPath: string, lastOpenedAt: string | nul
 }
 
 describe("project tree", () => {
+  it.each([
+    ["C:\\Users\\me\\code\\repo", "C:\\Users\\me\\code"],
+    ["/Users/me/code/repo", "/Users/me/code"],
+    ["\\\\server\\share\\code\\repo", "\\\\server\\share\\code"],
+  ])("compresses %s while keeping a real directory as the action target", (path, parent) => {
+    const tree = compactProjectTree(buildProjectTree([project("repo", path)]));
+    expect(tree).toHaveLength(1);
+    expect(tree[0].label).toBe(parent);
+    expect(tree[0].path).toBe(parent);
+    expect(tree[0].depth).toBe(1);
+    const rows = flattenProjectTree(tree, new Set(collectGroupIds(tree)));
+    expect(rows.map(row => row.depth)).toEqual([1, 2]);
+    expect(collectProjectsInGroup(tree, tree[0].id).map(p => p.id)).toEqual(["repo"]);
+  });
+  it("preserves branching and Project boundaries, folder-first ordering and parent navigation", () => {
+    const tree = compactProjectTree(buildProjectTree([
+      project("direct", "/work/direct"), project("child", "/work/team/nested/child"),
+      project("other", "/work/other/repo"),
+    ]));
+    expect(tree[0].label).toBe("/work");
+    expect(tree[0].children.map(group => group.label)).toEqual(["other", "team/nested"]);
+    expect(tree[0].projects.map(p => p.id)).toEqual(["direct"]);
+    const rows = flattenProjectTree(tree, new Set(collectGroupIds(tree)));
+    expect(rows.map(row => row.kind === "group" ? row.label : row.project.id)).toEqual(["/work", "other", "other", "team/nested", "child", "direct"]);
+    expect(rows[4].parentId).toBe(tree[0].children[1].id);
+  });
   it("splits Windows, UNC, POSIX, and mixed-separator paths", () => {
     expect(splitCanonicalPath("C:\\code/mixed\\repo")).toEqual(["C:", "code", "mixed", "repo"]);
     expect(splitCanonicalPath("\\\\server/share/repo")).toEqual(["\\\\server\\share", "repo"]);

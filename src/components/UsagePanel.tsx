@@ -106,12 +106,13 @@ export default function UsagePanel({t,onClose,navigation}:{t:T;onClose:()=>void;
   const estimated=summary.some(s=>s.estimatedUsd!=null)?summary.reduce((n,s)=>n+(s.estimatedUsd??0),0):null;
   const priced=summary.reduce((n,s)=>n+(s.pricedTokens??0),0);
   return <Dialog.Root modal={false} open onOpenChange={(open,details)=>{if(!open && details.reason!=="outside-press" && details.reason!=="focus-out")onClose();}}><Dialog.Portal><Dialog.Popup className="usage-dialog" aria-describedby={undefined}>
-    <header className="usage-header"><Dialog.Title><ChartDonut size={20} weight="duotone" aria-hidden/>{t("usageTitle")}</Dialog.Title><Button size="icon" variant="quiet" aria-label={t("close")} onClick={onClose}><X/></Button></header>
-    <div className="usage-scroll">
-      <div className="usage-intro"><div><h2>{t("usageHeading")}</h2><p>{t("usageSubtitle")}</p></div><span className="usage-connected-count">{connected.length} {t("usageConnected")}</span></div>
-      <div className="usage-navigation"><div role="group" aria-label={t("usageTitle")}><button aria-pressed={tab==="subscriptions"} onClick={()=>setTab("subscriptions")}>{t("usageSubscriptions")}</button><button aria-pressed={tab==="history"} onClick={()=>setTab("history")}>{t("usageHistory")}</button></div>
+    <header className="usage-header usage-navigation"><Dialog.Title className="sr-only">{t("usageTitle")}</Dialog.Title>
+      <div role="group" aria-label={t("usageTitle")}><button aria-pressed={tab==="subscriptions"} onClick={()=>setTab("subscriptions")}>{t("usageSubscriptions")}</button><button aria-pressed={tab==="history"} onClick={()=>setTab("history")}>{t("usageHistory")}</button></div>
+      <span className="usage-connected-count">{connected.length} {t("usageConnected")}</span>
         {tab==="subscriptions" ? <Button variant="quiet" loading={pending.size>0} disabled={!connected.length} onClick={()=>{setError("");void refreshAll(connected,true);}}><ArrowClockwise/>{t("usageRefresh")}</Button> : <Button variant="quiet" loading={historyBusy} onClick={()=>{setError("");setHistoryBusy(true);void sessionApi.refresh(true).catch(()=>{setHistoryBusy(false);setError(t("usageReadFailed"));});}}><ArrowClockwise/>{t("usageRefreshHistory")}</Button>}
-      </div>
+      <Button size="icon" variant="quiet" aria-label={t("close")} onClick={onClose}><X/></Button>
+    </header>
+    <div className="usage-scroll">
       {error && <div role="alert" className="usage-error">{error}<Button variant="quiet" onClick={()=>{setError("");void Promise.all([usageApi.subscriptions(),usageApi.summary()]).then(([s,h])=>{if(alive.current){setSubscriptions(s);setSummary(h);}}).catch(()=>setError(t("usageReadFailed")));}}>{t("retry")}</Button></div>}
       {loading && <div className="usage-skeleton" role="status">{t("loading")}</div>}
       {historyBusy && <p role="status" className="usage-note">{t("usageRefreshingHistory")}</p>}

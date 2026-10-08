@@ -1,3 +1,4 @@
+import { reviewPortConflicts } from "../lib/port-processes";
 import { motion } from "framer-motion";
 import { BookOpenText, CaretDown, Code, Copy, DotsThree, Files as FilesIcon, FolderOpen, GitBranch, PencilSimple, Play, Sparkle, SpinnerGap, Star, TerminalWindow, WarningCircle } from "@phosphor-icons/react";
 import { Dialog } from "@base-ui/react/dialog";
@@ -8,7 +9,8 @@ import { api, onTaskExited, onTaskPersistenceFailed } from "../lib/api";
 import { overviewGit, overviewEnvironment, overviewTools, overviewReadme, overviewAgents } from "../lib/overview-cache";
 import { useCachedResource } from "../lib/use-cached-resource";
 import { stackOf } from "../lib/format";
-import type { GitOp, ProjectDetail, ProjectTab, TaskRun, ToastTone } from "../types";
+import type { GitOp, ProjectDetail, TaskRun, ToastTone } from "../types";
+import { PROJECT_TABS, useStoredChoice } from "../lib/ui-state";
 import type { ProjectFile } from "../types";
 import { Button } from "./ui/button";
 import { ConfirmDialog } from "./ui/confirm";
@@ -22,7 +24,7 @@ import { GitWorkspace } from "./GitWorkspace";
 import { TaskWorkspace } from "./TaskWorkspace";
 import { FilesWorkspace } from "./FilesWorkspace";
 import { ProjectFileDialog } from "./ProjectFileDialog";
-import { InlineLoadError, MarkdownDocument, statusKey, taskConfirmation } from "./DashboardShared";
+import { MarkdownDocument, statusKey, taskConfirmation } from "./DashboardShared";
 import { getTaskLog, rememberStartedRun, subscribeTaskLog } from "../lib/task-runs";
 
 export function Dashboard({ detail, refreshing = false, t, notify, onFavorite, onArchive, onRefresh, onRemove, onOpenExplorer, onOpenTerminal, onOpenIde, onOpenAgent, onDescription, onNotes, onTags, onOpenProject, onRelocate, onRename }: {
@@ -46,7 +48,7 @@ export function Dashboard({ detail, refreshing = false, t, notify, onFavorite, o
   onRename?: (name: string) => Promise<void>;
 }) {
   const project = detail.project;
-  const [preferredTab, setTab] = useState<ProjectTab>("overview");
+  const [preferredTab, setTab] = useStoredChoice("repoatlas.projectTab.v1", PROJECT_TABS, "overview");
   const tab = preferredTab === "git" && project.vcsKind !== "git" ? "overview" : preferredTab;
   const [filesActivated, setFilesActivated] = useState(false);
   const [tagDraft, setTagDraft] = useState("");
@@ -68,6 +70,7 @@ export function Dashboard({ detail, refreshing = false, t, notify, onFavorite, o
   const [diff, setDiff] = useState("");
   const [diffLoading, setDiffLoading] = useState(false);
   const nameTriggerRef = useRef<HTMLButtonElement>(null);
+  const agentTriggerRef = useRef<HTMLButtonElement>(null);
   const [nameOpen, setNameOpen] = useState(false);
   const [descriptionOpen, setDescriptionOpen] = useState(false);
   const [descriptionDraft, setDescriptionDraft] = useState(project.description ?? "");
@@ -188,7 +191,7 @@ export function Dashboard({ detail, refreshing = false, t, notify, onFavorite, o
       const conflicts = (task.expectedPorts?.length ?? 0) > 0
         ? await api.preflightTaskPorts(project.id, task.id)
         : [];
-      const allowPortConflicts = conflicts.length > 0 && window.confirm(`${t("portConflictConfirm")}\n${conflicts.map((item) => `${item.port}${item.processName ? ` · ${item.processName}` : ""}${item.pid ? ` · PID ${item.pid}` : ""}`).join("\n")}`);
+      const allowPortConflicts = conflicts.length > 0 && await reviewPortConflicts(project.id, task.id, conflicts);
       if (conflicts.length > 0 && !allowPortConflicts) return;
       const run = await api.startTask(project.id, task.id, allowPortConflicts);
       setPendingTaskId(undefined); setActiveRunId(run.id); setLogs((current) => ({ ...current, [run.id]: "" })); rememberStartedRun(run); await loadRuns(); notify("info", t("taskStarted"), task.name);
@@ -313,7 +316,7 @@ export function Dashboard({ detail, refreshing = false, t, notify, onFavorite, o
                 </span>}
               </div>
               <div className="hero-actions">
-                <ActionMenu trigger={<Button variant="primary" size="md"><Sparkle weight="bold" />{t("openAgent")}<CaretDown /></Button>} items={[
+                <ActionMenu trigger={<Button ref={agentTriggerRef} variant="primary" size="md"><Sparkle weight="bold" />{t("openAgent")}<CaretDown /></Button>} items={[
                   ...(agentTools.length
                     ? agentTools.map((agent) => ({
                         label: agent.name,
@@ -362,7 +365,7 @@ export function Dashboard({ detail, refreshing = false, t, notify, onFavorite, o
                 <code>{project.canonicalPath}</code>
                 <Copy aria-label={t("copyPath")} />
               </button>
-              {(git?.snapshot.branch ?? detail.git?.branch) && (
+              {project.vcsKind === "git" && (git?.snapshot.branch ?? detail.git?.branch) && (
                 <span className="hero-meta-chip">
                   <GitBranch weight="bold" />
                   <code>{git?.snapshot.branch ?? detail.git?.branch}</code>
@@ -407,13 +410,12 @@ export function Dashboard({ detail, refreshing = false, t, notify, onFavorite, o
       </div>
       {tab === "tasks" ? (
         <div id="project-panel-tasks" role="tabpanel" aria-labelledby="project-tab-tasks" className="workspace-content workspace-content-tasks">
-          <TaskWorkspace key={project.id} tasks={detail.tasks} runs={runs} loading={runsLoading} error={runsError} activeRunId={activeRunId} log={(activeRunId ? logs[activeRunId] : "") ?? ""} t={t} notify={notify} onRetry={() => void loadRuns()} onSaveTasks={async (tasks) => { await api.updateProject(project.id, { tasks }); await onRefresh(); }} onRun={setPendingTaskId} onStopRun={async (runId) => { try { await api.stopTask(runId); await loadRuns(); } catch (error) { notify("error", t("taskStopFailed"), String(error)); } }} onClearLog={() => activeRunId && setLogs((current) => ({ ...current, [activeRunId]: "" }))} onHistory={async (run) => { setActiveRunId(run.id); try { const output = await api.readTaskLog(run.id); setLogs((current) => ({ ...current, [run.id]: output })); } catch (error) { notify("error", t("logLoadFailed"), String(error)); } }} />
+          <TaskWorkspace key={project.id} tasks={detail.tasks} runs={runs} loading={runsLoading} error={runsError} activeRunId={activeRunId} log={(activeRunId ? logs[activeRunId] : "") ?? ""} t={t} notify={notify} onRetry={() => void loadRuns()} onSaveTasks={async (tasks) => { await api.updateProject(project.id, { tasks }); await onRefresh(); }} onRun={setPendingTaskId} onStopRun={async (runId) => { if (!window.confirm(`${t("processTaskForceConfirm")}\n${project.displayName} · ${project.canonicalPath}`)) return; try { await api.stopTask(runId); await loadRuns(); } catch (error) { notify("error", t("taskStopFailed"), String(error)); } }} onClearLog={() => activeRunId && setLogs((current) => ({ ...current, [activeRunId]: "" }))} onHistory={async (run) => { setActiveRunId(run.id); try { const output = await api.readTaskLog(run.id); setLogs((current) => ({ ...current, [run.id]: output })); } catch (error) { notify("error", t("logLoadFailed"), String(error)); } }} />
         </div>
       ) : tab !== "files" ? (
         <div id={`project-panel-${tab}`} role="tabpanel" aria-labelledby={`project-tab-${tab}`} className="workspace-scroll" ref={contentRef}>
           <div className="workspace-content" key={tab}>
-            {tab === "overview" && gitError && <InlineLoadError title={t("gitLoadFailed")} detail={gitError} retryLabel={t("retry")} onRetry={() => void loadGit()} />}
-            {tab === "overview" && <OverviewWorkspace detail={detail} git={git} readme={readme} readmeLoading={readmeLoading} readmeError={readmeError} onRetryReadme={() => void readmeResource.refresh()} agents={agents} agentsLoading={agentsLoading} agentsMissing={agentsMissing} onNeedAgents={() => setAgentsProject(project.id)} t={t} tagDraft={tagDraft} setTagDraft={setTagDraft} onNotes={onNotes} onTags={onTags} tasks={detail.tasks} runs={runs} environment={environment} environmentLoading={environmentLoading} environmentError={environmentError} onRetryEnvironment={() => void environmentResource.refresh()} notify={notify} onRefresh={onRefresh} ides={ides} agentTools={agentTools} onRunTask={setPendingTaskId} onOpenProject={onOpenProject} onPreviewFile={setPreviewFile} />}
+            {tab === "overview" && <OverviewWorkspace detail={detail} git={git} gitLoading={gitLoading} gitError={gitError} onRetryGit={() => void loadGit()} runsLoading={runsLoading} runsError={runsError} onRetryRuns={() => void loadRuns()} onOpenTasks={() => setTab("tasks")} onChooseAgent={() => agentTriggerRef.current?.click()} agentsError={agentsResource.error} onRetryAgents={() => void agentsResource.refresh()} readme={readme} readmeLoading={readmeLoading} readmeError={readmeError} onRetryReadme={() => void readmeResource.refresh()} agents={agents} agentsLoading={agentsLoading} agentsMissing={agentsMissing} onNeedAgents={() => setAgentsProject(project.id)} t={t} tagDraft={tagDraft} setTagDraft={setTagDraft} onNotes={onNotes} onTags={onTags} tasks={detail.tasks} runs={runs} environment={environment} environmentLoading={environmentLoading} environmentError={environmentError} onRetryEnvironment={() => void environmentResource.refresh()} notify={notify} onRefresh={onRefresh} ides={ides} agentTools={agentTools} onRunTask={setPendingTaskId} onOpenProject={onOpenProject} onPreviewFile={setPreviewFile} />}
             {tab === "git" && <GitWorkspace git={git} loading={gitLoading && !git} error={gitError} busy={gitBusy} commitMessage={commitMessage} setCommitMessage={setCommitMessage} stagedCount={stagedCount} selectedDiff={selectedDiff} diff={diff} diffLoading={diffLoading} t={t} onRetry={() => void loadGit()} onGit={setPendingGit} onDiff={loadDiff} />}
           </div>
         </div>

@@ -6,6 +6,7 @@ on:
     paths:
       - 'website/**'
       - 'assets/brand/**'
+      - 'assets/screenshots/**'
       - 'README.md'
       - 'README.zh-CN.md'
       - '.github/workflows/pages.yml'

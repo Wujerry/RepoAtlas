@@ -31,6 +31,7 @@ import type {
   TaskRun,
   TaskRuntimeSnapshot,
   PortConflict,
+  ProcessInventory, ProcessIdentity, ProcessStopMode, ProcessStopPreview,
   ProjectCollection,
   CollectionUpsert,
   ProjectBrief,
@@ -44,6 +45,10 @@ import type {
   ProjectPathSearchResponse,
 } from "../types";
 export const api = {
+  listPortProcesses: () => invoke<ProcessInventory>("list_port_processes"),
+  associatePortProcess: (identity: ProcessIdentity, projectId: string | null) => invoke<void>("associate_port_process", { identity, projectId }),
+  previewProcessStop: (identity: ProcessIdentity, mode: ProcessStopMode) => invoke<ProcessStopPreview>("preview_process_stop", { identity, mode }),
+  confirmProcessStop: (token: string) => invoke<"stopped" | "signal_sent">("confirm_process_stop", { token }),
   bootstrap: () => invoke<Bootstrap>("bootstrap"),
   getDataVersion: () => invoke<number>("get_data_version"),
   getSettings: () => invoke<AppSettings>("get_settings"),

@@ -1,6 +1,6 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Archive, ArrowCounterClockwise, ArrowsInSimple, CaretDoubleDown, CaretDoubleUp, CaretRight, Check, ClockCounterClockwise, Copy, Crosshair, FolderPlus, FolderSimple, Image, ListBullets, MagnifyingGlass, MapPin, NotePencil, PencilSimple, Plus, PlusCircle, SortAscending, SquaresFour, Star, Trash, TreeStructure, XCircle } from "@phosphor-icons/react";
+import { Archive, ArrowCounterClockwise, ArrowsInSimple, CaretDown, CaretDoubleDown, CaretDoubleUp, CaretRight, Check, ClockCounterClockwise, Copy, Crosshair, FolderPlus, FolderSimple, Image, ListBullets, MagnifyingGlass, MapPin, NotePencil, PencilSimple, Plus, PlusCircle, SortAscending, SquaresFour, Star, Trash, TreeStructure, XCircle } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { MessageKey } from "../i18n";
 import { api } from "../lib/api";
@@ -9,9 +9,9 @@ import { LanguageGlyph, languageFallback } from "../lib/project-identity";
 import {
   ancestorGroupIds,
   buildProjectTree,
+  compactProjectTree,
   collectGroupIds,
   flattenProjectTree,
-  groupLabel,
   isSameOrAncestorPath,
   sortProjects,
   scanRootsUnderPath,
@@ -149,6 +149,7 @@ export function ProjectList({
   const searchWasActive = useRef(false);
   const previousScope = useRef(scope);
   const [layout, setLayout] = useState<"tree" | "flat">("tree");
+  const [compactPaths, setCompactPaths] = useState(true);
   const [editing, setEditing] = useState<{ id: string; field: "name" | "description" } | null>(null);
   const [draft, setDraft] = useState("");
   const [pendingProject, setPendingProject] = useState<ProjectSummary>();
@@ -158,7 +159,10 @@ export function ProjectList({
     () => projects.map((project) => `${project.id}:${project.updatedAt}`).join("|"),
     [projects],
   );
-  const roots = useMemo(() => buildProjectTree(projects, sort), [projects, sort]);
+  const roots = useMemo(() => {
+    const tree = buildProjectTree(projects, sort);
+    return compactPaths ? compactProjectTree(tree) : tree;
+  }, [projects, sort, compactPaths]);
   const groupIds = useMemo(() => collectGroupIds(roots), [roots]);
   const rows = useMemo(() => flattenProjectTree(roots, expandedGroups), [expandedGroups, roots]);
   const selectedInList = useMemo(() => projects.some((project) => project.id === selectedId), [projects, selectedId]);
@@ -465,7 +469,7 @@ export function ProjectList({
           >
             <CaretRight className={row.expanded ? "path-tree-caret expanded" : "path-tree-caret"} aria-hidden="true" />
             <FolderSimple className="path-tree-folder" weight="fill" aria-hidden="true" />
-            <span className="path-tree-group-label">{groupLabel(row.path, row.depth)}</span>
+            <span className="path-tree-group-label" title={row.path}>{row.label.match(/^[A-Za-z]:$/) ? `${row.label}\\` : row.label}</span>
             <span className="path-tree-group-count">{row.projectCount}</span>
           </button>}
           items={[{
@@ -566,7 +570,7 @@ export function ProjectList({
         </label>
         <div className="list-toolbar-primary">
           {onScope && <div className="scope-tabs" role="tablist" aria-label={t("projects")}>
-            {scopeOptions.map((value) => { const ScopeIcon = scopeIcons[value]; return <button key={value} type="button" role="tab" aria-label={t(scopeKeys[value])} title={t(scopeKeys[value])} aria-selected={scope === value} tabIndex={scope === value ? 0 : -1} className={scope === value ? "active" : ""} onKeyDown={moveTabFocus} onClick={() => onScope(value)}><ScopeIcon weight={scope === value ? "fill" : "regular"} aria-hidden="true" /></button>; })}
+            {scopeOptions.map((value) => { const ScopeIcon = scopeIcons[value]; return <button key={value} type="button" role="tab" aria-label={t(scopeKeys[value])} title={t(scopeKeys[value])} aria-selected={scope === value} tabIndex={scope === value ? 0 : -1} className={scope === value ? "active" : ""} onKeyDown={moveTabFocus} onClick={() => onScope(value)}><ScopeIcon weight={scope === value ? "fill" : "regular"} aria-hidden="true" /><span>{t(scopeKeys[value])}</span></button>; })}
           </div>}
           {collectionControls}
         </div>
@@ -600,7 +604,14 @@ export function ProjectList({
               }))}
             />
             <div className="list-view-toggle" role="group" aria-label={t("listLayout")}>
-              <button type="button" className={layout === "tree" ? "active" : ""} aria-pressed={layout === "tree"} aria-label={t("treeView")} onClick={() => setLayout("tree")}><TreeStructure aria-hidden="true" /></button>
+              <ActionMenu
+                trigger={<button type="button" className={`tree-view-trigger${layout === "tree" ? " active" : ""}`} aria-pressed={layout === "tree"} aria-label={t("treeView")} title={`${t("treeView")} · ${t(compactPaths ? "compactPaths" : "fullPaths")}`} onClick={() => setLayout("tree")}><TreeStructure aria-hidden="true" /><CaretDown className="view-options-caret" aria-hidden="true" /></button>}
+                items={[true, false].map((compact) => ({
+                  label: t(compact ? "compactPaths" : "fullPaths"),
+                  icon: compactPaths === compact ? <Check aria-hidden="true" /> : undefined,
+                  onClick: () => { initializedExpansion.current = false; setCompactPaths(compact); setLayout("tree"); },
+                }))}
+              />
               <button type="button" className={layout === "flat" ? "active" : ""} aria-pressed={layout === "flat"} aria-label={t("flatView")} onClick={() => setLayout("flat")}><ListBullets aria-hidden="true" /></button>
             </div>
           </div>
@@ -620,7 +631,7 @@ export function ProjectList({
         tabIndex={0}
         onKeyDown={onTreeKeyDown}
       >
-        {projects.length === 0 ? <EmptyState compact title={hasTextFilter ? t("noMatches") : t("emptyTitle")} body={hasTextFilter ? t("adjustFilters") : empty} /> :
+        {projects.length === 0 ? <EmptyState compact title={hasTextFilter ? t("noMatches") : t("emptyTitle")} body={hasTextFilter ? t("adjustFilters") : empty} actions={hasTextFilter ? <Button onClick={() => { onQuery(""); onFilters({ language: "", tag: "" }); }}>{t("clear")}</Button> : onScope && scope !== "projects" ? <Button onClick={() => onScope("projects")}>{t("projects")}</Button> : <Button onClick={onRegister}>{t("register")}</Button>} /> :
           <div className="virtual-list" style={{ height: virtualizer.getTotalSize() }}>
             {virtualizer.getVirtualItems().map((virtualRow) => {
               const row = visibleRows[virtualRow.index];

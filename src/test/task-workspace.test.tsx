@@ -48,6 +48,24 @@ function renderWorkspace(overrides: Partial<React.ComponentProps<typeof TaskWork
 }
 
 describe("TaskWorkspace console", () => {
+  it("progressively reveals filters for small catalogs and keeps empty history compact", () => {
+    const { container } = renderWorkspace();
+    expect(screen.queryByRole("combobox", { name: t("taskFilterState") })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: t("taskAdvancedFilters") }));
+    expect(screen.getByRole("combobox", { name: t("taskFilterState") })).toBeVisible();
+    expect(container.querySelector(".task-main")).toHaveClass("is-empty-history");
+  });
+  it("shows filters immediately for large catalogs", () => {
+    renderWorkspace({ tasks: Array.from({ length: 6 }, (_, i) => task(String(i))) });
+    expect(screen.getByRole("combobox", { name: t("taskFilterState") })).toBeVisible();
+  });
+  it("shows retry instead of empty history after a read failure", () => {
+    const onRetry = vi.fn();
+    renderWorkspace({ error: "history unavailable", onRetry });
+    expect(screen.queryByText(t("noRunHistory"))).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: t("retry") }));
+    expect(onRetry).toHaveBeenCalledOnce();
+  });
   it("keeps a selected historical task separate from another running task", () => {
     const historical = { ...run("succeeded"), id: "history", taskId: "build", kind: "build" };
     renderWorkspace({
@@ -55,7 +73,7 @@ describe("TaskWorkspace console", () => {
       runs: [run("running"), historical], activeRunId: historical.id,
     });
     expect(document.querySelector(".task-console-toggle strong")).toHaveTextContent("Package desktop");
-    expect(screen.queryByRole("button", { name: t("stop") })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("processForce") })).not.toBeInTheDocument();
   });
   it("stays collapsed until a task is running", () => {
     renderWorkspace();
@@ -138,7 +156,7 @@ describe("TaskWorkspace console", () => {
     expect(screen.getByText("listening on 5173")).toBeInTheDocument();
     expect(screen.queryByLabelText(t("taskInput"))).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: t("stop") }));
+    fireEvent.click(screen.getByRole("button", { name: t("processForce") }));
     expect(onStopRun).toHaveBeenCalledWith("run-1");
   });
 });
@@ -219,6 +237,7 @@ describe("TaskWorkspace task locating", () => {
   it("sorts by name and run count with a direction toggle", () => {
     const tasks = [namedTask("task-1", "ccc", "build"), namedTask("task-2", "aaa", "check"), namedTask("task-3", "bbb", "dev")];
     const { container } = renderWorkspace({ tasks });
+    fireEvent.click(screen.getByRole("button", { name: t("taskAdvancedFilters") }));
     const names = () => Array.from(container.querySelectorAll(".task-title-line strong")).map((node) => node.textContent);
     fireEvent.change(screen.getByLabelText(t("taskSortLabel")), { target: { value: "name" } });
     expect(names()).toEqual(["aaa", "bbb", "ccc"]);
@@ -236,6 +255,7 @@ describe("TaskWorkspace task locating", () => {
       runFor("tie", "dev", "running", "2026-08-24T03:00:00Z"),
     ];
     const { container } = renderWorkspace({ tasks, runs });
+    fireEvent.click(screen.getByRole("button", { name: t("taskAdvancedFilters") }));
     expect(screen.getByLabelText(t("taskSortLabel"))).toHaveValue("lastRun");
     expect(screen.getByRole("button", { name: t("sortDescending") })).toBeInTheDocument();
     expect(Array.from(container.querySelectorAll(".task-title-line strong"), node => node.textContent)).toEqual(["Newest", "Same time", "Older", "Never"]);

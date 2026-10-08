@@ -16,7 +16,13 @@ export const heroShots = {
 
 import enSessions from "../assets/screenshots/en-dark-sessions.jpg";
 import zhSessions from "../assets/screenshots/zh-light-sessions.jpg";
-import enResume from "../assets/screenshots/en-dark-resume.jpg";
-import zhResume from "../assets/screenshots/zh-light-resume.jpg";
+import enSearch from "../assets/screenshots/en-dark-search.jpg";
+import zhSearch from "../assets/screenshots/zh-light-search.jpg";
+import enUsage from "../assets/screenshots/en-dark-usage.jpg";
+import zhUsage from "../assets/screenshots/zh-light-usage.jpg";
+import enProjects from "../assets/screenshots/en-dark-library.png";
+import zhProjects from "../assets/screenshots/zh-light-library.png";
 export const sessionShots = { en: enSessions, zh: zhSessions } as const;
-export const resumeShots = { en: enResume, zh: zhResume } as const;
+export const searchShots = { en: enSearch, zh: zhSearch } as const;
+export const usageShots = { en: enUsage, zh: zhUsage } as const;
+export const projectShots = { en: enProjects, zh: zhProjects } as const;

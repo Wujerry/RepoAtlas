@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AIHistory } from "../components/AIHistory";
 import { dictionaries, type MessageKey } from "../i18n";
@@ -140,6 +140,25 @@ it("opens session details outside the reader without reloading messages or losin
   expect(screen.getByRole("dialog", { name: t("ahSessionDetails") })).toBeInTheDocument();
   expect(mocks.messages).toHaveBeenCalledTimes(1);
   expect(scrolls).toHaveLength(0);
+});
+
+it("does not clear a source failure when a session search succeeds", async () => {
+  mocks.sources.mockRejectedValue(new Error("Source access failed"));
+  render(<AIHistory t={t} initialOpen />);
+  await waitFor(() => expect(mocks.search).toHaveBeenCalled());
+  expect(screen.getByRole("status")).toHaveTextContent("Source access failed");
+  expect(screen.queryByText(t("ahNoSources"), { selector: "h3" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: t("retry") })).toBeInTheDocument();
+});
+
+it("does not present search failure as an empty result and can retry", async () => {
+  mocks.search.mockRejectedValueOnce(new Error("Search unavailable"));
+  render(<AIHistory t={t} initialOpen />);
+  expect(await screen.findByText(/Search unavailable/)).toBeInTheDocument();
+  expect(screen.queryByText(t("ahEmpty"), { selector: "h3" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: t("retry") }));
+  await waitFor(() => expect(mocks.search).toHaveBeenCalledTimes(2));
+  expect(screen.queryByText(/Search unavailable/)).not.toBeInTheDocument();
 });
 
 it("groups technical context by default and reveals an exact search-hit anchor",async()=>{

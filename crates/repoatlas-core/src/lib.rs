@@ -10,6 +10,7 @@ pub mod import_export;
 pub mod launch;
 pub mod models;
 pub mod paths;
+pub mod port_processes;
 mod process;
 pub mod project_files;
 pub mod scan;

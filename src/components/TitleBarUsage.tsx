@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AgentBrandIcon } from "../lib/brand-icons";
 import { formatMoney, notifyUsageChanged, usageApi, type SubscriptionUsage } from "../lib/usage";
 import { limitingWindow, providers, resetLabel, staleUsage, statusKeys, windowLabel, type UsageT } from "../lib/subscription-presentation";
+import { NavigationIcon } from "./ui/navigation-icon";
 import { Button } from "./ui/button";
 import type { UsageNavigation } from "./UsageNavSettings";
 
@@ -68,7 +69,7 @@ export function TitleBarUsage({t,onOpen,active,navigation}:{t:UsageT;onOpen:()=>
     return()=>element.removeEventListener("wheel",wheel);
   },[hasConnections]);
   const manage=()=>{setOpen(false);onOpen();};
-  if(!connected.length)return <button className="titlebar-ai-history titlebar-usage" aria-pressed={active} onClick={onOpen} title={error?t("usageReadFailed"):t("usageTitle")}><ChartDonut aria-hidden/><span>{t("usageTitle")}</span></button>;
+  if(!connected.length)return <button className="titlebar-ai-history titlebar-usage" aria-pressed={active} onClick={onOpen} title={error?t("usageReadFailed"):t("usageTitle")}><NavigationIcon icon={ChartDonut} motion="usage" active={active || open} /><span>{t("usageTitle")}</span></button>;
   return <Popover.Root open={open} onOpenChange={setOpen}>
     <div ref={rail} className="titlebar-quota-rail" onKeyDown={event=>{
       const element=event.currentTarget;
@@ -76,7 +77,7 @@ export function TitleBarUsage({t,onOpen,active,navigation}:{t:UsageT;onOpen:()=>
       event.preventDefault();element.scrollLeft+=event.key==="ArrowRight"?100:-100;
     }}>
     <Popover.Trigger className="titlebar-quota" aria-label={`${t("usageSubscriptions")} · ${visible.map(s=>`${providers[s.provider]?.name??s.provider} ${limitingWindow(s)?.usedPercent!=null?`${Math.round(100-limitingWindow(s)!.usedPercent!)}% ${t("usageRemaining")}`:t("usageDetails")}`).join(" · ")}`} title={t("usageSubscriptions")} data-active={active}>
-      {!visible.length && <span className="nav-quota"><ChartDonut aria-hidden/><span>{t("usageTitle")}</span></span>}
+      {!visible.length && <span className="nav-quota"><NavigationIcon icon={ChartDonut} motion="usage" active={active || open} /><span>{t("usageTitle")}</span></span>}
       {visible.map(s=><span className="nav-quota" key={s.provider}><AgentBrandIcon agent={providers[s.provider]?.icon??s.provider}/><span className="nav-quota-name">{s.provider==="opencode-go"?"Go":providers[s.provider]?.name??s.provider}</span><QuotaLabel account={s} t={t} now={now}/></span>)}
     </Popover.Trigger>
     </div>
