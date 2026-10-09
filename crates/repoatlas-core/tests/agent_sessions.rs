@@ -19,6 +19,61 @@ fn parse(adapter: &str, path: &Path, root: &Path) -> (AgentSession, Vec<SessionM
 }
 
 #[test]
+fn codex_large_image_records_preserve_text_usage_and_search() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("sessions");
+    let path = root.join("rollout-images.jsonl");
+    let image = "a".repeat(9 * 1024 * 1024);
+    let records = [
+        json!({"type":"session_meta","payload":{"id":"large-images","cwd":dir.path()}}),
+        json!({"type":"event_msg","payload":{"type":"user_message","message":"Find the image bug","images":[image]}}),
+        json!({"type":"response_item","payload":{"type":"message","role":"user","content":[
+            {"type":"input_text","text":"Find the image bug"},
+            {"type":"input_image","image_url":format!("data:image/png;base64,{image}")},
+            {"type":"input_text","text":"Keep text after the image too"}
+        ]}}),
+        json!({"type":"response_item","payload":{"type":"reasoning","encrypted_content":image}}),
+        json!({"type":"response_item","payload":{"type":"function_call","arguments":image}}),
+        json!({"type":"response_item","payload":{"type":"function_call_output","output":image}}),
+        json!({"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Image handled"}]}}),
+        json!({"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"output_tokens":20,"total_tokens":120}}}}),
+    ];
+    write(
+        &path,
+        &records
+            .iter()
+            .map(|v| v.to_string() + "\n")
+            .collect::<String>(),
+    );
+    let original = fingerprint(&path).unwrap();
+    let (session, messages) = parse("codex", &path, &root);
+    assert_eq!(session.external_id, "large-images");
+    assert_eq!(session.usage.as_ref().unwrap().total_tokens, 120);
+    assert_eq!(messages.len(), 2);
+    assert_eq!(
+        messages[0].content,
+        "Find the image bug\nKeep text after the image too"
+    );
+    assert_eq!(messages[1].content, "Image handled");
+    let core = Core::open(dir.path().join("app.sqlite")).unwrap();
+    let source = core
+        .set_session_source("codex", root.to_str().unwrap(), true)
+        .unwrap();
+    core.ingest_session(&source, session, &messages, &original)
+        .unwrap();
+    assert_eq!(
+        core.search_agent_sessions(SessionQuery {
+            query: "image bug".into(),
+            ..Default::default()
+        })
+        .unwrap()
+        .total,
+        1
+    );
+    assert_eq!(fingerprint(&path).unwrap(), original);
+}
+
+#[test]
 fn recorded_usage_survives_indexing_without_reopening_transcripts() {
     let dir = tempfile::tempdir().unwrap();
     let core = Core::open(dir.path().join("app.sqlite")).unwrap();

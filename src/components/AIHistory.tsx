@@ -190,7 +190,7 @@ export function AIHistory({ t, initialOpen = false, onVisibilityChange, onOpenPr
           {sources.map(source => <div className="ah-source-row" key={`${source.adapter}:${source.path}`}>
             <div><strong><SessionAgentLabel adapter={source.adapter} /></strong><code title={source.path}>{source.path}</code>
               {source.lastScannedAt && <small>{t("ahCached")} · <Stamp value={source.lastScannedAt} t={t} /></small>}
-              {source.lastError && <p role="status">{t("ahPartial")} <code>{source.lastError}</code></p>}
+              {source.lastError && <p role="status">{t("ahPartial")} {source.lastError === "session_line_limit" ? t("ahRecordTooLarge") : <code>{source.lastError}</code>}</p>}
             </div><Button variant="quiet" onClick={() => { setSourceError(""); setPendingSource(source); }}>{t(source.enabled ? "ahDisable" : "ahAuthorize")}</Button>
           </div>)}
           <form className="ah-source-form" onSubmit={e => { e.preventDefault(); setSourceError(""); setPendingSource({ id: "", adapter: customAdapter, path: customPath.trim(), enabled: false, lastScannedAt: null, lastError: null }); }}>

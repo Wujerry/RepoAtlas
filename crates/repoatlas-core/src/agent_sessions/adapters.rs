@@ -210,7 +210,7 @@ pub fn fingerprint(path: &Path) -> Result<String> {
     for b in &buffer[..n] {
         h = (h ^ *b as u64).wrapping_mul(1099511628211);
     }
-    let mut result = format!("parser5:{}:{:?}:{h}", m.len(), m.modified()?);
+    let mut result = format!("parser6:{}:{:?}:{h}", m.len(), m.modified()?);
     let wal = PathBuf::from(format!("{}-wal", path.display()));
     if let Ok(w) = fs::metadata(wal) {
         result.push_str(&format!(":{}:{:?}", w.len(), w.modified()?));
@@ -407,15 +407,21 @@ impl SessionAdapter for LocalAdapter {
                 if n == 0 {
                     break;
                 }
-                if n > 8 * 1024 * 1024 {
+                let v: Value = if n > codex_record::TEXT_LIMIT && self.id() == "codex" {
+                    match codex_record::read_large(&line, &mut reader, cancel)? {
+                        Some(value) => value,
+                        None => break,
+                    }
+                } else if n > codex_record::TEXT_LIMIT {
                     return Err(Error::msg("session_line_limit"));
-                }
-                let v: Value = match serde_json::from_slice(&line) {
-                    Ok(v) => v,
-                    Err(_) if !line.ends_with(b"\n") => break,
-                    Err(_) => {
-                        bad += 1;
-                        continue;
+                } else {
+                    match serde_json::from_slice(&line) {
+                        Ok(v) => v,
+                        Err(_) if !line.ends_with(b"\n") => break,
+                        Err(_) => {
+                            bad += 1;
+                            continue;
+                        }
                     }
                 };
                 let kind = s(&v, &["type"]);

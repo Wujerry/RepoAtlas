@@ -1,4 +1,5 @@
-import { invalidateOverviewCache, overviewTools } from "../lib/overview-cache";
+import { invalidateOverviewCache, overviewAgents, overviewTools } from "../lib/overview-cache";
+import { api } from "../lib/api";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { dictionaries, type MessageKey } from "../i18n";
 import type { EnvironmentInspection, ProjectDetail } from "../types";
@@ -92,6 +93,27 @@ it("does not turn failed document, environment or run reads into empty success s
   expect(screen.queryByText(t("noEnvironment"))).not.toBeInTheDocument();
   expect(screen.queryByText(t("noRecentTask"))).not.toBeInTheDocument();
   expect(container.querySelector(".env-summary")).toHaveTextContent(t("stateReadFailed"));
+});
+
+it("caches an absent optional guide, clears stale text, and shows its neutral empty state", async () => {
+  invalidateOverviewCache();
+  const read = vi.mocked(api.readProjectDocument);
+  read.mockResolvedValueOnce({ path: "AGENTS.md", content: "Old guide", truncated: false });
+  await overviewAgents.read("atlas");
+  read.mockResolvedValueOnce(null);
+  expect(await overviewAgents.read("atlas", true)).toBeNull();
+  const cached = overviewAgents.peek("atlas")!;
+  expect(cached.error).toBeUndefined();
+  expect(cached.value).toBeNull();
+  expect(await overviewAgents.read("atlas")).toBeNull();
+  const { container } = renderOverview({ agents: cached.value ?? undefined, agentsLoading: cached.loading, agentsMissing: true, agentsError: cached.error });
+  expect(within(container.querySelector("#overview-agents") as HTMLElement).getByText(t("noAgentsGuide"))).toBeInTheDocument();
+  expect(screen.queryByText(t("agentsReadFailed"))).not.toBeInTheDocument();
+  read.mockResolvedValueOnce({ path: "AGENTS.md", content: "New guide", truncated: false });
+  expect((await overviewAgents.read("atlas", true))?.content).toBe("New guide");
+  read.mockRejectedValueOnce(new Error("permission denied"));
+  await expect(overviewAgents.read("atlas", true)).rejects.toThrow("permission denied");
+  expect(overviewAgents.peek("atlas")?.error).toContain("permission denied");
 });
 
 it("also keeps unknown Git workspace counters and an unread working tree neutral", () => {

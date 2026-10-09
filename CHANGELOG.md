@@ -2,6 +2,12 @@
 
 All notable changes to RepoAtlas will be documented here. Package availability is recorded in GitHub Releases.
 
+## [0.1.8] - 2026-10-09
+
+- Read oversized Codex image, encrypted-reasoning and tool records without allocating their excluded payloads; preserve accompanying text, subsequent messages, recorded usage and search while retaining memory, size and cancellation limits.
+- Reindex cached session files with the updated parser and explain remaining oversized-record errors in Chinese and English.
+- Show a neutral empty state when a Project has no optional AGENTS.md, while preserving errors for unavailable directories, permissions and rejected paths.
+
 ## [0.1.7] - 2026-10-08
 
 - Restore the main window's size, position, selected Project, workspace tab, and Settings category across restarts.

@@ -92,8 +92,9 @@ export function Dashboard({ detail, refreshing = false, t, notify, onFavorite, o
   const readmeResource = useCachedResource(overviewReadme, detail.readmePath ? project.id : undefined);
   const { value: readme, loading: readmeLoading, error: readmeError } = readmeResource;
   const agentsResource = useCachedResource(overviewAgents, agentsProject === project.id ? project.id : undefined);
-  const { value: agents, loading: agentsLoading } = agentsResource;
-  const agentsMissing = Boolean(agentsResource.error);
+  const agents = agentsResource.value ?? undefined;
+  const agentsLoading = agentsResource.loading;
+  const agentsMissing = agentsResource.value === null;
   const environmentResource = useCachedResource(overviewEnvironment, tab === "overview" ? project.id : undefined, 180);
   const { value: environment, loading: environmentLoading, error: environmentError } = environmentResource;
   const toolsResource = useCachedResource(overviewTools, "installed");

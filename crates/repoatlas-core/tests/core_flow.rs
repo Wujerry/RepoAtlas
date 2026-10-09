@@ -1138,6 +1138,44 @@ fn authorized_scan_root_survives_export_import_and_links_projects() {
 }
 
 #[test]
+fn optional_project_documents_distinguish_absence_from_read_failures() {
+    let dir = tempdir().unwrap();
+    let project = dir.path().join("app");
+    write(&project.join("package.json"), r#"{"name":"app"}"#);
+    let core = Core::open_in_memory().unwrap();
+    let summary = core.register_project(&project).unwrap();
+    assert!(core
+        .read_project_document(&summary.id, "AGENTS.md")
+        .unwrap()
+        .is_none());
+    write(&project.join("AGENTS.md"), "# Project guide");
+    let document = core
+        .read_project_document(&summary.id, "AGENTS.md")
+        .unwrap()
+        .unwrap();
+    assert_eq!(document.content, "# Project guide");
+    fs::remove_file(project.join("AGENTS.md")).unwrap();
+    assert!(core
+        .read_project_document(&summary.id, "AGENTS.md")
+        .unwrap()
+        .is_none());
+    fs::create_dir(project.join("AGENTS.md")).unwrap();
+    assert!(core
+        .read_project_document(&summary.id, "AGENTS.md")
+        .is_err());
+    assert!(core
+        .read_project_document(&summary.id, "../AGENTS.md")
+        .is_err());
+    assert!(core
+        .read_project_document("unknown-project", "AGENTS.md")
+        .is_err());
+    fs::rename(&project, dir.path().join("moved-app")).unwrap();
+    assert!(core
+        .read_project_document(&summary.id, "AGENTS.md")
+        .is_err());
+}
+
+#[test]
 fn project_readme_reader_rejects_an_external_symlink() {
     let project = tempdir().unwrap();
     let outside = tempdir().unwrap();

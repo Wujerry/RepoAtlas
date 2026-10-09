@@ -1,5 +1,6 @@
 //! Read-only external conversation adapters. Authorization lives in Core.
 pub mod adapters;
+mod codex_record;
 mod pricing;
 pub mod usage;
 use serde::{Deserialize, Serialize};

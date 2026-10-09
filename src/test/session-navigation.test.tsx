@@ -142,6 +142,18 @@ it("opens session details outside the reader without reloading messages or losin
   expect(scrolls).toHaveLength(0);
 });
 
+it("explains an oversized source record without exposing only an internal error code", async () => {
+  mocks.sources.mockResolvedValue([{
+    id: "authorized-source", adapter: "codex", path: "F:\\history", enabled: true,
+    lastScannedAt: date, lastError: "session_line_limit",
+  }]);
+  render(<AIHistory t={t}/>);
+  await act(async () => openSessionHistory());
+  fireEvent.click(await screen.findByRole("button", { name: t("ahSources") }));
+  expect(await screen.findByText(t("ahRecordTooLarge"), { exact: false })).toBeInTheDocument();
+  expect(screen.queryByText("session_line_limit")).not.toBeInTheDocument();
+});
+
 it("does not clear a source failure when a session search succeeds", async () => {
   mocks.sources.mockRejectedValue(new Error("Source access failed"));
   render(<AIHistory t={t} initialOpen />);

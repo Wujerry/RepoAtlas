@@ -98,6 +98,8 @@ Built-in history adapters cover **Claude Code, Codex CLI, OpenCode, Cursor CLI, 
 
 History stays local. Refresh shows cached results first and supports cancellation; revoking a source removes its index and excerpts without changing the Agent's original files. Restored backups require source authorization again.
 
+Large Codex image and tool records are streamed without indexing their binary/tool payloads, preserving accompanying text and recorded usage within bounded reading limits. A Project without the optional AGENTS.md shows a neutral empty state.
+
 Resume requires an installed Agent, an available session and a valid working directory. RepoAtlas checks the source and CLI before dispatch, reports errors, and lets you copy the command. Codex App uses a session deep link; App entries without a supported resume interface remain unavailable. The Agent owns login, model access and the actual conversation. Sessions are not migrated between Agents.
 
 Read-only MCP tools: `list_agent_sessions`, `search_agent_sessions`, `get_agent_session`, and `get_agent_session_messages`. They cannot authorize sources or launch a session.

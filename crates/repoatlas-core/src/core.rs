@@ -701,14 +701,15 @@ impl Core {
             .optional()?
             .ok_or_else(|| Error::NotFound(project_id.into()))?
             .ok_or_else(|| Error::msg("README not found"))?;
-        self.read_project_document(project_id, &relative)
+        self.read_project_document(project_id, &relative)?
+            .ok_or_else(|| Error::msg("README not found"))
     }
 
     pub fn read_project_document(
         &self,
         project_id: &str,
         relative_path: &str,
-    ) -> Result<ReadmeDocument> {
+    ) -> Result<Option<ReadmeDocument>> {
         const MAX_DOCUMENT_BYTES: usize = 1024 * 1024;
         let project_root = self.project_path(project_id)?;
         let relative = Path::new(relative_path);
@@ -743,17 +744,28 @@ impl Core {
         {
             return Err(Error::msg("unsupported project document"));
         }
-        let file = environment::open_regular_project_file(&project_root, relative)?;
+        let file = match environment::open_regular_project_file(&project_root, relative) {
+            Ok(file) => file,
+            Err(Error::Io { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => {
+                // A missing optional document is an empty state. A missing or
+                // unreadable Project directory must still report a real error.
+                if fs::metadata(&project_root)?.is_dir() {
+                    return Ok(None);
+                }
+                return Err(Error::msg("project path is not a directory"));
+            }
+            Err(error) => return Err(error),
+        };
         let mut bytes = Vec::with_capacity(MAX_DOCUMENT_BYTES + 1);
         file.take((MAX_DOCUMENT_BYTES + 1) as u64)
             .read_to_end(&mut bytes)?;
         let truncated = bytes.len() > MAX_DOCUMENT_BYTES;
         bytes.truncate(MAX_DOCUMENT_BYTES);
-        Ok(ReadmeDocument {
+        Ok(Some(ReadmeDocument {
             path: file_name.to_string(),
             content: String::from_utf8_lossy(&bytes).into_owned(),
             truncated,
-        })
+        }))
     }
 
     pub fn inspect_project_environment(

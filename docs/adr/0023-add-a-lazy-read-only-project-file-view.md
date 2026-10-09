@@ -20,6 +20,11 @@ README, AGENTS.md, and Files Markdown use one sanitized renderer with GFM, front
 
 The Files tab does not edit, create, delete, move, rename, or save files. Its commands are desktop-only and are not added to MCP. External Agents continue to choose and perform their own project-file reads.
 
+The root-document API returns an optional document: a missing file beneath an
+available Project is `None`/`null`. Overview treats an absent AGENTS.md as a neutral
+empty state and caches that result. Permission failures, unavailable Project
+directories and rejected links/paths remain errors; the secure opener is unchanged.
+
 ## Consequences
 
 - Opening Overview or another workspace tab performs no Files directory scan or path indexing.

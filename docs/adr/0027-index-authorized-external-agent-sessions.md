@@ -61,6 +61,15 @@ References:
 Synthetic fixtures establish supported parser shapes and command contracts, not
 universal compatibility with future releases or real Windows/macOS Agent startup.
 
+Oversized Codex JSONL records use streaming projection: image attachments,
+encrypted reasoning, and tool arguments/results are validated but not allocated
+or indexed. Retained JSON remains limited to 8 MiB per record; raw records are
+limited to 512 MiB, and cancellation is checked during streaming. Visible text,
+metadata and recorded usage are retained, including text beside images. Malformed
+records and remaining limit violations still fail visibly and preserve the cache.
+Incomplete final records remain retryable. A parser fingerprint revision forces
+existing files to be reindexed after this compatibility fix.
+
 Desktop refinements: batch authorization confirms a fixed list of absolute sources through the same Core authorization API. Windows CLI launch uses a no-profile PowerShell process with UTF-16 EncodedCommand so startup profiles and argument quoting do not consume the resume command. The launch panel displays the literal command and directory. Codex App can open a default-source session via its documented `codex://threads/<id>` link; custom sources and other Apps without a verified session entry remain CLI-resumable only. App launch is explicit and never added to MCP. Reference: https://developers.openai.com/codex/app/commands#deeplinks
 
 On Windows, Codex App resume dispatches the validated session deep link through ShellExecuteW and checks its return code. Package executable paths are discovery evidence only: directly spawning a Store WindowsApps executable can fail with access denied. Protocol dispatch does not require elevation or shell evaluation; failure remains visible and never falls back to a new session.

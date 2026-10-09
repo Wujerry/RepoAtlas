@@ -75,6 +75,8 @@ Agent 负责自己的模型、账号、服务商配置和对话，也负责决�
 
 刷新时先显示缓存，读取过程可取消。撤销授权会清理对应的索引和摘录，Agent 原始历史文件会保留；恢复备份后需重新授权历史目录。
 
+较大的 Codex 图片和工具记录采用流式读取，跳过无需索引的图片与工具载荷，在安全读取上限内保留同条记录中的文字和 Token 统计。项目没有可选的 AGENTS.md 文件时显示普通空状态。
+
 继续会话需要已安装的 Agent、可用会话和有效工作目录。启动前会检查来源和 CLI，失败时显示原因并提供可复制的命令。Codex App 使用指定会话链接；暂不支持恢复的桌面应用入口会禁用。账号登录和模型访问由 Agent 管理，RepoAtlas 不提供跨 Agent 会话迁移。
 
 只读 MCP 工具包括 `list_agent_sessions`、`search_agent_sessions`、`get_agent_session` 和 `get_agent_session_messages`，不能通过这些工具授权新来源或启动会话。

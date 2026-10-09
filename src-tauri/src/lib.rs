@@ -524,7 +524,7 @@ async fn read_project_document(
     state: State<'_, Arc<AppState>>,
     project_id: String,
     path: String,
-) -> Result<repoatlas_core::ReadmeDocument, String> {
+) -> Result<Option<repoatlas_core::ReadmeDocument>, String> {
     run_blocking(state.inner().clone(), move |core| {
         core.read_project_document(&project_id, &path)
     })
