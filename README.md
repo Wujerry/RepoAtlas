@@ -19,7 +19,7 @@ RepoAtlas brings local Projects, coding sessions, and development tasks into one
 
 > **macOS contributors wanted.** RepoAtlas has not yet been tested on real Mac hardware, so there is no supported macOS build today. If you have a Mac, help us build, test, and document it through [CONTRIBUTING.md](CONTRIBUTING.md), or open an [issue](https://github.com/Wujerry/RepoAtlas/issues) with reproducible results.
 
-> **0.1.7 downloads:** Windows installers are labeled **UNSIGNED** and do not have an Authenticode signature. macOS packages are experimental, ad-hoc signed and not notarized. SmartScreen or Gatekeeper may show a warning. Updater payloads remain signed; release assets include SHA256SUMS.
+> **0.1.8 downloads:** Windows installers are labeled **UNSIGNED** and do not have an Authenticode signature. macOS packages are experimental, ad-hoc signed and not notarized. SmartScreen or Gatekeeper may show a warning. Updater payloads remain signed; release assets include SHA256SUMS.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/en-dark-workspace.jpg" />
@@ -252,7 +252,7 @@ Open the global workbench to follow active runs across Projects. Search its run 
 2. Verify its SHA-256 checksum against the published `SHA256SUMS`:
 
    ```powershell
-   Get-FileHash .\RepoAtlas_0.1.7_x64-setup.exe -Algorithm SHA256
+   Get-FileHash .\RepoAtlas_0.1.8_x64-setup.exe -Algorithm SHA256
    ```
 
 3. Run the installer. SmartScreen will show an “unknown publisher” warning for the unsigned beta. Choose **More info**, then **Run anyway**.

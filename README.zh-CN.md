@@ -19,7 +19,7 @@ RepoAtlas 把本地项目、编码会话与开发任务放在同一个桌面工�
 
 [下载安装包](https://github.com/Wujerry/RepoAtlas/releases) · [查看官网](https://wujerry.github.io/RepoAtlas/zh/) · [反馈问题](https://github.com/Wujerry/RepoAtlas/issues)
 
-> **0.1.7 下载说明：** Windows 安装包标注 **UNSIGNED**，未做 Authenticode 签名；macOS 包为实验性构建，仅临时签名，未经公证。系统可能显示 SmartScreen 或 Gatekeeper 提示。更新包有独立的签名验证，发布附件提供 `SHA256SUMS`。
+> **0.1.8 下载说明：** Windows 安装包标注 **UNSIGNED**，未做 Authenticode 签名；macOS 包为实验性构建，仅临时签名，未经公证。系统可能显示 SmartScreen 或 Gatekeeper 提示。更新包有独立的签名验证，发布附件提供 `SHA256SUMS`。
 >
 > **macOS 尚未经过真机测试。** 目前的实验包不属于正式支持的安装包。欢迎 Mac 用户按 [贡献指南](CONTRIBUTING.md) 帮忙构建、测试和补充文档，或提交可复现的问题。
 
@@ -175,7 +175,7 @@ MCP 连接可跨桌面重启继续使用，空闲的 MCP 进程不会阻止再�
 2. 计算 SHA-256，与该版本附件中的 `SHA256SUMS` 对比：
 
    ```powershell
-   Get-FileHash .\RepoAtlas_0.1.7_x64-setup.exe -Algorithm SHA256
+   Get-FileHash .\RepoAtlas_0.1.8_x64-setup.exe -Algorithm SHA256
    ```
 
 3. 运行安装程序。未签名的 Beta 可能触发 SmartScreen 提示；核对来源和校验值后，可点击“更多信息”，再选择“仍要运行”。
