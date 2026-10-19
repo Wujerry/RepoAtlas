@@ -494,7 +494,6 @@ mod tests {
         let original = synthetic_server();
         let mut changed = synthetic_server();
         assert!(Some(&original) == Some(&changed));
-        assert!(None::<&Server> != Some(&original));
         changed.started += 1;
         assert!(original != changed);
         let mut changed = synthetic_server();

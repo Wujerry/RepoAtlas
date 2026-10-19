@@ -473,7 +473,7 @@ fn workspace_evidence(root: &Path, relative: &str) -> Option<String> {
         }
     }
     if let Some(text) = detect::read_text(&root.join("Cargo.toml")) {
-        if let Ok(value) = text.parse::<toml::Value>() {
+        if let Ok(value) = toml::from_str::<toml::Value>(&text) {
             let entries = value
                 .get("workspace")
                 .and_then(|v| v.get("members"))
