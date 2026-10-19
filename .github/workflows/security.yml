@@ -3,19 +3,7 @@ name: Security
 on:
   push:
     branches: [main]
-    paths:
-      - '**/Cargo.toml'
-      - '**/Cargo.lock'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - '.github/workflows/security.yml'
   pull_request:
-    paths:
-      - '**/Cargo.toml'
-      - '**/Cargo.lock'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - '.github/workflows/security.yml'
   schedule:
     - cron: '27 3 * * 1'
   workflow_dispatch:

@@ -10,6 +10,7 @@ This document describes the release path for the public `Wujerry/RepoAtlas` repo
 - Root `package.json`, workspace `Cargo.toml`, and `src-tauri/tauri.conf.json` must contain the exact release version, including any prerelease suffix (for example, `0.1.0-beta.2`). The release tag is `v` plus that exact version, so tag `v0.1.0-beta.2` requires `0.1.0-beta.2` in all three sources. The Tauri updater compares the installed app version with the `latest.json` manifest version using SemVer, so prerelease builds must carry the suffix in their app version to stay updatable between betas. `node scripts/check-version.mjs` is the source-of-truth check.
 - Prerelease tags create GitHub prerelease drafts. The current workflow permits unsigned Windows builds for both stable and prerelease tags, labels their filenames `UNSIGNED`, and records that limitation in checksums and notes. Updater signatures remain mandatory. macOS builds without Developer ID/notarization credentials are experimental and ad-hoc signed; do not describe them as notarized or verified on real Mac hardware.
 - First-release installer targets are Windows x64, macOS Intel, and macOS Apple Silicon. Linux is checked in CI but is not packaged for the first release.
+- Updater payloads are signed raw Windows `.exe`/`.msi` installers and macOS `.app.tar.gz` bundles. ZIP extraction is disabled; `build-updater-manifest.mjs` rejects legacy Windows `.nsis.zip`/`.msi.zip` payloads.
 
 The local consistency check is:
 

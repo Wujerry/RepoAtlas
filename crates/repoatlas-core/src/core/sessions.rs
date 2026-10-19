@@ -258,7 +258,6 @@ impl Core {
             if session.cwd.is_empty()
                 && ["cursor-cli", "gemini"].contains(&session.adapter.as_str())
             {
-                use sha2::Digest;
                 let bucket = Path::new(&session.source_locator)
                     .parent()
                     .and_then(Path::parent)
@@ -269,7 +268,7 @@ impl Core {
                     let hash = if session.adapter == "cursor-cli" {
                         format!("{:x}", md5::compute(p.canonical_path.as_bytes()))
                     } else {
-                        format!("{:x}", sha2::Sha256::digest(p.canonical_path.as_bytes()))
+                        gemini_project_hash(&p.canonical_path)
                     };
                     if hash == bucket {
                         session.cwd = p.canonical_path.clone();
@@ -850,5 +849,28 @@ impl Core {
         self.conn
             .execute("UPDATE agent_session_sources SET last_scanned_at=NULL", [])?;
         Ok(())
+    }
+}
+
+fn gemini_project_hash(path: &str) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(path.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn gemini_hash_matches_existing_lowercase_sha256_directories() {
+        assert_eq!(
+            super::gemini_project_hash("abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert_eq!(
+            super::gemini_project_hash(""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
     }
 }

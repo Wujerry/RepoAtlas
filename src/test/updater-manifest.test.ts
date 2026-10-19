@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 
 it.each(["", "-UNSIGNED-BETA"])("prefers NSIS over MSI with release label %s", (label) => {
   const root = mkdtempSync(join(tmpdir(), "repoatlas-manifest-test-"));
@@ -18,6 +18,21 @@ it.each(["", "-UNSIGNED-BETA"])("prefers NSIS over MSI with release label %s", (
     const manifest = JSON.parse(readFileSync(output, "utf8"));
     expect(manifest.platforms["windows-x86_64"].url).toBe(`https://example.invalid/releases/${installer}`);
     expect(manifest.platforms["windows-x86_64"].signature).toBe("fixture-signature");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it.each(["nsis.zip", "msi.zip"])("rejects unsupported Windows %s update bundles", (extension) => {
+  const root = mkdtempSync(join(tmpdir(), "repoatlas-manifest-test-"));
+  try {
+    for (const name of [`x86_64-pc-windows-msvc-RepoAtlas.${extension}`, "x86_64-apple-darwin-RepoAtlas.app.tar.gz", "aarch64-apple-darwin-RepoAtlas.app.tar.gz"]) {
+      writeFileSync(join(root, name), "fixture");
+      writeFileSync(join(root, name + ".sig"), "fixture-signature");
+    }
+    const result = spawnSync(process.execPath, ["scripts/build-updater-manifest.mjs", "--version", "0.1.8", "--artifacts", root, "--output", join(root, "latest.json"), "--base-url", "https://example.invalid/releases"], { encoding: "utf8" });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("no updater bundle found for x86_64-pc-windows-msvc");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

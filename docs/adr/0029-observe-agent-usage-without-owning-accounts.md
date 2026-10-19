@@ -27,6 +27,18 @@ only by this loopback-only client, with redirects and proxies disabled and bound
 discovery/requests. No arbitrary endpoint, Google OAuth flow or token refresh is
 added. A stopped client has an explicit unavailable state.
 
+The self-signed TLS exception is an accepted local risk (reviewed 2026-10-19),
+not authenticated server identity. No supported independent certificate trust
+source is available. Keep it visible to CodeQL and document the disposition;
+do not disguise it as certificate verification or suppress the query globally.
+Credential-bearing requests require an address-aware observation of an IPv4
+`127.0.0.1` or wildcard listener owned by the selected process. Recheck process
+identity and listener ownership before each fixed RPC, and reject ambiguous
+ownership or IPv6-only matches. Executable discovery remains heuristic, and
+snapshot checks cannot eliminate a local race between inspection and connection.
+These limits do not apply to remote provider clients, which retain ordinary TLS
+certificate verification.
+
 Core owns provider response normalization, authorization and sanitized snapshot
 persistence. Desktop schedules bounded network work outside the main Core lock.
 Requests coalesce per provider, cache successes for five minutes, and throttle
