@@ -1680,7 +1680,7 @@ fn detect_js_runtime(path: &Path, facts: &mut Vec<DetectedFact>) {
 }
 
 fn detect_python_runtime(path: &Path, pyproject: &str, facts: &mut Vec<DetectedFact>) {
-    if let Ok(value) = toml::from_str::<toml::Value>(&pyproject) {
+    if let Ok(value) = toml::from_str::<toml::Value>(pyproject) {
         if let Some(requires) = value
             .get("project")
             .and_then(|project| project.get("requires-python"))

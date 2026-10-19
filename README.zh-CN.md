@@ -184,7 +184,7 @@ Windows 更新使用带独立签名的安装程序，macOS 使用 `.app.tar.gz` 
 
 ## 从源码运行
 
-需要 Node.js 24.11 以上（25 以下）、pnpm 10.20.0、Rust stable，以及当前平台的 [Tauri 2 依赖](https://v2.tauri.app/start/prerequisites/)。
+需要 Node.js 24.15 以上（25 以下）、pnpm 10.20.0、Rust stable，以及当前平台的 [Tauri 2 依赖](https://v2.tauri.app/start/prerequisites/)。
 
 ```sh
 pnpm install

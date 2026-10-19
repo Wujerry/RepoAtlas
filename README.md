@@ -268,7 +268,7 @@ See the [Code signing policy](CODE_SIGNING_POLICY.md) for signing roles, privacy
 
 ## Run from source
 
-You need Node.js 24.11 or later (below 25), pnpm 10.20.0, Rust stable, and the [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for your platform.
+You need Node.js 24.15 or later (below 25), pnpm 10.20.0, Rust stable, and the [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for your platform.
 
 ```sh
 pnpm install

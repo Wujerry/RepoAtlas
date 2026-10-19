@@ -16,7 +16,7 @@
     "url": "https://github.com/Wujerry/RepoAtlas/issues"
   },
   "engines": {
-    "node": ">=24.11.0 <25"
+    "node": ">=24.15.0 <25"
   },
   "packageManager": "pnpm@10.20.0",
   "pnpm": {
