@@ -1025,6 +1025,142 @@ fn build_endpoints(ports: &[u16], scheme: Option<&str>, path: Option<&str>) -> V
         .collect()
 }
 
+/// Address-aware observation for credential-bearing local transports. Do not
+/// authorize a destination from the legacy (port, PID) projection below.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ListeningEndpoint {
+    pub address: std::net::IpAddr,
+    pub port: u16,
+    pub pid: u32,
+}
+
+pub(crate) fn listening_endpoints(timeout: std::time::Duration) -> Option<Vec<ListeningEndpoint>> {
+    if timeout.is_zero() {
+        return None;
+    }
+    #[cfg(windows)]
+    let mut command = {
+        let mut command = Command::new(windows_system_tool("netstat.exe"));
+        command.args(["-ano"]);
+        crate::process::suppress_console_window(&mut command);
+        command
+    };
+    #[cfg(unix)]
+    let mut command = {
+        let executable = ["/usr/sbin/lsof", "/usr/bin/lsof"]
+            .into_iter()
+            .find(|path| Path::new(path).is_file())?;
+        let mut command = Command::new(executable);
+        // Field output retains the family of wildcard sockets and avoids
+        // positional columns affected by usernames or command names.
+        command.args(["-nP", "-iTCP", "-sTCP:LISTEN", "-Fptfn"]);
+        command
+    };
+    command.env("LC_ALL", "C");
+    let output =
+        command_output_with_timeout(command, timeout.min(std::time::Duration::from_millis(1500)))?;
+    // Partial/error output must not silently omit a conflicting owner.
+    if !output.status.success() {
+        return None;
+    }
+    let output = std::str::from_utf8(&output.stdout).ok()?;
+    #[cfg(windows)]
+    return parse_windows_endpoints(output);
+    #[cfg(unix)]
+    return parse_lsof_endpoints(output);
+}
+
+fn listener_address(value: &str) -> Option<(std::net::IpAddr, u16)> {
+    let (address, port) = value.rsplit_once(':')?;
+    let address = if let Some(address) = address.strip_prefix('[') {
+        address.strip_suffix(']')?
+    } else {
+        address
+    };
+    // Preserve IPv6 family even for mapped addresses. A zone is meaningful
+    // only on IPv6; it cannot make a malformed IPv4 endpoint eligible.
+    let address = if let Some((ip, zone)) = address.split_once('%') {
+        if zone.is_empty() || zone.contains('%') {
+            return None;
+        }
+        std::net::IpAddr::V6(ip.parse().ok()?)
+    } else {
+        address.parse().ok()?
+    };
+    Some((address, port.parse().ok()?))
+}
+
+#[cfg(any(windows, test))]
+fn parse_windows_endpoints(output: &str) -> Option<Vec<ListeningEndpoint>> {
+    let mut endpoints = Vec::new();
+    for line in output.lines() {
+        let columns: Vec<_> = line.split_whitespace().collect();
+        if columns.first() != Some(&"TCP") || !columns.contains(&"LISTENING") {
+            continue;
+        }
+        if columns.len() != 5 || columns[3] != "LISTENING" {
+            return None;
+        }
+        let (address, port) = listener_address(columns[1])?;
+        endpoints.push(ListeningEndpoint {
+            address,
+            port,
+            pid: columns[4].parse().ok()?,
+        });
+    }
+    Some(endpoints)
+}
+
+#[cfg(any(unix, test))]
+fn parse_lsof_endpoints(output: &str) -> Option<Vec<ListeningEndpoint>> {
+    let mut endpoints = Vec::new();
+    let mut pid = None;
+    let mut family = None;
+    let mut file = false;
+    let mut named = false;
+    for line in output.lines().filter(|line| !line.is_empty()) {
+        let field = line.get(..1)?;
+        let value = line.get(1..)?;
+        match field {
+            "p" | "f" => {
+                if file && !named {
+                    return None;
+                }
+                if field == "p" {
+                    pid = Some(value.parse::<u32>().ok()?);
+                }
+                file = field == "f";
+                family = None;
+                named = false;
+            }
+            "t" if file && family.is_none() => family = Some(value),
+            "n" if file && !named => {
+                let (host, port) = value.rsplit_once(':')?;
+                let address = match (family?, host) {
+                    ("IPv4", "*") => std::net::Ipv4Addr::UNSPECIFIED.into(),
+                    ("IPv6", "*") => std::net::Ipv6Addr::UNSPECIFIED.into(),
+                    ("IPv4", _) | ("IPv6", _) => listener_address(value)?.0,
+                    _ => return None,
+                };
+                if address.is_ipv4() != (family == Some("IPv4")) {
+                    return None;
+                }
+                endpoints.push(ListeningEndpoint {
+                    address,
+                    port: port.parse().ok()?,
+                    pid: pid?,
+                });
+                named = true;
+            }
+            _ => return None,
+        }
+    }
+    if file && !named {
+        return None;
+    }
+    Some(endpoints)
+}
+
 #[cfg(windows)]
 pub(crate) fn listening_ports() -> Option<Vec<(u16, u32)>> {
     let mut command = Command::new(windows_system_tool("netstat.exe"));
@@ -1096,7 +1232,9 @@ fn command_output_with_timeout(
             Ok(Some(status)) => {
                 return Some(Output {
                     status,
-                    stdout: rx.recv_timeout(timeout).ok()??,
+                    stdout: rx
+                        .recv_timeout(timeout.saturating_sub(started.elapsed()))
+                        .ok()??,
                     stderr: Vec::new(),
                 })
             }
@@ -1528,6 +1666,72 @@ mod tests {
         parse_lsof_listeners, parse_windows_listeners, resolve_task_command, start_error,
         validate_cmd_value,
     };
+
+    #[test]
+    fn credential_listener_observation_preserves_addresses_families_and_owners() {
+        use std::net::IpAddr;
+        let windows = "TCP 127.0.0.1:5000 0.0.0.0:0 LISTENING 12\n\
+            TCP 0.0.0.0:5001 0.0.0.0:0 LISTENING 12\n\
+            TCP 192.0.2.10:5000 0.0.0.0:0 LISTENING 13\n\
+            TCP [::]:5000 [::]:0 LISTENING 14\n\
+            TCP [::1]:5000 [::]:0 LISTENING 15\n\
+            TCP [::ffff:127.0.0.1]:5000 [::]:0 LISTENING 16\n\
+            TCP [fe80::1%7]:5000 [::]:0 LISTENING 17\n\
+            TCP 127.0.0.1:5000 127.0.0.1:6000 ESTABLISHED 99";
+        let lsof = "p12\nf1\ntIPv4\nn127.0.0.1:5000\nf2\ntIPv4\nn*:5001\n\
+            p13\nf1\ntIPv4\nn192.0.2.10:5000\n\
+            p14\nf1\ntIPv6\nn*:5000\n\
+            p15\nf1\ntIPv6\nn[::1]:5000\n\
+            p16\nf1\ntIPv6\nn[::ffff:127.0.0.1]:5000\n\
+            p17\nf1\ntIPv6\nn[fe80::1%en0]:5000\n";
+        let observed = super::parse_windows_endpoints(windows).unwrap();
+        assert_eq!(observed, super::parse_lsof_endpoints(lsof).unwrap());
+        assert_eq!(observed.len(), 7);
+        for (index, address) in [
+            "127.0.0.1",
+            "0.0.0.0",
+            "192.0.2.10",
+            "::",
+            "::1",
+            "::ffff:127.0.0.1",
+            "fe80::1",
+        ]
+        .iter()
+        .enumerate()
+        {
+            assert_eq!(observed[index].address, address.parse::<IpAddr>().unwrap());
+        }
+        assert_eq!(observed[2].pid, 13);
+        assert_eq!(observed[1].port, 5001);
+    }
+
+    #[test]
+    fn credential_listener_observation_rejects_partial_or_unknown_records() {
+        for malformed in [
+            "TCP localhost:5000 0.0.0.0:0 LISTENING 12",
+            "TCP 127.0.0.1:5000 0.0.0.0:0 LISTENING ?",
+            "TCP 127.0.0.1:65536 0.0.0.0:0 LISTENING 12",
+            "TCP 127.0.0.1:5000 LISTENING 12",
+            "TCP 127.0.0.1%7:5000 0.0.0.0:0 LISTENING 12",
+            "TCP [::1:5000 [::]:0 LISTENING 12",
+        ] {
+            let output = format!("TCP 127.0.0.1:5000 0.0.0.0:0 LISTENING 12\n{malformed}");
+            assert!(super::parse_windows_endpoints(&output).is_none());
+        }
+        for malformed in [
+            "p13\nf1\nn*:5000\n",                // Missing family.
+            "p13\nf1\ntIPv6\nn127.0.0.1:5000\n", // Family mismatch.
+            "p13\nf1\ntIPv4\n",                  // Truncated socket.
+            "p13\nf1\ntunknown\nn*:5000\n",
+            "p?\nf1\ntIPv4\nn*:5000\n",
+            "p13\nf1\ntIPv4\nnlocalhost:5000\n",
+            "p13\nf1\ntIPv4\nn*:65536\n",
+            "未知\n",
+        ] {
+            let output = format!("p12\nf1\ntIPv4\nn127.0.0.1:5000\n{malformed}");
+            assert!(super::parse_lsof_endpoints(&output).is_none());
+        }
+    }
 
     #[test]
     fn parses_listener_ownership_and_builds_safe_local_urls() {

@@ -62,6 +62,9 @@ Agent changes to the shared library continue to appear after onboarding, includi
 - **Signed updates** — when a signed update is found, a title-bar entry opens a panel with the release notes and manual check, download, install, and restart actions. Checks are non-blocking and never touch the local library.
 - **Local-first records** — Project metadata, task output, exit codes, logs, and audit history stay in local SQLite; no RepoAtlas account or sync server is required.
 
+Updates use signed raw Windows installers and macOS `.app.tar.gz` bundles.
+Legacy Windows ZIP update bundles are not supported; see the [release contract](docs/releasing.md).
+
 
 ## Sessions & Continue Coding
 
@@ -265,7 +268,7 @@ See the [Code signing policy](CODE_SIGNING_POLICY.md) for signing roles, privacy
 
 ## Run from source
 
-You need Node.js 24.11 or later (below 25), pnpm 10.20.0, Rust stable, and the [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for your platform.
+You need Node.js 24.15 or later (below 25), pnpm 10.20.0, Rust stable, and the [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for your platform.
 
 ```sh
 pnpm install

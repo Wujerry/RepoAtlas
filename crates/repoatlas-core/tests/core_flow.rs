@@ -1522,6 +1522,10 @@ fn detects_runtime_constraints_and_project_icon() {
         "[package]\nname = \"tool\"\nversion = \"0.1.0\"\nrust-version = \"1.80\"\n",
     );
     write(
+        &dir.path().join("rust/rust-toolchain.toml"),
+        "[toolchain]\nchannel = \"1.97.1\"\n",
+    );
+    write(
         &dir.path().join("go/go.mod"),
         "module example.com/api\n\ngo 1.22.3\n",
     );
@@ -1537,6 +1541,9 @@ fn detects_runtime_constraints_and_project_icon() {
         .facts
         .iter()
         .any(|fact| fact.value.contains("rust@1.80")));
+    assert!(rust.facts.iter().any(|fact| {
+        fact.value.contains("rust@1.97.1") && fact.source == "rust-toolchain.toml"
+    }));
     let go = repoatlas_core::detect(&dir.path().join("go"));
     assert!(go.facts.iter().any(|fact| fact.value.contains("go@1.22.3")));
 }

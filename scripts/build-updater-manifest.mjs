@@ -61,10 +61,10 @@ function chooseUpdateBundle(files, target, label) {
   const names = files
     .map((file) => path.basename(file))
     .filter((name) => !name.endsWith('.sig'));
-  // Tauri v2 with createUpdaterArtifacts: true signs the raw installers
-  // (.exe/.msi); v1Compatible mode produces .nsis.zip/.msi.zip instead.
+  // ZIP extraction is disabled in the desktop updater. Only publish raw
+  // Windows installers; macOS uses the separately supported tar.gz transport.
   const preferred = target === 'x86_64-pc-windows-msvc'
-    ? ['-setup.exe', '.msi', '.nsis.zip', '.msi.zip']
+    ? ['-setup.exe', '.msi']
     : ['.app.tar.gz'];
   for (const suffix of preferred) {
     const match = names.find((name) => plainReleaseName(name, label).endsWith(suffix));

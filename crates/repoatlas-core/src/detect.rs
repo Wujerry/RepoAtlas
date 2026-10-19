@@ -179,7 +179,7 @@ pub fn detect(path: &Path) -> Detection {
                 package_managers.push("cargo".into());
                 push_fact(&mut facts, "packageManager", "cargo", 0.95, manifest);
                 let cargo_text = read_text(&path.join("Cargo.toml")).unwrap_or_default();
-                if let Ok(value) = cargo_text.parse::<toml::Value>() {
+                if let Ok(value) = toml::from_str::<toml::Value>(&cargo_text) {
                     if let Some(pkg_name) = value
                         .get("package")
                         .and_then(|pkg| pkg.get("name"))
@@ -1680,7 +1680,7 @@ fn detect_js_runtime(path: &Path, facts: &mut Vec<DetectedFact>) {
 }
 
 fn detect_python_runtime(path: &Path, pyproject: &str, facts: &mut Vec<DetectedFact>) {
-    if let Ok(value) = pyproject.parse::<toml::Value>() {
+    if let Ok(value) = toml::from_str::<toml::Value>(pyproject) {
         if let Some(requires) = value
             .get("project")
             .and_then(|project| project.get("requires-python"))
@@ -1701,7 +1701,7 @@ fn detect_python_runtime(path: &Path, pyproject: &str, facts: &mut Vec<DetectedF
 
 fn detect_rust_toolchain(path: &Path, facts: &mut Vec<DetectedFact>) {
     if let Some(text) = first_existing_text(path, &["rust-toolchain", "rust-toolchain.toml"]) {
-        if let Ok(value) = text.parse::<toml::Value>() {
+        if let Ok(value) = toml::from_str::<toml::Value>(&text) {
             if let Some(channel) = value
                 .get("toolchain")
                 .and_then(|toolchain| toolchain.get("channel"))

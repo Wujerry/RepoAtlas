@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { Profiler } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { dictionaries, type MessageKey } from "../i18n";
 import { formatMoney, formatTokens, notifyUsageChanged, type SubscriptionUsage, type TokenUsage } from "../lib/usage";
@@ -82,6 +83,19 @@ describe("Usage presentation",()=>{
 });
 
 describe("Persistent title-bar quotas",()=>{
+  it("handles wheel input as soon as the quota rail is committed",async()=>{
+    mocks.subscriptions.mockResolvedValue([account("codex")]);
+    let firstScroll:number|undefined;
+    render(<Profiler id="quota" onRender={()=>{
+      const rail=document.querySelector<HTMLDivElement>(".titlebar-quota-rail");
+      if(!rail || firstScroll!==undefined)return;
+      Object.defineProperties(rail,{scrollWidth:{value:600},clientWidth:{value:250}});
+      rail.dispatchEvent(new WheelEvent("wheel",{deltaY:80,bubbles:true,cancelable:true}));
+      firstScroll=rail.scrollLeft;
+    }}><TitleBarUsage navigation={navigation} t={t} onOpen={vi.fn()} active={false}/></Profiler>);
+    await screen.findByRole("button",{name:/Subscription limits.*Codex/});
+    expect(firstScroll).toBe(80);
+  });
   it("hides selected providers immediately without disconnecting accounts or losing the full popover",async()=>{
     mocks.subscriptions.mockResolvedValue([account("codex"),account("claude"),account("kimi")]);
     const manage=vi.fn();

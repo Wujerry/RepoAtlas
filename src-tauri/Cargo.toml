@@ -24,14 +24,16 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-process = "2"
-tauri-plugin-updater = "2"
+# Releases use a raw NSIS .exe on Windows and .app.tar.gz on macOS. The
+# optional ZIP extractor is unused and pulls in vulnerable zip 4.x releases.
+tauri-plugin-updater = { version = "2.14", default-features = false, features = ["rustls-tls", "system-proxy"] }
 tauri-plugin-window-state = "2.4.1"
 uuid = { version = "1", features = ["v4"] }
 url = "2"
 
 [target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
-# Keep the existing Tauri 2.11 runtime; plugin 2.4 requires Tauri 2.12.
-tauri-plugin-global-shortcut = "~2.3.2"
+# Plugin 2.4 requires the Tauri 2.12 runtime used by both lockfiles.
+tauri-plugin-global-shortcut = "~2.4.1"
 
 [dev-dependencies]
 tempfile = "3"

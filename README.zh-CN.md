@@ -167,6 +167,8 @@ MCP 连接可跨桌面重启继续使用，空闲的 MCP 进程不会阻止再�
 
 发现新版本时，顶栏会出现更新入口。可以查看更新说明、下载更新、确认安装或稍后处理；更新包会验证签名。检查更新期间可以继续工作，离线也不影响本地项目库。
 
+Windows 更新使用带独立签名的安装程序，macOS 使用 `.app.tar.gz` 更新包。不支持旧式 Windows ZIP 更新包，详见[发布约定](docs/releasing.md)。
+
 ## 下载与安装
 
 目前主要提供 **Windows x64 Beta**：
@@ -182,7 +184,7 @@ MCP 连接可跨桌面重启继续使用，空闲的 MCP 进程不会阻止再�
 
 ## 从源码运行
 
-需要 Node.js 24.11 以上（25 以下）、pnpm 10.20.0、Rust stable，以及当前平台的 [Tauri 2 依赖](https://v2.tauri.app/start/prerequisites/)。
+需要 Node.js 24.15 以上（25 以下）、pnpm 10.20.0、Rust stable，以及当前平台的 [Tauri 2 依赖](https://v2.tauri.app/start/prerequisites/)。
 
 ```sh
 pnpm install

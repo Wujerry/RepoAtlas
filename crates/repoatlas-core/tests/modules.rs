@@ -9,6 +9,29 @@ fn write(root: &Path, path: &str, text: &str) {
 }
 
 #[test]
+fn cargo_workspace_members_are_read_as_a_toml_document() {
+    let dir = tempdir().unwrap();
+    write(
+        dir.path(),
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"crates/*\"]\n",
+    );
+    write(
+        dir.path(),
+        "crates/example/Cargo.toml",
+        "[package]\nname = \"example\"\nversion = \"0.1.0\"\n",
+    );
+    let core = Core::open_in_memory().unwrap();
+    let project = core.register_project(dir.path()).unwrap();
+    let modules = core.list_modules(&project.id).unwrap();
+    let member = modules
+        .iter()
+        .find(|module| module.relative_path == "crates/example")
+        .unwrap();
+    assert_eq!(member.evidence, "Cargo.toml#workspace.members");
+}
+
+#[test]
 fn mixed_modules_have_scoped_tasks_and_promotion_survives_rescan() {
     let dir = tempdir().unwrap();
     write(

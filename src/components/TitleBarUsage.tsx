@@ -24,7 +24,6 @@ export function TitleBarUsage({t,onOpen,active,navigation}:{t:UsageT;onOpen:()=>
   const [pending,setPending]=useState(false);
   const [error,setError]=useState(false);
   const [now,setNow]=useState(Date.now());
-  const rail=useRef<HTMLDivElement>(null);
   const live=useRef(false),flight=useRef(false),seq=useRef(0);
   const load=useCallback(async()=>{
     const ticket=++seq.current;
@@ -56,9 +55,8 @@ export function TitleBarUsage({t,onOpen,active,navigation}:{t:UsageT;onOpen:()=>
   useEffect(()=>{if(!open)return;setNow(Date.now());const timer=setInterval(()=>setNow(Date.now()),30000);return()=>clearInterval(timer);},[open]);
   const connected=accounts.filter(s=>s.enabled);
   const visible=connected.filter(s=>!navigation.hidden.includes(s.provider));
-  const hasConnections=connected.length>0;
-  useEffect(()=>{
-    const element=rail.current;
+  // Bind during DOM attachment so the first wheel input cannot precede an effect.
+  const attachRail=useCallback((element:HTMLDivElement|null)=>{
     if(!element)return;
     const wheel=(event:WheelEvent)=>{
       if(event.ctrlKey || event.shiftKey || Math.abs(event.deltaX)>=Math.abs(event.deltaY) || element.scrollWidth<=element.clientWidth)return;
@@ -67,11 +65,11 @@ export function TitleBarUsage({t,onOpen,active,navigation}:{t:UsageT;onOpen:()=>
     };
     element.addEventListener("wheel",wheel,{passive:false});
     return()=>element.removeEventListener("wheel",wheel);
-  },[hasConnections]);
+  },[]);
   const manage=()=>{setOpen(false);onOpen();};
   if(!connected.length)return <button className="titlebar-ai-history titlebar-usage" aria-pressed={active} onClick={onOpen} title={error?t("usageReadFailed"):t("usageTitle")}><NavigationIcon icon={ChartDonut} motion="usage" active={active || open} /><span>{t("usageTitle")}</span></button>;
   return <Popover.Root open={open} onOpenChange={setOpen}>
-    <div ref={rail} className="titlebar-quota-rail" onKeyDown={event=>{
+    <div ref={attachRail} className="titlebar-quota-rail" onKeyDown={event=>{
       const element=event.currentTarget;
       if((event.key!=="ArrowLeft" && event.key!=="ArrowRight") || element.scrollWidth<=element.clientWidth)return;
       event.preventDefault();element.scrollLeft+=event.key==="ArrowRight"?100:-100;

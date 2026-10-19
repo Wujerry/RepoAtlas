@@ -43,7 +43,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.11.0
+          node-version: 24.22.0
 
       - name: Resolve release tag
         id: release
@@ -251,7 +251,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.11.0
+          node-version: 24.22.0
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
@@ -338,7 +338,7 @@ jobs:
           Write-Output "NSIS installer hooks present: $hooks"
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # rust-toolchain v1
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # rust-toolchain v1
         with:
           toolchain: 1.97.1
           target: ${{ matrix.target }}
@@ -386,7 +386,7 @@ jobs:
           node @arguments
 
       - name: Upload staged artifacts for manifest generation
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-${{ matrix.target }}
           path: release-assets
@@ -411,10 +411,10 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.11.0
+          node-version: 24.22.0
 
       - name: Download staged artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: release-*
           path: release-assets
