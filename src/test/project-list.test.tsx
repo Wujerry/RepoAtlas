@@ -90,6 +90,13 @@ beforeEach(() => {
   vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function getOffsetWidth(this: HTMLElement) {
     return (this as HTMLElement).classList.contains("project-scroll") ? 360 : 0;
   });
+  // JSDOM has no layout; the virtualizer measures the scroll viewport via client dimensions.
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(function getClientHeight(this: HTMLElement) {
+    return this.classList.contains("project-scroll") ? 640 : 0;
+  });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function getClientWidth(this: HTMLElement) {
+    return this.classList.contains("project-scroll") ? 360 : 0;
+  });
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function getBoundingClientRect(this: HTMLElement) {
     const element = this as HTMLElement;
     if (element.classList.contains("project-scroll")) return rect(640);
