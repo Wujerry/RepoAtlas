@@ -19,7 +19,7 @@ RepoAtlas brings local Projects, coding sessions, and development tasks into one
 
 > **macOS contributors wanted.** RepoAtlas has not yet been tested on real Mac hardware, so there is no supported macOS build today. If you have a Mac, help us build, test, and document it through [CONTRIBUTING.md](CONTRIBUTING.md), or open an [issue](https://github.com/Wujerry/RepoAtlas/issues) with reproducible results.
 
-> **0.1.8 downloads:** Windows installers are labeled **UNSIGNED** and do not have an Authenticode signature. macOS packages are experimental, ad-hoc signed and not notarized. SmartScreen or Gatekeeper may show a warning. Updater payloads remain signed; release assets include SHA256SUMS.
+> **0.1.9 downloads:** Windows installers are labeled **UNSIGNED** and do not have an Authenticode signature. macOS packages are experimental, ad-hoc signed and not notarized. SmartScreen or Gatekeeper may show a warning. Updater payloads remain signed; release assets include SHA256SUMS.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/en-dark-workspace.jpg" />
@@ -327,3 +327,5 @@ Click the port, process, PID or Project column header to switch between ascendin
 Open **Ports & processes** in the top navigation bar (also available in the command palette) to search native TCP listeners by port, PID, process or Project. It includes services launched in terminals and IDEs. Unknown attribution stays unknown; manual associations apply only to the current process instance and desktop session. Stops disclose all affected ports and processes and recheck exact Windows process identity. Managed tasks support a cooperative Ctrl+C request or explicit Job Object termination. For external processes, stop normally in their original terminal/IDE or explicitly force terminate only that process. Port-conflict dialogs can locate owners and recheck through the existing preflight. No automatic termination, elevation, port edits, external restart, WSL or Docker management.
 
 Rows directly show ports, process, PID, the full selectable executable path, managed-task or external-process source, and Project checkout path and attribution evidence. Long paths wrap and unavailable paths are explicitly labeled. Stop restrictions remain visible, and each row offers only its available stop modes.
+
+Task catalogs support automatic presentation groups by working directory, repeated script prefix, or task kind, with search across names, commands and working directories. Groups can be collapsed; catalogs over 30 tasks initially expand only the leading group and groups with running tasks. Search results and history navigation reveal their matching tasks. Output occupies a separate dock below independently scrolling task and history panes.

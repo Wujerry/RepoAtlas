@@ -48,6 +48,18 @@ function renderWorkspace(overrides: Partial<React.ComponentProps<typeof TaskWork
 }
 
 describe("TaskWorkspace console", () => {
+  it("toggles output from the title hit area without toggling when tools are used", () => {
+    const onClearLog = vi.fn();
+    renderWorkspace({ log: "output", onClearLog });
+    const consolePane = screen.getByLabelText(t("taskConsole"));
+    fireEvent.click(screen.getByRole("button", { name: t("expandOutput") }));
+    expect(consolePane).toHaveClass("is-open");
+    fireEvent.click(screen.getByRole("button", { name: t("clearOutput") }));
+    expect(onClearLog).toHaveBeenCalledOnce();
+    expect(consolePane).toHaveClass("is-open");
+    fireEvent.click(screen.getByRole("button", { name: t("collapseOutput") }));
+    expect(consolePane).toHaveClass("is-collapsed");
+  });
   it("progressively reveals filters for small catalogs and keeps empty history compact", () => {
     const { container } = renderWorkspace();
     expect(screen.queryByRole("combobox", { name: t("taskFilterState") })).not.toBeInTheDocument();
@@ -282,5 +294,28 @@ describe("TaskWorkspace task locating", () => {
     expect(screen.getByRole("form", { name: t("editTask") })).toBeInTheDocument();
     expect(container.querySelectorAll(".task-card")).toHaveLength(2);
     expect(container.querySelectorAll(".task-title-line strong")).toHaveLength(1);
+  });
+});
+
+describe("TaskWorkspace grouping", () => {
+  const tasks = Array.from({ length: 80 }, (_, i) => ({ ...task(`task-${i}`), name: i < 40 ? `build:web-${i}` : `test:api-${i}`, cwd: i < 40 ? "packages/web" : "packages/api" }));
+  it("bounds the initial catalog and reveals search matches across collapsed directories", () => {
+    renderWorkspace({ tasks });
+    expect(screen.getAllByRole("article")).toHaveLength(40);
+    fireEvent.click(screen.getByRole("button", { name: t("taskCollapseAll") }));
+    expect(screen.queryAllByRole("article")).toHaveLength(0);
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "packages/api" } });
+    expect(screen.getAllByRole("article")).toHaveLength(40);
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "" } });
+    fireEvent.change(screen.getByRole("combobox", { name: t("taskGrouping") }), { target: { value: "none" } });
+    expect(screen.getAllByRole("article")).toHaveLength(80);
+  });
+  it("opens and focuses a collapsed task from history", async () => {
+    const historical = { ...run("succeeded"), taskId: "task-70" };
+    renderWorkspace({ tasks, runs: [historical] });
+    fireEvent.click(screen.getByRole("button", { name: t("taskCollapseAll") }));
+    expect(screen.queryByRole("article", { name: "test:api-70" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /test:api-70/ }));
+    await waitFor(() => expect(screen.getByRole("article", { name: "test:api-70" })).toHaveFocus());
   });
 });

@@ -1,6 +1,7 @@
-import { ArrowDown, ArrowUp, CaretDown, CaretUp, Copy, MagnifyingGlass, Moon, Play, Plus, Square, Sun, Trash, X } from "@phosphor-icons/react";
+import { ArrowDown, ArrowUp, CaretDown, CaretUp, Copy, MagnifyingGlass, Moon, Play, Plus, Square, Sun, TerminalWindow, Trash, X } from "@phosphor-icons/react";
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 import type { MessageKey } from "../i18n";
+import { taskGroupKeys, type TaskGrouping } from "../lib/task-groups";
 import { formatTime } from "../lib/format";
 import type { ProjectDetail, TaskRun, ToastTone } from "../types";
 import { Button } from "./ui/button";
@@ -18,6 +19,8 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
   const [consoleOpen, setConsoleOpen] = useState(false);
   const [pendingRemoval, setPendingRemoval] = useState<ProjectDetail["tasks"][number]>();
   const [removingTask, setRemovingTask] = useState(false);
+  const [grouping, setGrouping] = useState<TaskGrouping>("auto");
+  const [groupOpen, setGroupOpen] = useState<Record<string, boolean>>({});
   const [taskQuery, setTaskQuery] = useState("");
   const [advancedFilters, setAdvancedFilters] = useState(false);
   const [kindFilter, setKindFilter] = useState("");
@@ -42,12 +45,12 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
   const consoleTitle = activeRun ? runName(activeRun) : activeRunning ? runName(activeRunning) : t("taskConsole");
   const taskKinds = [...new Set(tasks.map((task) => task.kind))].sort((a, b) => a.localeCompare(b));
   const runStatsByTaskId = new Map<string, { count: number; last?: TaskRun }>();
-  for (const task of tasks) {
-    const matchingRuns = runs.filter((run) => run.taskId === task.id);
-    runStatsByTaskId.set(task.id, {
-      count: matchingRuns.length,
-      last: matchingRuns.length > 0 ? matchingRuns.reduce((latest, run) => (run.startedAt >= latest.startedAt ? run : latest)) : undefined,
-    });
+  for (const run of runs) {
+    if (!run.taskId) continue;
+    const stats = runStatsByTaskId.get(run.taskId) ?? { count: 0 };
+    stats.count += 1;
+    if (!stats.last || run.startedAt >= stats.last.startedAt) stats.last = run;
+    runStatsByTaskId.set(run.taskId, stats);
   }
   const normalizedTaskQuery = taskQuery.trim().toLowerCase();
   const taskFiltersActive = Boolean(normalizedTaskQuery || kindFilter || sourceFilter || stateFilter);
@@ -56,7 +59,7 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
   const editingTaskId = editor?.mode === "edit" ? editor.taskId : null;
   const taskMatchesFilters = (task: ProjectDetail["tasks"][number]) => {
     if (normalizedTaskQuery) {
-      const haystack = [task.name, task.kind, task.description ?? "", task.executable, task.argv.join(" ")].join(" ").toLowerCase();
+      const haystack = [task.name, task.kind, task.description ?? "", task.cwd ?? "", task.executable, task.argv.join(" ")].join(" ").toLowerCase();
       if (!haystack.includes(normalizedTaskQuery)) return false;
     }
     if (kindFilter && task.kind !== kindFilter) return false;
@@ -85,6 +88,14 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
     }
     return a.index - b.index;
   });
+  const groupKeys = taskGroupKeys(tasks, grouping);
+  const groups = new Map<string, typeof visibleTasks>();
+  for (const item of visibleTasks) {
+    const key = groupKeys.get(item.task.id) ?? "";
+    const group = groups.get(key) ?? [];
+    group.push(item);
+    groups.set(key, group);
+  }
   useEffect(() => {
     if (!activeRunning) return;
     setConsoleOpen(true);
@@ -108,6 +119,7 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
     const task = taskForRun(run);
     if (task) {
       clearTaskFilters();
+      setGroupOpen(current => ({ ...current, [groupKeys.get(task.id) ?? ""]: true }));
       setLocateRequest({ taskId: task.id });
     } else {
       notify("info", t("taskDefinitionUnavailable"));
@@ -293,6 +305,13 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
               <input ref={taskSearchRef} type="search" value={taskQuery} placeholder={t("taskSearchHint")} onChange={(event) => setTaskQuery(event.target.value)} />
             </label>
             <Button variant="quiet" aria-expanded={showAdvancedFilters} aria-controls="task-advanced-filters" disabled={tasks.length > 5 || Boolean(kindFilter || sourceFilter || stateFilter)} onClick={() => setAdvancedFilters(value => !value)}>{t("taskAdvancedFilters")}</Button>
+            <select aria-label={t("taskGrouping")} value={grouping} onChange={event => setGrouping(event.target.value as TaskGrouping)}>
+              <option value="auto">{t("taskGroupAuto")}</option><option value="kind">{t("taskGroupKind")}</option><option value="none">{t("taskGroupNone")}</option>
+            </select>
+            {grouping !== "none" && <>
+              <Button variant="quiet" onClick={() => setGroupOpen(Object.fromEntries([...groups.keys()].map(key => [key, true])))}>{t("taskExpandAll")}</Button>
+              <Button variant="quiet" onClick={() => setGroupOpen(Object.fromEntries([...groups.keys()].map(key => [key, false])))}>{t("taskCollapseAll")}</Button>
+            </>}
             <div id="task-advanced-filters" className="task-advanced-filters" hidden={!showAdvancedFilters}>
             <select aria-label={t("taskFilterKind")} value={kindFilter} onChange={(event) => setKindFilter(event.target.value)}>
               <option value="">{t("allKinds")}</option>
@@ -329,7 +348,15 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
             <p className="task-filter-empty">{t("noTaskMatches")}<button type="button" className="clear-filters" onClick={clearTaskFilters}>{t("clearTaskFilters")}</button></p>
           ) : (
             <div className="task-grid">
-              {visibleTasks.map(({ task }) => {
+              {[...groups].map(([key, items], groupIndex) => {
+                const forcedOpen = taskFiltersActive || items.some(({ task }) => task.id === editingTaskId);
+                const open = grouping === "none" || forcedOpen || (groupOpen[key] ?? (tasks.length <= 30 || groupIndex === 0 || items.some(({ task }) => runningRuns.some(run => run.taskId === task.id))));
+                return <section className="task-group" key={key}>
+                  {grouping !== "none" && <button type="button" className="task-group-heading" aria-expanded={open} aria-controls={`task-group-${groupIndex}`} onClick={() => setGroupOpen(current => ({ ...current, [key]: !open }))} disabled={forcedOpen}>
+                    {open ? <CaretDown aria-hidden /> : <CaretUp aria-hidden />}<strong title={key}>{key === "." ? t("taskProjectRoot") : key}</strong><span>{items.length}</span>
+                  </button>}
+                  <div id={`task-group-${groupIndex}`} className="task-group-items" hidden={!open}>
+              {open && items.map(({ task }) => {
                 const isEditing = editor?.mode === "edit" && editor.taskId === task.id;
                 const taskRunStats = runStatsByTaskId.get(task.id);
                 const taskRunCount = taskRunStats?.count ?? 0;
@@ -362,6 +389,9 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
                   </>}
                 </article>
               );})}
+                  </div>
+                </section>;
+              })}
             </div>
           )}
         </section>
@@ -390,8 +420,9 @@ export function TaskWorkspace({ tasks, runs, loading, error, activeRunId, log, t
           <button className="task-console-toggle" type="button" aria-expanded={consoleOpen} aria-label={consoleOpen ? t("collapseOutput") : t("expandOutput")} onClick={() => setConsoleOpen((open) => !open)}>
             {consoleOpen ? <CaretDown aria-hidden="true" /> : <CaretUp aria-hidden="true" />}
             <span className={"run-dot run-" + (activeRunning ? "running" : (activeRun?.status ?? "idle"))} />
+            <span className="task-output-label"><TerminalWindow aria-hidden />{t("output")}</span>
             <strong>{consoleTitle}</strong>
-            <span className="muted-copy">{activeRunning ? t("live") : t("output")}</span>
+            <span className="muted-copy">{activeRunning ? t("live") : activeRun ? t(statusKey(activeRun.status)) : ""}</span>
           </button>
           <div className="task-console-actions">
             {runningRuns.map((run) => (

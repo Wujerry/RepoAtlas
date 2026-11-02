@@ -2,6 +2,14 @@
 
 All notable changes to RepoAtlas will be documented here. Package availability is recorded in GitHub Releases.
 
+## [0.1.9] - 2026-11-02
+
+- Automatically group task catalogs by working directory, script prefix or task kind, with expand/collapse controls and compact rows for large catalogs.
+- Search task working directories and reveal matching groups during search and history navigation; keep editing and task actions keyboard accessible.
+- Separate task output into a full-width bottom dock with explicit task/status labels; click the title bar's blank area to expand or collapse it.
+- Scroll task catalogs and run history independently and compute task run statistics in one pass.
+- Update frontend and Rust dependencies, including Tauri, rusqlite, virtual lists, motion, KaTeX and Vite (PRs #28 and #29).
+
 ## [0.1.8] - 2026-10-09
 
 - Read oversized Codex image, encrypted-reasoning and tool records without allocating their excluded payloads; preserve accompanying text, subsequent messages, recorded usage and search while retaining memory, size and cancellation limits.
