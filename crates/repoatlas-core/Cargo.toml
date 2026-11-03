@@ -20,7 +20,7 @@ thiserror = "2"
 toml = "1.1"
 uuid = { version = "1", features = ["v4", "serde"] }
 portable-pty = "0.9"
-sysinfo = "0.39.6"
+sysinfo = "0.40.1"
 cap-std = "4.0.3"
 cap-fs-ext = "4.0.3"
 ignore = "0.4.33"
